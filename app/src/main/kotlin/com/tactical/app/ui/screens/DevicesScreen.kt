@@ -367,7 +367,7 @@ private fun EmptyDevicesState(isScanning: Boolean) {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "Discovery runs automatically every 10 seconds.",
+                text = "Discovery runs automatically in the background.",
                 color = Color(0xFF8EA8C0),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
