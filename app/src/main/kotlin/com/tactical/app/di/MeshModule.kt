@@ -127,11 +127,13 @@ object MeshModule {
     fun provideBeaconScanner(
         bleScanner: BleBeaconScanner,
         transport: RadioTransport,
-        serializer: PacketSerializer
+        serializer: PacketSerializer,
+        @LocalDeviceIdValue localDeviceIdValue: String
     ): BeaconScanner = CompositeBeaconScanner(
         bleScanner = bleScanner,
         radioTransport = transport,
-        serializer = serializer
+        serializer = serializer,
+        localDeviceId = localDeviceIdValue
     )
 
     @Provides
