@@ -57,10 +57,10 @@ class DefaultMeshService(
                 emptyList()
             }
         )
-        // Locally originated normal text is sent directly only to the
-        // application's squad. Emergency packets remain a full broadcast.
-        // Relay traffic is handled separately below and is not restricted,
-        // preserving mesh forwarding.
+        // Text packets are application-targeted, but the physical first hop
+        // must be a mesh broadcast so an intermediate relay can receive the
+        // packet even when the final recipient is not directly connected.
+        // The embedded target set is the authoritative delivery gate.
         val targetDeviceIds = when (packet) {
             is com.tactical.domain.packet.TextPacket -> squadDeviceIdsProvider()
             is com.tactical.domain.packet.EmergencyPacket -> null
@@ -70,7 +70,7 @@ class DefaultMeshService(
         val routedRelayPacket = relayPacket.copy(
             targetDeviceIds = targetDeviceIds
         )
-        return broadcastRelay(routedRelayPacket, targetDeviceIds)
+        return broadcastRelay(routedRelayPacket)
     }
 
     override fun receive(): Flow<Packet> = _incomingPackets.asSharedFlow()
