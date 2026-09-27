@@ -73,7 +73,8 @@ class FloodMeshRouter(
         }
 
         // 3. TTL check and decrement for a possible rebroadcast.
-        val updatedPacket = ttlTracker.decrement(relayPacket)?.copy(
+        val decrementedPacket = ttlTracker.decrement(relayPacket)
+        val updatedPacket = decrementedPacket?.copy(
             path = if (tracksTopology) {
                 existingPath + localDeviceId
             } else {
@@ -92,11 +93,11 @@ class FloodMeshRouter(
         // the packet is an unrestricted broadcast). Relay-only nodes continue
         // forwarding targeted packets so multi-hop squad delivery works.
         return when {
-            localIsTarget && shouldForward ->
+            localIsTarget && updatedPacket != null ->
                 ForwardDecision.AcceptAndRebroadcast(updatedPacket)
             localIsTarget ->
                 ForwardDecision.AcceptLocal
-            shouldForward ->
+            shouldForward && updatedPacket != null ->
                 ForwardDecision.Rebroadcast(updatedPacket)
             else ->
                 ForwardDecision.Drop("No remaining mesh targets")
