@@ -210,7 +210,8 @@ class MainActivity : ComponentActivity() {
                                     onPttPress = viewModel::pressPtt,
                                     onPttRelease = viewModel::releasePtt,
                                     onPttCancel = viewModel::cancelPtt,
-                                    onRemoveFromSquad = viewModel::removePeerFromSquad
+                                    onRemoveFromSquad = viewModel::removePeerFromSquad,
+                                    onRefreshDiscovery = viewModel::forceDiscovery
                                 )
                                     2 -> MessagesScreen(
                                         state,
