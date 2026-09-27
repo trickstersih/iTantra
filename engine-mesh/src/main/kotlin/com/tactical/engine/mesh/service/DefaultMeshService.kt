@@ -50,7 +50,8 @@ class DefaultMeshService(
             immediateSender = localDeviceId,
             ttl = ProtocolConstants.DEFAULT_TTL,
             hopCount = 0,
-            payload = packet
+            payload = packet,
+            path = listOf(localDeviceId)
         )
         // Locally originated normal text is sent directly only to the
         // application's squad. Emergency packets remain a full broadcast.
