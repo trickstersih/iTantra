@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -51,6 +52,7 @@ fun SquadScreen(
     onPttRelease: () -> Unit,
     onPttCancel: () -> Unit,
     onRemoveFromSquad: (String) -> Unit = {},
+    onRefreshDiscovery: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val connectedPeers = uiState.squadPeers.filter { it.isConnected }
@@ -595,7 +597,31 @@ fun SquadScreen(
         }
 
         item {
-            SectionDividerLabel("${connectedPeers.size} CONNECTED DEVICES")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SectionDividerLabel(
+                    "${connectedPeers.size} CONNECTED DEVICES",
+                    modifier = Modifier.weight(1f)
+                )
+
+                IconButton(
+                    onClick = onRefreshDiscovery,
+                    enabled = !uiState.isScanning
+                ) {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = LocalUiStrings.current.text(UiTextKey.SCAN),
+                        tint = if (uiState.isScanning) {
+                            Color(0xFF5F7890)
+                        } else {
+                            Color(0xFFBFD6EA)
+                        },
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+            }
         }
 
         if (connectedPeers.isEmpty()) {
@@ -805,9 +831,12 @@ private fun transmissionStatusColor(status: String): Color =
     }
 
 @Composable
-private fun SectionDividerLabel(label: String) {
+private fun SectionDividerLabel(
+    label: String,
+    modifier: Modifier = Modifier
+) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         HorizontalDivider(
