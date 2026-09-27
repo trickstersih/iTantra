@@ -99,7 +99,7 @@ class CompositeBeaconScanner(
 
                 // A packet whose route already contains us is a looped copy;
                 // never surface it as a valid topology route.
-                if (localDeviceId in path) return null
+                if (path.any { it.value == localDeviceId }) return null
 
                 val direct = path.size <= 1 &&
                     relay.originalSender == relay.immediateSender
