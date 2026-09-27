@@ -441,7 +441,9 @@ class MainViewModel @Inject constructor(
                     }
                     state.copy(
                         squadPeers = currentSquad,
-                        availablePeers = peers.filter { it.deviceAddress !in squadIds }
+                        availablePeers = peers.filter {
+                            it.deviceAddress !in squadIds && !it.isConnected
+                        }
                     )
                 }
             }
@@ -489,9 +491,14 @@ class MainViewModel @Inject constructor(
                     }
                 )
 
+            val updatedSquadPeers = state.squadPeers.map(::updatePeer)
+            val updatedAvailablePeers = state.availablePeers
+                .map(::updatePeer)
+                .filter { !it.isConnected }
+
             state.copy(
-                squadPeers = state.squadPeers.map(::updatePeer),
-                availablePeers = state.availablePeers.map(::updatePeer)
+                squadPeers = updatedSquadPeers,
+                availablePeers = updatedAvailablePeers
             )
         }
 
@@ -630,7 +637,7 @@ class MainViewModel @Inject constructor(
             state.copy(
                 squadPeers = squad,
                 availablePeers = allKnown.filter {
-                    it.deviceAddress !in squadIds
+                    it.deviceAddress !in squadIds && !it.isConnected
                 }
             )
         }
