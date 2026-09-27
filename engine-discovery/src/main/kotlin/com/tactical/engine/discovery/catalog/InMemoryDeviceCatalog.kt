@@ -34,8 +34,39 @@ class InMemoryDeviceCatalog(
     override fun all(): StateFlow<List<DeviceNode>> = _nodesFlow.asStateFlow()
 
     override suspend fun upsert(node: DeviceNode) {
-        nodes[node.id] = node
-        updateFlow()
+        val current = nodes[node.id]
+        if (current == null || shouldReplace(current, node)) {
+            nodes[node.id] = node
+            updateFlow()
+        }
+    }
+
+    private fun shouldReplace(
+        current: DeviceNode,
+        incoming: DeviceNode
+    ): Boolean {
+        if (incoming.link == LinkType.DIRECT) {
+            // A newly observed direct path always outranks any relayed path.
+            return true
+        }
+
+        if (current.link == LinkType.DIRECT) {
+            // Keep a direct observation while it is still fresh. Once it has
+            // aged past the stale threshold, a live mesh path may take over.
+            val age = currentTimeMillis() - current.lastSeen.toEpochMilli()
+            if (age <= ttlMillis / 2L) return false
+            return true
+        }
+
+        if (current.link == LinkType.STALE) return true
+
+        // Both are relayed: prefer fewer hops. If the hop count is equal,
+        // use the newest observation so route changes are reflected promptly.
+        return when {
+            incoming.hopCount < current.hopCount -> true
+            incoming.hopCount > current.hopCount -> false
+            else -> incoming.lastSeen.toEpochMilli() >= current.lastSeen.toEpochMilli()
+        }
     }
 
     private fun evictStaleNodes() {
