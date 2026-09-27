@@ -2,9 +2,12 @@ package com.tactical.engine.discovery.beacon
 
 import com.tactical.domain.identity.DeviceId
 import com.tactical.domain.packet.BeaconPacket
+import com.tactical.domain.packet.MeshRelayPacket
 import com.tactical.platform.api.ble.BleBeaconAdvertiser
 import com.tactical.platform.api.ble.BleBeaconPayloadCodec
 import com.tactical.platform.api.radio.RadioTransport
+import com.tactical.platform.api.radio.RawPacket
+import com.tactical.protocol.serialization.PacketSerializer
 import kotlinx.coroutines.*
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.logging.Logger
@@ -13,12 +16,14 @@ class PeriodicBeaconEmitter(
     private val localDeviceId: DeviceId,
     private val callsignProvider: () -> String,
     private val transport: RadioTransport,
+    private val serializer: PacketSerializer,
     private val bleAdvertiser: BleBeaconAdvertiser,
     private val scope: CoroutineScope =
         CoroutineScope(Dispatchers.Default + SupervisorJob())
 ) : BeaconEmitter {
 
     private var job: Job? = null
+    private var lastMeshBeaconAt = 0L
     private val running = AtomicBoolean(false)
 
     override fun start() {
@@ -64,10 +69,11 @@ class PeriodicBeaconEmitter(
     }
 
     private suspend fun emitBeacon() {
+        val now = System.currentTimeMillis()
         val beacon = BeaconPacket(
             sender = localDeviceId,
             callsign = callsignProvider(),
-            timestamp = System.currentTimeMillis()
+            timestamp = now
         )
 
         // BLE gets the compact, magic-byte-prefixed encoding — the magic
@@ -76,13 +82,34 @@ class PeriodicBeaconEmitter(
         val bleBytes = BleBeaconPayloadCodec.encode(beacon)
         bleAdvertiser.advertise(bleBytes)
 
-        // Normal radio transport still gets the full PacketSerializer
-        // representation elsewhere — different wire format on purpose,
-        // this emitter no longer touches that path.
+        // Every few seconds, put the same presence packet into the existing
+        // mesh relay path. Intermediates will append themselves to the relay
+        // path, allowing downstream peers to discover the complete hop chain.
+        if (now - lastMeshBeaconAt >= MESH_BEACON_INTERVAL_MS) {
+            lastMeshBeaconAt = now
+            val relay = MeshRelayPacket(
+                originalSender = localDeviceId,
+                immediateSender = localDeviceId,
+                ttl = com.tactical.protocol.constants.ProtocolConstants.DEFAULT_TTL,
+                hopCount = 0,
+                payload = beacon,
+                path = listOf(localDeviceId)
+            )
+            runCatching {
+                transport.broadcast(
+                    RawPacket(
+                        data = serializer.serializeRelay(relay),
+                        rssi = 0,
+                        timestamp = now
+                    )
+                )
+            }
+        }
     }
 
     companion object {
         private const val BEACON_INTERVAL_MS = 2000L
+        private const val MESH_BEACON_INTERVAL_MS = 6000L
         private val LOGGER: Logger =
             Logger.getLogger(PeriodicBeaconEmitter::class.java.name)
     }
