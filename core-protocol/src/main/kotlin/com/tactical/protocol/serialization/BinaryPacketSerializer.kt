@@ -46,9 +46,28 @@ class BinaryPacketSerializer : PacketSerializer {
                 out.writeInt(packet.hopCount)
                 out.writeInt(innerPayload.size)
                 out.write(innerPayload)
-                if (packet.path.isNotEmpty()) {
+
+                val hasRoutingExtension =
+                    packet.path.isNotEmpty() ||
+                        packet.targetDeviceIds != null ||
+                        packet.deliveredTargetDeviceIds.isNotEmpty()
+
+                if (hasRoutingExtension) {
                     out.writeInt(packet.path.size)
                     packet.path.forEach { out.writeString(it.value) }
+
+                    val targets = packet.targetDeviceIds
+                    if (targets == null) {
+                        out.writeInt(-1)
+                    } else {
+                        require(packet.deliveredTargetDeviceIds.all { it in targets }) {
+                            "Delivered target is not present in target set"
+                        }
+                        out.writeInt(targets.size)
+                        targets.forEach { out.writeString(it) }
+                        out.writeInt(packet.deliveredTargetDeviceIds.size)
+                        packet.deliveredTargetDeviceIds.forEach { out.writeString(it) }
+                    }
                 }
             }
             bos.toByteArray()
@@ -234,14 +253,59 @@ class BinaryPacketSerializer : PacketSerializer {
             val innerBytes = ByteArray(innerLen).also { buf -> it.readFully(buf) }
 
             val stream = it
-            val path = if (stream.available() > 0) {
+            var path = emptyList<DeviceId>()
+            var targetDeviceIds: Set<String>? = null
+            var deliveredTargetDeviceIds = emptySet<String>()
+
+            if (stream.available() > 0) {
                 val pathCount = stream.readInt()
                 require(pathCount in 0..(ProtocolConstants.MAX_HOPS + 1)) {
                     "Invalid relay path length: $pathCount"
                 }
-                List(pathCount) { DeviceId(stream.readString()) }
-            } else {
-                emptyList()
+                path = List(pathCount) { DeviceId(stream.readString()) }
+
+                // Older topology relays ended after the path extension.
+                // Target metadata is therefore optional after the path.
+                if (stream.available() > 0) {
+                    val targetCount = stream.readInt()
+                    require(targetCount >= -1) {
+                        "Invalid relay target count: $targetCount"
+                    }
+
+                    if (targetCount >= 0) {
+                        require(targetCount <= 128) {
+                            "Invalid relay target count: $targetCount"
+                        }
+
+                        targetDeviceIds = buildSet {
+                            repeat(targetCount) {
+                                add(stream.readString())
+                            }
+                        }
+
+                        require(stream.available() >= 4) {
+                            "Missing delivered-target count"
+                        }
+                        val deliveredCount = stream.readInt()
+                        require(deliveredCount in 0..targetCount) {
+                            "Invalid delivered-target count: $deliveredCount"
+                        }
+
+                        deliveredTargetDeviceIds = buildSet {
+                            repeat(deliveredCount) {
+                                add(stream.readString())
+                            }
+                        }
+
+                        require(deliveredTargetDeviceIds.all { it in targetDeviceIds }) {
+                            "Delivered target is not present in target set"
+                        }
+                    } else {
+                        require(stream.available() == 0) {
+                            "Unexpected relay data after unrestricted-target marker"
+                        }
+                    }
+                }
             }
 
             MeshRelayPacket(
@@ -250,7 +314,9 @@ class BinaryPacketSerializer : PacketSerializer {
                 ttl = ttl,
                 hopCount = hopCount,
                 payload = deserialize(innerBytes),
-                path = path
+                path = path,
+                targetDeviceIds = targetDeviceIds,
+                deliveredTargetDeviceIds = deliveredTargetDeviceIds
             )
         }
     }
