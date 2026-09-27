@@ -13,7 +13,12 @@ data class MeshRelayPacket(
     val immediateSender: DeviceId,
     val ttl: Int,
     val hopCount: Int,
-    val payload: Packet
+    val payload: Packet,
+    /**
+     * Ordered path of nodes that have already carried this packet,
+     * starting at the original sender. The receiving node is not included.
+     */
+    val path: List<DeviceId> = emptyList()
 ) {
     init {
         require(ttl >= 0) { "ttl cannot be negative" }
