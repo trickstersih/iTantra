@@ -66,7 +66,11 @@ class DefaultMeshService(
             is com.tactical.domain.packet.EmergencyPacket -> null
             else -> null
         }
-        return broadcastRelay(relayPacket, targetDeviceIds)
+
+        val routedRelayPacket = relayPacket.copy(
+            targetDeviceIds = targetDeviceIds
+        )
+        return broadcastRelay(routedRelayPacket, targetDeviceIds)
     }
 
     override fun receive(): Flow<Packet> = _incomingPackets.asSharedFlow()
