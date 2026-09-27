@@ -95,7 +95,7 @@ class PeriodicBeaconEmitter(
                 payload = beacon,
                 path = listOf(localDeviceId)
             )
-            runCatching {
+            try {
                 transport.broadcast(
                     RawPacket(
                         data = serializer.serializeRelay(relay),
@@ -103,6 +103,9 @@ class PeriodicBeaconEmitter(
                         timestamp = now
                     )
                 )
+            } catch (_: Exception) {
+                // Mesh presence is best-effort. Direct BLE advertising must
+                // continue even if the radio transport is temporarily down.
             }
         }
     }
