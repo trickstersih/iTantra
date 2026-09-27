@@ -401,7 +401,11 @@ private fun AvailableDeviceCard(
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        peer.linkText + " • " + peer.distanceText,
+                        if (peer.linkText == "DIRECT") {
+                            peer.linkText + " • " + peer.distanceText
+                        } else {
+                            peer.linkText
+                        },
                         color = Color(0xFF8EA8C0),
                         fontSize = 11.sp
                     )
