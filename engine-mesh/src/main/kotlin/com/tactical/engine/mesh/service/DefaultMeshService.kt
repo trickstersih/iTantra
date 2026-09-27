@@ -51,7 +51,11 @@ class DefaultMeshService(
             ttl = ProtocolConstants.DEFAULT_TTL,
             hopCount = 0,
             payload = packet,
-            path = listOf(localDeviceId)
+            path = if (packet is com.tactical.domain.packet.BeaconPacket) {
+                listOf(localDeviceId)
+            } else {
+                emptyList()
+            }
         )
         // Locally originated normal text is sent directly only to the
         // application's squad. Emergency packets remain a full broadcast.
