@@ -15,6 +15,14 @@ interface BleConnectionManager {
     /** Send an application-level squad request; membership changes only after approval. */
     suspend fun addToSquad(deviceAddress: String): TacticalResult<Unit>
 
+    /**
+     * Records squad membership learned through a mesh control response/request
+     * without attempting to send the legacy direct-GATT control frame.
+     * Existing GATT reconnect logic will establish a physical link when the
+     * peer becomes directly reachable.
+     */
+    suspend fun addMeshSquadMember(deviceId: String, callsign: String): TacticalResult<Unit>
+
     /** Requests waiting for local user approval. */
     fun pendingSquadRequests(): StateFlow<List<SquadRequest>>
 
