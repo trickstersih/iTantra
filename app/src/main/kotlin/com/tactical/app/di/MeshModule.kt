@@ -112,11 +112,13 @@ object MeshModule {
         @LocalDeviceIdValue localDeviceIdValue: String,
         identityStore: DeviceIdentityStore,
         transport: RadioTransport,
+        serializer: PacketSerializer,
         bleAdvertiser: BleBeaconAdvertiser
     ): BeaconEmitter = PeriodicBeaconEmitter(
         localDeviceId = DeviceId(localDeviceIdValue),
         callsignProvider = identityStore::callsign,
         transport = transport,
+        serializer = serializer,
         bleAdvertiser = bleAdvertiser
     )
 
