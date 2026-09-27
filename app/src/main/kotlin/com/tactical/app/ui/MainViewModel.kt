@@ -569,7 +569,7 @@ class MainViewModel @Inject constructor(
             .firstOrNull { it.deviceAddress == deviceAddress }
 
         viewModelScope.launch {
-            if (peer != null && peer.linkText.startsWith("VIA ")) {
+            if (peer != null && (peer.linkText.startsWith("VIA ") || peer.linkText == "RELAYED")) {
                 runCatching {
                     meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
                 }
