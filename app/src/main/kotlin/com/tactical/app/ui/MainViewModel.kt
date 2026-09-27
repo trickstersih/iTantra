@@ -10,6 +10,7 @@ import com.tactical.app.di.StoredPairedDevice
 import com.tactical.app.di.StoredReceivedMessage
 import com.tactical.app.di.StoredSentMessage
 import com.tactical.domain.identity.DeviceId
+import com.tactical.domain.identity.DeviceNode
 import com.tactical.domain.identity.LinkType
 import com.tactical.domain.packet.EmergencyPacket
 import com.tactical.domain.packet.TextPacket
@@ -367,6 +368,15 @@ class MainViewModel @Inject constructor(
                     val existing = (state.availablePeers + state.squadPeers)
                         .associateBy { it.deviceAddress }
 
+                    val knownCallsigns = buildMap {
+                        (state.availablePeers + state.squadPeers).forEach { peer ->
+                            put(peer.deviceAddress, peer.callsign)
+                        }
+                        devices.forEach { device ->
+                            put(device.id.value, device.callsign)
+                        }
+                    }
+
                     val peers = devices.map { device ->
                         val id = device.id.value
                         val previous = existing[id]
@@ -387,6 +397,18 @@ class MainViewModel @Inject constructor(
                             )
                         }
 
+                        val routeText = routeLinkText(
+                            device = device,
+                            knownCallsigns = knownCallsigns
+                        )
+                        val effectiveLinkText = if (
+                            previous?.isConnected == true
+                        ) {
+                            "DIRECT"
+                        } else {
+                            routeText
+                        }
+
                         PeerNodeUi(
                             deviceAddress = id,
                             callsign = callsign,
@@ -401,11 +423,7 @@ class MainViewModel @Inject constructor(
                             } else {
                                 previous?.signalBars ?: 0
                             },
-                            linkText = if (hasRssi) {
-                                device.link.name
-                            } else {
-                                previous?.linkText ?: device.link.name
-                            },
+                            linkText = effectiveLinkText,
                             bleState = previous?.bleState ?: BleLinkState.AVAILABLE
                         )
                     }
@@ -457,6 +475,11 @@ class MainViewModel @Inject constructor(
             fun updatePeer(peer: PeerNodeUi): PeerNodeUi =
                 peer.copy(
                     isConnected = peer.deviceAddress in connectedIds,
+                    linkText = if (peer.deviceAddress in connectedIds) {
+                        "DIRECT"
+                    } else {
+                        peer.linkText
+                    },
                     bleState = if (peer.deviceAddress in connectedIds) {
                         BleLinkState.CONNECTED
                     } else if (peer.bleState == BleLinkState.CONNECTED) {
@@ -620,7 +643,12 @@ class MainViewModel @Inject constructor(
                         if (peer.deviceAddress == deviceAddress) {
                             peer.copy(
                                 bleState = linkState,
-                                isConnected = linkState == BleLinkState.CONNECTED
+                                isConnected = linkState == BleLinkState.CONNECTED,
+                                linkText = if (linkState == BleLinkState.CONNECTED) {
+                                    "DIRECT"
+                                } else {
+                                    peer.linkText
+                                }
                             )
                         } else {
                             peer
@@ -1383,6 +1411,25 @@ class MainViewModel @Inject constructor(
         if (epochMs <= 0L) return "Unknown"
         return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(epochMs))
     }
+
+    private fun routeLinkText(
+        device: DeviceNode,
+        knownCallsigns: Map<String, String>
+    ): String =
+        when (device.link) {
+            LinkType.DIRECT -> "DIRECT"
+            LinkType.RELAYED -> {
+                val intermediateHops = device.path.drop(1)
+                if (intermediateHops.isEmpty()) {
+                    "RELAYED"
+                } else {
+                    "VIA " + intermediateHops.joinToString(" → ") { hop ->
+                        knownCallsigns[hop.value] ?: hop.value.take(8)
+                    }
+                }
+            }
+            LinkType.STALE -> "STALE"
+        }
 
     private fun formatDistance(distance: Double): String =
         if (distance < 0) "Unknown"
