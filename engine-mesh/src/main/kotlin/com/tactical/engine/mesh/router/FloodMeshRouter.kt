@@ -1,6 +1,7 @@
 package com.tactical.engine.mesh.router
 
 import com.tactical.domain.identity.DeviceId
+import com.tactical.domain.packet.BeaconPacket
 import com.tactical.domain.packet.MeshRelayPacket
 import com.tactical.engine.mesh.forwarding.ForwardDecision
 import com.tactical.engine.mesh.deduplication.DeduplicationFilter
@@ -33,24 +34,33 @@ class FloodMeshRouter(
         // Mark as seen
         dedup.put(hash)
 
-        // Reconstruct a useful path for packets produced by an older
-        // build that did not carry path metadata.
-        val existingPath = if (relayPacket.path.isNotEmpty()) {
+        val tracksTopology = relayPacket.payload is BeaconPacket
+
+        // Only topology beacons need route metadata. Keeping ordinary text,
+        // voice, and emergency relay envelopes unchanged avoids adding path
+        // bytes to user payloads and preserves their existing size limits.
+        val existingPath = if (!tracksTopology) {
+            emptyList()
+        } else if (relayPacket.path.isNotEmpty()) {
             relayPacket.path
         } else {
+            // Reconstruct a useful path for a beacon produced by an older
+            // build that did not carry path metadata.
             listOf(relayPacket.originalSender, relayPacket.immediateSender)
                 .distinct()
         }
 
-        // A path containing this node indicates a loop. Deduplication normally
-        // catches this too, but rejecting explicitly keeps route metadata clean.
-        if (localDeviceId in existingPath) {
+        if (tracksTopology && localDeviceId in existingPath) {
             return ForwardDecision.Drop("Relay path already contains local device")
         }
 
         // 3. TTL check and decrement for rebroadcast
         val updatedPacket = ttlTracker.decrement(relayPacket)?.copy(
-            path = existingPath + localDeviceId
+            path = if (tracksTopology) {
+                existingPath + localDeviceId
+            } else {
+                emptyList()
+            }
         )
 
         // 4. Decision logic
