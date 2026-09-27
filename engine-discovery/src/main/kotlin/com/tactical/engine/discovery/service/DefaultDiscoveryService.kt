@@ -21,6 +21,7 @@ class DefaultDiscoveryService(
 ) : DiscoveryService {
 
     private var scanJob: Job? = null
+    private var meshJob: Job? = null
     private var wifiJob: Job? = null
     private var beaconingStarted = false
     private val immediateScanRequests = Channel<Unit>(Channel.CONFLATED)
@@ -37,6 +38,22 @@ class DefaultDiscoveryService(
         // Failure here is non-fatal: BLE can still discover the peer.
         runCatching {
             wifiDirectManager.advertisePresence(localDeviceId, localCallsignProvider())
+        }
+
+        // Mesh topology reception is continuous and independent of the
+        // duty-cycled direct BLE scan windows. This prevents a 6-second mesh
+        // beacon from being missed simply because the scanner is asleep.
+        if (meshJob == null) {
+            meshJob = scope.launch {
+                try {
+                    scanner.meshPeers().collect { catalog.upsert(it) }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Mesh reception is best-effort; the next service restart
+                    // can recreate the collector if the bearer fails.
+                }
+            }
         }
 
         // Discovery owns its background scan lifecycle. This keeps discovery
@@ -116,8 +133,10 @@ class DefaultDiscoveryService(
 
     fun stopDiscovery() {
         scanJob?.cancel()
+        meshJob?.cancel()
         wifiJob?.cancel()
         scanJob = null
+        meshJob = null
         wifiJob = null
     }
 
