@@ -62,6 +62,12 @@ class TacticalMeshService : Service() {
     @Inject
     lateinit var mmsTtsPlaybackCoordinator: MmsTtsPlaybackCoordinator
 
+    // Materialize the singleton mesh squad-control coordinator from the
+    // foreground service so mesh squad requests are received even when the
+    // Activity/ViewModel is not alive.
+    @Inject
+    lateinit var meshSquadControlCoordinator: MeshSquadControlCoordinator
+
     private val serviceScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
