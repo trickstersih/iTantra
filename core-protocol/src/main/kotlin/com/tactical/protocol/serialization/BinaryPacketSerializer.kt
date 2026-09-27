@@ -46,8 +46,10 @@ class BinaryPacketSerializer : PacketSerializer {
                 out.writeInt(packet.hopCount)
                 out.writeInt(innerPayload.size)
                 out.write(innerPayload)
-                out.writeInt(packet.path.size)
-                packet.path.forEach { out.writeString(it.value) }
+                if (packet.path.isNotEmpty()) {
+                    out.writeInt(packet.path.size)
+                    packet.path.forEach { out.writeString(it.value) }
+                }
             }
             bos.toByteArray()
         }
