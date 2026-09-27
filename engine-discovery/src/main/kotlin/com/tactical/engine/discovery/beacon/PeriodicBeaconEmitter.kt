@@ -29,6 +29,7 @@ class PeriodicBeaconEmitter(
     override fun start() {
         if (!running.compareAndSet(false, true)) return
 
+        lastMeshBeaconAt = 0L
         job = scope.launch {
             try {
                 while (isActive) {
