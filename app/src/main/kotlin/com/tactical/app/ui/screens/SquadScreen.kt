@@ -935,7 +935,7 @@ fun PeerCard(
                         } else if (peer.linkText == "DIRECT") {
                             LocalUiStrings.current.text(UiTextKey.IN_SQUAD_DOT) + peer.distanceText
                         } else {
-                            LocalUiStrings.current.text(UiTextKey.IN_SQUAD_DOT) + peer.linkText.removePrefix("RELAYED")
+                            LocalUiStrings.current.text(UiTextKey.IN_SQUAD_DOT) + peer.linkText
                         },
                         color = if (peer.isConnected) {
                             RedTacticalStatusGreen
