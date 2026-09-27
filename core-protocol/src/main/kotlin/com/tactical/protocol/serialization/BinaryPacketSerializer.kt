@@ -233,12 +233,13 @@ class BinaryPacketSerializer : PacketSerializer {
             }
             val innerBytes = ByteArray(innerLen).also { buf -> it.readFully(buf) }
 
-            val path = if (it.available() > 0) {
-                val pathCount = it.readInt()
+            val stream = it
+            val path = if (stream.available() > 0) {
+                val pathCount = stream.readInt()
                 require(pathCount in 0..(ProtocolConstants.MAX_HOPS + 1)) {
                     "Invalid relay path length: $pathCount"
                 }
-                List(pathCount) { DeviceId(this@use.readString()) }
+                List(pathCount) { DeviceId(stream.readString()) }
             } else {
                 emptyList()
             }
