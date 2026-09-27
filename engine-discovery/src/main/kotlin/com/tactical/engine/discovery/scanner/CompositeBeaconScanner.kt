@@ -16,7 +16,8 @@ import java.time.Instant
 class CompositeBeaconScanner(
     private val bleScanner: BleBeaconScanner,
     private val radioTransport: RadioTransport,
-    private val serializer: PacketSerializer
+    private val serializer: PacketSerializer,
+    private val localDeviceId: String
 ) : BeaconScanner {
 
     override fun scan(): Flow<DeviceNode> {
@@ -30,6 +31,8 @@ class CompositeBeaconScanner(
                 // devices (headphones, trackers, etc.) instead of trying
                 // to interpret their random bytes as a beacon.
                 val packet = BleBeaconPayloadCodec.decode(payload) ?: return@mapNotNull null
+
+                if (packet.sender.value == localDeviceId) return@mapNotNull null
 
                 DeviceNode(
                     id = packet.sender,
@@ -64,6 +67,8 @@ class CompositeBeaconScanner(
                         val direct = path.size <= 1 &&
                             relay.originalSender == relay.immediateSender
 
+                        if (packet.sender.value == localDeviceId) return@mapNotNull null
+
                         return@mapNotNull DeviceNode(
                             id = packet.sender,
                             callsign = packet.callsign,
@@ -80,6 +85,8 @@ class CompositeBeaconScanner(
 
                     val packet = serializer.deserialize(raw.data)
                     if (packet !is BeaconPacket) return@mapNotNull null
+
+                    if (packet.sender.value == localDeviceId) return@mapNotNull null
 
                     DeviceNode(
                         id = packet.sender,
