@@ -8,6 +8,8 @@ import com.tactical.engine.discovery.catalog.DeviceCatalog
 import com.tactical.engine.discovery.scanner.BeaconScanner
 import com.tactical.platform.api.wifi.WifiDirectManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.selects.select
 
 class DefaultDiscoveryService(
     private val scanner: BeaconScanner,
@@ -22,6 +24,7 @@ class DefaultDiscoveryService(
     private var scanJob: Job? = null
     private var wifiJob: Job? = null
     private var beaconingStarted = false
+    private val immediateScanRequests = Channel<Unit>(Channel.CONFLATED)
 
     override fun peers() = catalog.all()
 
@@ -36,20 +39,29 @@ class DefaultDiscoveryService(
         runCatching {
             wifiDirectManager.advertisePresence(localDeviceId, localCallsignProvider())
         }
+
+        // Discovery owns its background scan lifecycle. This keeps discovery
+        // alive for reconnect/address refresh even when the Activity is gone.
+        startDiscovery()
     }
 
     fun startDiscovery() {
         if (scanJob == null) {
             scanJob = scope.launch {
                 while (isActive) {
-                    try {
-                        scanner.scan().collect { catalog.upsert(it) }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        // BLE can be unavailable; Wi-Fi discovery can still work.
+                    runBleScanWindow()
+
+                    // Sleep between short scan windows to avoid continuously
+                    // burning CPU/battery, but wake immediately for a manual
+                    // Home-screen SCAN request.
+                    select<Unit> {
+                        immediateScanRequests.onReceive {
+                            // Start the next scan window immediately.
+                        }
+                        kotlinx.coroutines.selects.onTimeout(BACKGROUND_SCAN_INTERVAL_MS) {
+                            // Normal maintenance interval elapsed.
+                        }
                     }
-                    delay(1500L)
                 }
             }
         }
@@ -85,6 +97,27 @@ class DefaultDiscoveryService(
         }
     }
 
+    /**
+     * Requests an immediate scan without changing the persistent discovery
+     * lifecycle or exposing the background scan state to the UI.
+     */
+    fun scanNow() {
+        immediateScanRequests.trySend(Unit)
+    }
+
+    private suspend fun runBleScanWindow() {
+        withTimeoutOrNull(BACKGROUND_SCAN_WINDOW_MS) {
+            try {
+                scanner.scan().collect { catalog.upsert(it) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // BLE can be temporarily unavailable; the maintenance loop
+                // remains alive and the next cycle will retry.
+            }
+        }
+    }
+
     fun stopDiscovery() {
         scanJob?.cancel()
         wifiJob?.cancel()
@@ -99,5 +132,13 @@ class DefaultDiscoveryService(
             emitter.stop()
             beaconingStarted = false
         }
+    }
+
+    companion object {
+        // Short scan windows preserve discovery responsiveness while keeping
+        // the scanner off most of the time. The 15s catalog TTL is long enough
+        // to tolerate the gap between maintenance scans.
+        private const val BACKGROUND_SCAN_INTERVAL_MS = 8_000L
+        private const val BACKGROUND_SCAN_WINDOW_MS = 3_000L
     }
 }
