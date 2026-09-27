@@ -18,7 +18,18 @@ data class MeshRelayPacket(
      * Ordered path of nodes that have already carried this packet,
      * starting at the original sender. The receiving node is not included.
      */
-    val path: List<DeviceId> = emptyList()
+    val path: List<DeviceId> = emptyList(),
+    /**
+     * Stable iTantra IDs that are the intended application-level recipients.
+     * null means this is a true mesh broadcast (for example emergency or
+     * topology beacons).
+     */
+    val targetDeviceIds: Set<String>? = null,
+    /**
+     * Targets that have already consumed this relay. Used so a targeted
+     * packet stops flooding once every intended recipient has received it.
+     */
+    val deliveredTargetDeviceIds: Set<String> = emptySet()
 ) {
     init {
         require(ttl >= 0) { "ttl cannot be negative" }
