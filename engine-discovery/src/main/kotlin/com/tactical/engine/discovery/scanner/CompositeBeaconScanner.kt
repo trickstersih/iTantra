@@ -3,6 +3,7 @@ package com.tactical.engine.discovery.scanner
 import com.tactical.domain.identity.DeviceNode
 import com.tactical.domain.identity.LinkType
 import com.tactical.domain.packet.BeaconPacket
+import com.tactical.domain.packet.MeshRelayPacket
 import com.tactical.platform.api.ble.BleBeaconPayloadCodec
 import com.tactical.platform.api.ble.BleBeaconScanner
 import com.tactical.platform.api.radio.RadioTransport
@@ -36,13 +37,47 @@ class CompositeBeaconScanner(
                     rssi = scanned.rssi,
                     lastSeen = Instant.now(),
                     hopCount = 0,
-                    link = LinkType.DIRECT
+                    link = LinkType.DIRECT,
+                    path = listOf(packet.sender)
                 )
             }
 
         val radioFlow = radioTransport.incoming()
             .mapNotNull { raw ->
                 try {
+                    // Mesh beacons use the existing relay envelope. We inspect
+                    // the envelope here so discovery can retain the route
+                    // rather than waiting for MeshService to strip it.
+                    val relay = runCatching { serializer.deserializeRelay(raw.data) }.getOrNull()
+
+                    if (relay != null) {
+                        val packet = relay.payload as? BeaconPacket ?: return@mapNotNull null
+
+                        // path contains the nodes that have already forwarded
+                        // the packet, not this receiver. A one-node path means
+                        // the beacon came directly from its origin.
+                        val path = if (relay.path.isNotEmpty()) {
+                            relay.path
+                        } else {
+                            listOf(relay.originalSender, relay.immediateSender).distinct()
+                        }
+                        val direct = path.size <= 1 &&
+                            relay.originalSender == relay.immediateSender
+
+                        return@mapNotNull DeviceNode(
+                            id = packet.sender,
+                            callsign = packet.callsign,
+                            // RSSI on a relayed packet describes the last hop,
+                            // not the original device. Do not present it as
+                            // the remote device's distance.
+                            rssi = if (direct) raw.rssi else 0,
+                            lastSeen = Instant.ofEpochMilli(raw.timestamp),
+                            hopCount = if (direct) 0 else path.size,
+                            link = if (direct) LinkType.DIRECT else LinkType.RELAYED,
+                            path = path
+                        )
+                    }
+
                     val packet = serializer.deserialize(raw.data)
                     if (packet !is BeaconPacket) return@mapNotNull null
 
@@ -52,7 +87,8 @@ class CompositeBeaconScanner(
                         rssi = raw.rssi,
                         lastSeen = Instant.ofEpochMilli(raw.timestamp),
                         hopCount = 0,
-                        link = LinkType.DIRECT
+                        link = LinkType.DIRECT,
+                        path = listOf(packet.sender)
                     )
                 } catch (_: Exception) {
                     null
