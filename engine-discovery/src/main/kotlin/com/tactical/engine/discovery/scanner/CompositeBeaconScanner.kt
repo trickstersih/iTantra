@@ -35,7 +35,7 @@ class CompositeBeaconScanner(
 
     private val meshPeerFlow: Flow<DeviceNode> =
         radioTransport.incoming()
-            .mapNotNull(::decodeRadioBeacon)
+            .mapNotNull { raw -> decodeRadioBeacon(raw) }
             .shareIn(
                 meshScope,
                 started = SharingStarted.Eagerly,
