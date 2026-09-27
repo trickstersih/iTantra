@@ -185,8 +185,6 @@ class MainViewModel @Inject constructor(
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
-    private var scanJob: Job? = null
-    private var scanLoopJob: Job? = null
     private var healthJob: Job? = null
     private val observedPeerIds = mutableSetOf<String>()
     private val reconnectJobs = mutableMapOf<String, Job>()
@@ -437,12 +435,6 @@ class MainViewModel @Inject constructor(
                     try {
                         delay(1000L)
                         refreshSquadConnectionStates()
-                        // Scanning is intentionally not restarted here.
-                        // Discovery runs once at startup; the user can trigger
-                        // another scan manually from the Home screen.
-                        if (discoveryService is DefaultDiscoveryService && discoveryService.peers().value.isEmpty()) {
-                            runCatching { discoveryService.start() }
-                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) {
@@ -495,52 +487,32 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * Starts local beacon advertising and performs one discovery scan at startup.
-     * Further scans are user-triggered via the Home screen.
+     * Starts discovery for the application. The DiscoveryService owns the
+     * persistent low-duty-cycle scan loop; the UI does not stop it.
      *
-     * Beacon advertising remains active after the scan ends, so other devices
-     * can still discover this phone without this device continuously scanning.
+     * Background scan cycles intentionally do not toggle isScanning, so the
+     * device list remains visually stable while maintenance scans run.
      */
     fun startDiscovery() {
-        if (scanLoopJob?.isActive == true) return
-
-        scanLoopJob = viewModelScope.launch {
+        viewModelScope.launch {
             runCatching { discoveryService.start() }
-            try {
-                runScanCycle()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // A failed startup scan must not affect beacon advertising.
-            }
         }
     }
 
-    private suspend fun runScanCycle() {
-        if (scanJob?.isActive == true) return
-
-        val job = viewModelScope.launch {
-            try {
-                (discoveryService as? DefaultDiscoveryService)?.startDiscovery()
-                _uiState.update { it.copy(isScanning = true) }
-                delay(SINGLE_SCAN_WINDOW_MS)
-            } catch (_: Exception) {
-                // A single scan failure should not affect later manual scans.
-            } finally {
-                (discoveryService as? DefaultDiscoveryService)?.stopDiscovery()
-                _uiState.update { it.copy(isScanning = false) }
-            }
-        }
-
-        scanJob = job
-        job.join()
-        scanJob = null
-    }
-
-    /** Immediate scan requested by the user. Persistent discovery remains enabled. */
+    /**
+     * Requests an immediate scan without replacing the background maintenance
+     * loop. The visible indicator is only for an explicit user action.
+     */
     fun forceDiscovery() {
-        if (scanJob?.isActive == true) return
-        viewModelScope.launch { runScanCycle() }
+        val service = discoveryService as? DefaultDiscoveryService ?: return
+
+        service.scanNow()
+        _uiState.update { it.copy(isScanning = true) }
+
+        viewModelScope.launch {
+            delay(MANUAL_SCAN_DISPLAY_MS)
+            _uiState.update { it.copy(isScanning = false) }
+        }
     }
 
     fun addPeerToSquad(deviceAddress: String) {
@@ -1425,16 +1397,16 @@ class MainViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        scanLoopJob?.cancel()
+        // The foreground TacticalMeshService owns the singleton discovery
+        // lifecycle. Do not stop discovery when the Activity/ViewModel goes
+        // away, otherwise background reconnection would silently lose scans.
         healthJob?.cancel()
         audioRecorder.stop()
-        viewModelScope.launch { discoveryService.stop() }
-        scanJob?.cancel()
         reconnectJobs.values.forEach { it.cancel() }
         reconnectJobs.clear()
         super.onCleared()
     }
     companion object {
-        private const val SINGLE_SCAN_WINDOW_MS = 5000L
+        private const val MANUAL_SCAN_DISPLAY_MS = 5000L
     }
 }
