@@ -238,7 +238,7 @@ class BinaryPacketSerializer : PacketSerializer {
                 require(pathCount in 0..(ProtocolConstants.MAX_HOPS + 1)) {
                     "Invalid relay path length: $pathCount"
                 }
-                List(pathCount) { DeviceId(it.readString()) }
+                List(pathCount) { DeviceId(this@use.readString()) }
             } else {
                 emptyList()
             }
