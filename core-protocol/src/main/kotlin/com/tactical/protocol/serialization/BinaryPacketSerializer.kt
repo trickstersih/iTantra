@@ -23,6 +23,7 @@ class BinaryPacketSerializer : PacketSerializer {
             is VoicePacket -> encodeVoicePacket(packet)
             is EmergencyPacket -> encodeEmergencyPacket(packet)
             is BeaconPacket -> encodeBeaconPacket(packet)
+            is SquadControlPacket -> encodeSquadControlPacket(packet)
         }
 
         val type: Byte = when (packet) {
@@ -30,6 +31,7 @@ class BinaryPacketSerializer : PacketSerializer {
             is VoicePacket -> 2
             is EmergencyPacket -> 3
             is BeaconPacket -> 4
+            is SquadControlPacket -> 5
         }
 
         return wrapInEnvelope(type, payload)
@@ -121,6 +123,17 @@ class BinaryPacketSerializer : PacketSerializer {
         if (listenPort != null) {
             writeInt(listenPort)
         }
+        writeLong(packet.timestamp)
+    }
+
+    private fun encodeSquadControlPacket(packet: SquadControlPacket): ByteArray = byteStream {
+        writeString(packet.sender.value)
+        writeString(packet.target.value)
+        writeString(packet.requestId)
+        writeByte(packet.action.ordinal)
+        writeString(packet.callsign)
+        writeBoolean(packet.accepted != null)
+        packet.accepted?.let { writeBoolean(it) }
         writeLong(packet.timestamp)
     }
 
@@ -231,6 +244,25 @@ class BinaryPacketSerializer : PacketSerializer {
                 val listenPort = if (hasPort) it.readInt() else null
                 val timestamp = it.readLong()
                 BeaconPacket(sender = sender, callsign = callsign, listenPort = listenPort, timestamp = timestamp)
+            }
+            5 -> input.use {
+                val sender = DeviceId(it.readString())
+                val target = DeviceId(it.readString())
+                val requestId = it.readString()
+                val action = SquadControlAction.entries[it.readByte().toInt()]
+                val callsign = it.readString()
+                val hasAccepted = it.readBoolean()
+                val accepted = if (hasAccepted) it.readBoolean() else null
+                val timestamp = it.readLong()
+                SquadControlPacket(
+                    sender = sender,
+                    target = target,
+                    requestId = requestId,
+                    action = action,
+                    callsign = callsign,
+                    accepted = accepted,
+                    timestamp = timestamp
+                )
             }
             else -> throw IllegalArgumentException("Unknown packet type: ${unwrapped.type}")
         }
