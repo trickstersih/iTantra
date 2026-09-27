@@ -476,13 +476,20 @@ class MainViewModel @Inject constructor(
         _uiState.update { state ->
             fun updatePeer(peer: PeerNodeUi): PeerNodeUi =
                 peer.copy(
-                    isConnected = peer.deviceAddress in connectedIds,
-                    linkText = if (peer.deviceAddress in connectedIds) {
+                    // connectedSquadDeviceIds() only reports IDs already in the
+                    // persistent squad set. Keep an already-observed live GATT
+                    // state here until its state flow reports the disconnect.
+                    isConnected = peer.isConnected || peer.deviceAddress in connectedIds,
+                    linkText = if (
+                        peer.isConnected || peer.deviceAddress in connectedIds
+                    ) {
                         "DIRECT"
                     } else {
                         peer.linkText
                     },
-                    bleState = if (peer.deviceAddress in connectedIds) {
+                    bleState = if (
+                        peer.isConnected || peer.deviceAddress in connectedIds
+                    ) {
                         BleLinkState.CONNECTED
                     } else if (peer.bleState == BleLinkState.CONNECTED) {
                         BleLinkState.DISCONNECTED
@@ -668,7 +675,11 @@ class MainViewModel @Inject constructor(
 
                     state.copy(
                         squadPeers = updatedPeers.filter { it.deviceAddress in squadIds },
-                        availablePeers = updatedPeers.filter { it.deviceAddress !in squadIds }
+                        // A live GATT peer is not an "available" device and
+                        // must not offer another Add to Squad action.
+                        availablePeers = updatedPeers.filter {
+                            it.deviceAddress !in squadIds && !it.isConnected
+                        }
                     )
                 }
             }
