@@ -14,7 +14,9 @@ data class DeviceNode(
     val lastSeen: Instant,
     val hopCount: Int,
     val link: LinkType,
-    val battery: Int? = null
+    val battery: Int? = null,
+    /** Nodes traversed from the original sender before reaching this device. */
+    val path: List<DeviceId> = emptyList()
 ) {
     init {
         require(callsign.isNotBlank()) { "callsign must not be blank" }
