@@ -9,6 +9,7 @@ import com.tactical.app.di.UiLanguagePreferences
 import com.tactical.app.di.StoredPairedDevice
 import com.tactical.app.di.StoredReceivedMessage
 import com.tactical.app.di.StoredSentMessage
+import com.tactical.app.service.MeshSquadControlCoordinator
 import com.tactical.domain.identity.DeviceId
 import com.tactical.domain.identity.DeviceNode
 import com.tactical.domain.identity.LinkType
