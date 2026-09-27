@@ -156,7 +156,8 @@ class MainViewModel @Inject constructor(
     private val uiLanguagePreferences: UiLanguagePreferences,
     private val mmsTtsPlaybackPreferences: com.tactical.platform.speech.mms.MmsTtsPlaybackPreferences,
     private val mmsTtsPlaybackCoordinator: com.tactical.platform.speech.mms.MmsTtsPlaybackCoordinator,
-    private val messageNotificationNotifier: com.tactical.app.service.MessageNotificationNotifier
+    private val messageNotificationNotifier: com.tactical.app.service.MessageNotificationNotifier,
+    private val meshSquadControlCoordinator: MeshSquadControlCoordinator
 ) : ViewModel() {
 
     // Must be initialized before _uiState because storedPeerToUi() uses it
@@ -347,7 +348,12 @@ class MainViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            bleConnectionManager.pendingSquadRequests().collect { requests ->
+            combine(
+                bleConnectionManager.pendingSquadRequests(),
+                meshSquadControlCoordinator.pendingRequests
+            ) { direct, mesh ->
+                (direct + mesh).distinctBy { it.deviceId }
+            }.collect { requests ->
                 _uiState.update {
                     it.copy(
                         pendingSquadRequest = requests.firstOrNull(),
@@ -355,6 +361,12 @@ class MainViewModel @Inject constructor(
                         squadRequestError = null
                     )
                 }
+            }
+        }
+
+        viewModelScope.launch {
+            meshSquadControlCoordinator.membershipChanged.collect {
+                refreshSquadPeers()
             }
         }
 
@@ -553,12 +565,25 @@ class MainViewModel @Inject constructor(
     }
 
     fun addPeerToSquad(deviceAddress: String) {
+        val peer = _uiState.value.availablePeers
+            .firstOrNull { it.deviceAddress == deviceAddress }
+
         viewModelScope.launch {
-            runCatching { bleConnectionManager.addToSquad(deviceAddress) }
+            if (peer != null && peer.linkText.startsWith("VIA ")) {
+                runCatching {
+                    meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                }
+            } else {
+                runCatching {
+                    bleConnectionManager.addToSquad(deviceAddress)
+                }
+            }
         }
     }
     fun respondToSquadRequest(deviceId: String, approve: Boolean) {
         if (_uiState.value.respondingSquadRequestId != null) return
+
+        val isMeshRequest = meshSquadControlCoordinator.hasPending(deviceId)
 
         // Keep the display data from the request itself. Approval can succeed
         // over GATT even when the requester has not appeared in discovery yet.
@@ -574,7 +599,11 @@ class MainViewModel @Inject constructor(
 
         viewModelScope.launch {
             val result = runCatching {
-                bleConnectionManager.respondToSquadRequest(deviceId, approve)
+                if (isMeshRequest) {
+                    meshSquadControlCoordinator.respondToRequest(deviceId, approve)
+                } else {
+                    bleConnectionManager.respondToSquadRequest(deviceId, approve)
+                }
             }.getOrElse {
                 TacticalResult.Failure(it.message ?: it.javaClass.simpleName)
             }
