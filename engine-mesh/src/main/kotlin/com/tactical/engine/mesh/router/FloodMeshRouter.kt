@@ -33,13 +33,29 @@ class FloodMeshRouter(
         // Mark as seen
         dedup.put(hash)
 
+        // Reconstruct a useful path for packets produced by an older
+        // build that did not carry path metadata.
+        val existingPath = if (relayPacket.path.isNotEmpty()) {
+            relayPacket.path
+        } else {
+            listOf(relayPacket.originalSender, relayPacket.immediateSender)
+                .distinct()
+        }
+
+        // A path containing this node indicates a loop. Deduplication normally
+        // catches this too, but rejecting explicitly keeps route metadata clean.
+        if (localDeviceId in existingPath) {
+            return ForwardDecision.Drop("Relay path already contains local device")
+        }
+
         // 3. TTL check and decrement for rebroadcast
-        val updatedPacket = ttlTracker.decrement(relayPacket)
-        
+        val updatedPacket = ttlTracker.decrement(relayPacket)?.copy(
+            path = existingPath + localDeviceId
+        )
+
         // 4. Decision logic
         // In this architecture, all packets are accepted locally if they are new.
         // If we can decrement TTL, we also rebroadcast.
-        
         return if (updatedPacket != null) {
             ForwardDecision.AcceptAndRebroadcast(updatedPacket)
         } else {
