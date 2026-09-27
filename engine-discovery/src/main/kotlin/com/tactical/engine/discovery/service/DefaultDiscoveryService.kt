@@ -9,7 +9,6 @@ import com.tactical.engine.discovery.scanner.BeaconScanner
 import com.tactical.platform.api.wifi.WifiDirectManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.selects.select
 
 class DefaultDiscoveryService(
     private val scanner: BeaconScanner,
@@ -54,14 +53,11 @@ class DefaultDiscoveryService(
                     // Sleep between short scan windows to avoid continuously
                     // burning CPU/battery, but wake immediately for a manual
                     // Home-screen SCAN request.
-                    select<Unit> {
-                        immediateScanRequests.onReceive {
-                            // Start the next scan window immediately.
-                        }
-                        kotlinx.coroutines.selects.onTimeout(BACKGROUND_SCAN_INTERVAL_MS) {
-                            // Normal maintenance interval elapsed.
-                        }
+                    withTimeoutOrNull(BACKGROUND_SCAN_INTERVAL_MS) {
+                        immediateScanRequests.receive()
                     }
+                    // Either the normal maintenance interval elapsed or a
+                    // manual scan request woke the loop early.
                 }
             }
         }
