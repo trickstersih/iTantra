@@ -46,6 +46,8 @@ class BinaryPacketSerializer : PacketSerializer {
                 out.writeInt(packet.hopCount)
                 out.writeInt(innerPayload.size)
                 out.write(innerPayload)
+                out.writeInt(packet.path.size)
+                packet.path.forEach { out.writeString(it.value) }
             }
             bos.toByteArray()
         }
@@ -224,14 +226,28 @@ class BinaryPacketSerializer : PacketSerializer {
             val ttl = it.readInt()
             val hopCount = it.readInt()
             val innerLen = it.readInt()
+            require(innerLen >= 0 && innerLen <= it.available()) {
+                "Invalid relay inner length: $innerLen"
+            }
             val innerBytes = ByteArray(innerLen).also { buf -> it.readFully(buf) }
+
+            val path = if (it.available() > 0) {
+                val pathCount = it.readInt()
+                require(pathCount in 0..(ProtocolConstants.MAX_HOPS + 1)) {
+                    "Invalid relay path length: $pathCount"
+                }
+                List(pathCount) { DeviceId(it.readString()) }
+            } else {
+                emptyList()
+            }
 
             MeshRelayPacket(
                 originalSender = originalSender,
                 immediateSender = immediateSender,
                 ttl = ttl,
                 hopCount = hopCount,
-                payload = deserialize(innerBytes)
+                payload = deserialize(innerBytes),
+                path = path
             )
         }
     }
