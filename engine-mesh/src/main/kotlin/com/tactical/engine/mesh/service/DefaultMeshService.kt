@@ -63,6 +63,7 @@ class DefaultMeshService(
         // The embedded target set is the authoritative delivery gate.
         val targetDeviceIds = when (packet) {
             is com.tactical.domain.packet.TextPacket -> squadDeviceIdsProvider()
+            is com.tactical.domain.packet.SquadControlPacket -> setOf(packet.target.value)
             is com.tactical.domain.packet.EmergencyPacket -> null
             else -> null
         }
