@@ -191,6 +191,43 @@ class AndroidBleConnectionManager(
         }
     }
 
+    override suspend fun addMeshSquadMember(
+        deviceId: String,
+        callsign: String
+    ): TacticalResult<Unit> {
+        if (deviceId.isBlank() || deviceId == localDeviceId) {
+            return TacticalResult.Failure("Invalid mesh squad member")
+        }
+
+        if (callsign.isNotBlank()) {
+            BlePeerAddressRegistry.updateCallsign(deviceId, callsign)
+        }
+
+        val ids = squadDeviceIds().toMutableSet()
+        ids.add(deviceId)
+
+        prefs.edit()
+            .putStringSet(SQUAD_IDS_KEY, ids)
+            .remove(LEGACY_PAIRED_IDS_KEY)
+            .apply()
+
+        // Keep a discovered physical address when one is already known, but
+        // do not require it. The normal reconnect loop will wait for a future
+        // direct beacon to learn the address and then establish GATT.
+        resolveAddress(deviceId)?.let { address ->
+            rememberAddress(deviceId, address)
+        }
+
+        val resolvedAddress = resolveAddress(deviceId)
+        if (resolvedAddress != null && hasDirectConnection(resolvedAddress)) {
+            setState(resolvedAddress, BleLinkState.CONNECTED)
+        } else {
+            setState(deviceId, BleLinkState.DISCONNECTED)
+        }
+
+        return TacticalResult.Success(Unit)
+    }
+
     override suspend fun addToSquad(deviceAddress: String): TacticalResult<Unit> {
         if (!hasConnectPermission()) {
             return TacticalResult.Failure("Missing BLUETOOTH_CONNECT permission")
