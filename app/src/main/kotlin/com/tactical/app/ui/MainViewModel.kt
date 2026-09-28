@@ -179,7 +179,7 @@ class MainViewModel @Inject constructor(
             selectedLanguage = displayLanguageName(speechLanguagePreferences.selectedLanguageCode),
             uiLanguageCode = uiLanguagePreferences.selectedLanguageCode,
             squadPeers = localAppDataStore.loadPairedDevices()
-                .filter { it.deviceId in bleConnectionManager.squadDeviceIds() }
+                .filter { it.deviceId in squadMembershipStore.squadDeviceIds() }
                 .map(::storedPeerToUi),
             receivedMessages = localAppDataStore.loadReceivedMessages()
                 .asReversed()
@@ -317,13 +317,13 @@ class MainViewModel @Inject constructor(
             startDiscovery()
         }
 
-        bleConnectionManager.squadDeviceIds().forEach { pairedId ->
+        squadMembershipStore.squadDeviceIds().forEach { pairedId ->
             if (observedPeerIds.add(pairedId)) {
                 observePeerState(pairedId)
             }
         }
         viewModelScope.launch {
-            bleConnectionManager.squadDeviceIds().forEach { pairedId ->
+            squadMembershipStore.squadDeviceIds().forEach { pairedId ->
                 runCatching { bleConnectionManager.reconnectSquadMember(pairedId) }
             }
         }
@@ -405,7 +405,7 @@ class MainViewModel @Inject constructor(
                             previous?.callsign ?: id
                         }
 
-                        if (id in bleConnectionManager.squadDeviceIds()) {
+                        if (id in squadMembershipStore.squadDeviceIds()) {
                             localAppDataStore.savePairedDevice(
                                 StoredPairedDevice(
                                     deviceId = id,
@@ -482,7 +482,7 @@ class MainViewModel @Inject constructor(
                         }
                     }
 
-                    val squadIds = bleConnectionManager.squadDeviceIds()
+                    val squadIds = squadMembershipStore.squadDeviceIds()
                     val squadById = state.squadPeers.associateBy { it.deviceAddress }
                     val currentSquad = squadIds.mapNotNull { id ->
                         peers.firstOrNull { it.deviceAddress == id } ?: squadById[id]
@@ -520,29 +520,26 @@ class MainViewModel @Inject constructor(
      * the source of truth even when an inbound and outbound GATT callback race.
      */
     private fun refreshSquadConnectionStates() {
-        val connectedIds =
-            radioTransport.connectedPeerIds() intersect
-                squadMembershipStore.squadDeviceIds()
+        val connectedIds = radioTransport.connectedPeerIds()
         _uiState.update { state ->
             fun updatePeer(peer: PeerNodeUi): PeerNodeUi =
                 peer.copy(
-                    // connectedSquadDeviceIds() only reports IDs already in the
-                    // persistent squad set. Keep an already-observed live GATT
-                    // state here until its state flow reports the disconnect.
-                    isConnected = peer.isConnected || peer.deviceAddress in connectedIds,
-                    linkText = if (
-                        peer.isConnected || peer.deviceAddress in connectedIds
-                    ) {
-                        "DIRECT"
+                    isConnected = peer.deviceAddress in connectedIds,
+                    linkText = if (peer.deviceAddress in connectedIds) {
+                        connectedTransportText(peer, connectedIds)
                     } else {
                         peer.linkText
                     },
                     bleState = if (
-                        peer.isConnected || peer.deviceAddress in connectedIds
+                        peer.bleState == BleLinkState.CONNECTED &&
+                        peer.deviceAddress !in connectedIds
                     ) {
-                        BleLinkState.CONNECTED
-                    } else if (peer.bleState == BleLinkState.CONNECTED) {
                         BleLinkState.DISCONNECTED
+                    } else if (
+                        peer.deviceAddress in connectedIds &&
+                        peer.bleState == BleLinkState.CONNECTING
+                    ) {
+                        BleLinkState.CONNECTING
                     } else {
                         peer.bleState
                     }
@@ -686,7 +683,7 @@ class MainViewModel @Inject constructor(
     }
 
     private fun refreshSquadPeers() {
-        val squadIds = bleConnectionManager.squadDeviceIds()
+        val squadIds = squadMembershipStore.squadDeviceIds()
         val storedById = localAppDataStore
             .loadPairedDevices()
             .associateBy { it.deviceId }
@@ -738,7 +735,7 @@ class MainViewModel @Inject constructor(
                     val updatedPeers = (state.squadPeers + state.availablePeers)
                         .map(::updatePeer)
                         .distinctBy { it.deviceAddress }
-                    val squadIds = bleConnectionManager.squadDeviceIds()
+                    val squadIds = squadMembershipStore.squadDeviceIds()
 
                     state.copy(
                         squadPeers = updatedPeers.filter { it.deviceAddress in squadIds },
@@ -1239,7 +1236,7 @@ class MainViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            val squadIds = bleConnectionManager.squadDeviceIds()
+            val squadIds = squadMembershipStore.squadDeviceIds()
             if (squadIds.isEmpty()) {
                 updateSentMessageStatus(pending, "No squad members")
                 return@launch
@@ -1495,6 +1492,29 @@ class MainViewModel @Inject constructor(
     private fun formatTimestamp(epochMs: Long): String {
         if (epochMs <= 0L) return "Unknown"
         return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(epochMs))
+    }
+
+    private fun connectedTransportText(
+        peer: PeerNodeUi,
+        connectedIds: Set<String>
+    ): String {
+        val transports = buildList {
+            if (
+                peer.bleState == BleLinkState.CONNECTED ||
+                peer.bleState == BleLinkState.CONNECTING
+            ) {
+                add("BLE")
+            }
+            if (peer.wifiDirectState == RadioLinkState.CONNECTED) {
+                add("Wi-Fi")
+            }
+        }
+
+        return if (transports.isEmpty()) {
+            "DIRECT"
+        } else {
+            "DIRECT • " + transports.joinToString(" + ")
+        }
     }
 
     private fun routeLinkText(
