@@ -4,9 +4,11 @@ import argparse, hashlib, json, zipfile
 from pathlib import Path, PurePosixPath
 
 LANGUAGES = {
-    "eng": ("English", "en"), "ben": ("Bengali", "bn"), "guj": ("Gujarati", "gu"),
-    "hin": ("Hindi", "hi"), "kan": ("Kannada", "kn"), "mal": ("Malayalam", "ml"),
-    "mar": ("Marathi", "mr"), "ory": ("Odia", "or"), "tam": ("Tamil", "ta"), "tel": ("Telugu", "te"),
+    "english": ("English", "en"), "bengali": ("Bengali", "bn"),
+    "gujarati": ("Gujarati", "gu"), "hindi": ("Hindi", "hi"),
+    "kannada": ("Kannada", "kn"), "malayalam": ("Malayalam", "ml"),
+    "marathi": ("Marathi", "mr"), "odia": ("Odia", "or"),
+    "tamil": ("Tamil", "ta"), "telugu": ("Telugu", "te"),
 }
 
 def sha256_stream(zf, member):
@@ -64,9 +66,10 @@ def main():
                 except Exception as exc:
                     print(f"     config_error={exc}")
         print(f"Total ONNX size: {total / 1048576:.2f} MiB")
-        print("Expected language names:")
-        for code, (name, iso) in LANGUAGES.items():
-            print(f"  {'OK' if any(code in m.lower() for m in models) else 'MISSING':7s} {name} ({iso})")
+        print("Expected language folders:")
+        folders = {PurePosixPath(m).parts[0].lower() for m in models}
+        for folder, (name, iso) in LANGUAGES.items():
+            print(f"  {'OK' if folder in folders else 'MISSING':7s} {name} ({iso})")
 
 if __name__ == "__main__":
     main()
