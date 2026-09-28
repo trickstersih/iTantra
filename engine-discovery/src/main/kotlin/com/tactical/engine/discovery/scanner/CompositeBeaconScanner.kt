@@ -118,8 +118,10 @@ class CompositeBeaconScanner(
                     hopCount = if (direct) 0 else path.size,
                     link = if (direct) LinkType.DIRECT else LinkType.RELAYED,
                     path = path,
-                    transportStates = if (direct && raw.transport != null) {
-                        mapOf(raw.transport to RadioLinkState.CONNECTED)
+                    transportStates = if (direct) {
+                        raw.transport?.let {
+                            mapOf(it to RadioLinkState.CONNECTED)
+                        } ?: emptyMap()
                     } else {
                         emptyMap()
                     }
@@ -138,11 +140,9 @@ class CompositeBeaconScanner(
                 hopCount = 0,
                 link = LinkType.DIRECT,
                 path = listOf(packet.sender),
-                transportStates = if (raw.transport != null) {
-                    mapOf(raw.transport to RadioLinkState.CONNECTED)
-                } else {
-                    emptyMap()
-                }
+                transportStates = raw.transport?.let {
+                    mapOf(it to RadioLinkState.CONNECTED)
+                } ?: emptyMap()
             )
         } catch (_: Exception) {
             null
