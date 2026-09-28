@@ -46,6 +46,9 @@ class BleRadioTransport(
     override fun connectedPeerIds(): Set<String> =
         connectionRegistry.connectedApplicationIds()
 
+    override fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> =
+        mapOf(RadioType.BLUETOOTH to connectedPeerIds())
+
     private val bluetoothManager: BluetoothManager by lazy {
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     }
