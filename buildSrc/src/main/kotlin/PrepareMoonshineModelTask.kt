@@ -22,7 +22,7 @@ abstract class PrepareMoonshineModelTask : DefaultTask() {
     @get:Input
     abstract val baseUrl: Property<String>
 
-    @get:InputFiles
+    @get:Input
     abstract val modelFiles: ListProperty<String>
 
     @TaskAction
