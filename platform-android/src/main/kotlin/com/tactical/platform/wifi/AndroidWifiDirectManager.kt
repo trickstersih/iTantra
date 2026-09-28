@@ -189,11 +189,7 @@ class AndroidWifiDirectManager(
 
         _peers.value = emptyList()
         _connectionInfo.value = WifiDirectConnectionInfo()
-        _state.value = if (wifiManager.isWifiEnabled) {
-            RadioLinkState.AVAILABLE
-        } else {
-            RadioLinkState.UNAVAILABLE
-        }
+        _state.value = RadioLinkState.UNAVAILABLE
     }
 
     override suspend fun advertisePresence(
