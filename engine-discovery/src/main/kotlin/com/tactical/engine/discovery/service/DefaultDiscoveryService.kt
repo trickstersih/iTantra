@@ -70,6 +70,33 @@ class DefaultDiscoveryService(
         startDiscovery()
     }
 
+    /**
+     * Re-attempt Wi-Fi Direct after the Activity has received a runtime
+     * permission grant. This deliberately does not restart BLE discovery,
+     * keeping existing Bluetooth connections and scan jobs untouched.
+     */
+    suspend fun refreshWifiDirect() {
+        val result = wifiDirectManager.start()
+        if (result is com.tactical.domain.result.TacticalResult.Failure) {
+            return
+        }
+
+        runCatching {
+            wifiDirectManager.advertisePresence(
+                localDeviceId,
+                localCallsignProvider()
+            )
+        }
+
+        // discoverPeers() starts the manager's underlying service discovery
+        // as a side effect; the existing collector in wifiJob remains alive.
+        runCatching {
+            wifiDirectManager.discoverPeers()
+        }
+
+        startDiscovery()
+    }
+
     fun startDiscovery() {
         if (scanJob == null) {
             scanJob = scope.launch {
