@@ -420,23 +420,6 @@ class MainActivity : ComponentActivity() {
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
-    private fun requestMissingWifiDirectPermission() {
-        if (runtimePermissionRequestInFlight) return
-
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.NEARBY_WIFI_DEVICES
-        } else {
-            Manifest.permission.ACCESS_FINE_LOCATION
-        }
-
-        if (!hasWifiDirectRuntimePermission()) {
-            runtimePermissionRequestInFlight = true
-            requestPermissions.launch(
-                arrayOf(permission)
-            )
-        }
-    }
-
     private fun ensureWirelessEnabled() {
         if (isFinishing || isDestroyed) return
 
@@ -460,7 +443,6 @@ class MainActivity : ComponentActivity() {
 
         if (wifiOn && !wifiPermissionGranted) {
             startupCheckPending = true
-            requestMissingWifiDirectPermission()
             return
         }
 
