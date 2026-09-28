@@ -44,17 +44,6 @@ class DefaultDiscoveryService(
         // Failure here is non-fatal: BLE can still discover the peer.
         runCatching {
             wifiDirectManager.advertisePresence(localDeviceId, localCallsignProvider())
-        }.onFailure {
-            android.util.Log.w(
-                "DefaultDiscoveryService",
-                "Wi-Fi Direct presence advertisement threw",
-                it
-            )
-        }.onSuccess { result ->
-            android.util.Log.d(
-                "DefaultDiscoveryService",
-                "Wi-Fi Direct presence result: $result"
-            )
         }
 
         // Mesh topology reception is continuous and independent of the
