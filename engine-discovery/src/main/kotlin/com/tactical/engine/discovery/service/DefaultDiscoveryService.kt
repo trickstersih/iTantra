@@ -30,10 +30,13 @@ class DefaultDiscoveryService(
     override fun peers() = catalog.all()
 
     override suspend fun start() {
-        if (beaconingStarted) return
-        beaconingStarted = true
-
-        emitter.start()
+        // BLE beaconing, mesh reception, and Wi-Fi Direct each have their own
+        // lifecycle. Do not return early just because BLE/discovery was already
+        // started: Wi-Fi may have been enabled after the first service start.
+        if (!beaconingStarted) {
+            beaconingStarted = true
+            emitter.start()
+        }
 
         val wifiStart = wifiDirectManager.start()
         if (wifiStart is com.tactical.domain.result.TacticalResult.Failure) {
