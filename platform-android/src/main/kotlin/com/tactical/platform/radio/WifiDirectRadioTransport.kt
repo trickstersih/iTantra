@@ -35,6 +35,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class WifiDirectRadioTransport(
     private val wifiDirectManager: WifiDirectManager,
+    private val localDeviceId: String,
+    private val localCallsignProvider: () -> String,
     private val scope: CoroutineScope =
         CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) : RadioTransport {
@@ -251,8 +253,7 @@ class WifiDirectRadioTransport(
     }
 
     private fun sendHello(socket: Socket) {
-        val localDeviceId = LOCAL_DEVICE_ID_PLACEHOLDER
-        val localCallsign = LOCAL_CALLSIGN_PLACEHOLDER
+        val localCallsign = localCallsignProvider()
         val payload = encodeHello(localDeviceId, localCallsign)
 
         val frame = ByteArray(payload.size + 1)
@@ -398,12 +399,5 @@ class WifiDirectRadioTransport(
         private const val FRAME_TYPE_PACKET = 2
         private const val UNKNOWN_RSSI = 0
 
-        /**
-         * Filled by DI in the next Wi-Fi implementation phase. Keeping the
-         * transport identity boundary explicit prevents use of the Android
-         * device name/MAC as the application's stable identity.
-         */
-        private const val LOCAL_DEVICE_ID_PLACEHOLDER = ""
-        private const val LOCAL_CALLSIGN_PLACEHOLDER = ""
     }
 }
