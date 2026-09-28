@@ -50,13 +50,11 @@ class DefaultDiscoveryService(
                 "Wi-Fi Direct presence advertisement threw",
                 it
             )
-        }.also {
-            if (it.isSuccess) {
-                android.util.Log.d(
-                    "DefaultDiscoveryService",
-                    "Wi-Fi Direct presence advertisement call completed"
-                )
-            }
+        }.onSuccess { result ->
+            android.util.Log.d(
+                "DefaultDiscoveryService",
+                "Wi-Fi Direct presence result: $result"
+            )
         }
 
         // Mesh topology reception is continuous and independent of the
