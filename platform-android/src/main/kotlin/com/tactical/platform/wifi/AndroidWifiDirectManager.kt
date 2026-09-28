@@ -59,6 +59,7 @@ class AndroidWifiDirectManager(
     private val started = AtomicBoolean(false)
     private var receiverRegistered = false
     private var serviceDiscoveryStarted = false
+    private var discoveryRequested = false
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
     private var discoveryRetryJob: Job? = null
     private var presenceRetryJob: Job? = null
@@ -84,7 +85,11 @@ class AndroidWifiDirectManager(
                                 registerPresenceServiceAsync(id, callsign)
                             }
                         }
-                        startServiceDiscoveryInternal()
+                        if (discoveryRequested) {
+                            if (discoveryRequested) {
+                                startServiceDiscoveryInternal()
+                            }
+                        }
                     } else {
                         resetP2pState()
                     }
@@ -120,7 +125,10 @@ class AndroidWifiDirectManager(
 
                 LocationManager.MODE_CHANGED_ACTION -> {
                     if (isLocationModeEnabled()) {
-                        if (started.get() && wifiManager.isWifiEnabled) {
+                        if (started.get() &&
+                            wifiManager.isWifiEnabled &&
+                            discoveryRequested
+                        ) {
                             startServiceDiscoveryInternal()
                         }
                     } else {
@@ -172,7 +180,6 @@ class AndroidWifiDirectManager(
             } else {
                 _state.value = RadioLinkState.AVAILABLE
                 refreshConnectionInfo()
-                startServiceDiscoveryInternal()
                 TacticalResult.Success(Unit)
             }
         } catch (e: SecurityException) {
@@ -192,6 +199,7 @@ class AndroidWifiDirectManager(
         if (!started.compareAndSet(true, false)) return
 
         serviceDiscoveryStarted = false
+        discoveryRequested = false
         discoveryRetryJob?.cancel()
         discoveryRetryJob = null
         presenceRetryJob?.cancel()
@@ -383,6 +391,8 @@ class AndroidWifiDirectManager(
         }
 
         if (wifiManager.isWifiEnabled) {
+            discoveryRequested = true
+
             // iTantra identity discovery uses DNS-SD. Do not run generic
             // discoverPeers() at the same time: Android keeps peer discovery
             // active until a connection/group is formed, which can make the
@@ -573,7 +583,11 @@ class AndroidWifiDirectManager(
 
     private fun scheduleServiceDiscoveryRetry() {
         if (discoveryRetryJob?.isActive == true) return
-        if (!started.get() || !wifiManager.isWifiEnabled || !hasWifiDirectPermission()) {
+        if (!started.get() ||
+            !discoveryRequested ||
+            !wifiManager.isWifiEnabled ||
+            !hasWifiDirectPermission()
+        ) {
             return
         }
 
