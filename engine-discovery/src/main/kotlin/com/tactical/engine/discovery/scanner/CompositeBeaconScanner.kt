@@ -2,6 +2,8 @@ package com.tactical.engine.discovery.scanner
 
 import com.tactical.domain.identity.DeviceNode
 import com.tactical.domain.identity.LinkType
+import com.tactical.domain.identity.RadioLinkState
+import com.tactical.domain.identity.RadioType
 import com.tactical.domain.packet.BeaconPacket
 import com.tactical.domain.packet.MeshRelayPacket
 import com.tactical.platform.api.ble.BleBeaconPayloadCodec
@@ -62,7 +64,10 @@ class CompositeBeaconScanner(
                     lastSeen = Instant.now(),
                     hopCount = 0,
                     link = LinkType.DIRECT,
-                    path = listOf(packet.sender)
+                    path = listOf(packet.sender),
+                    transportStates = mapOf(
+                        RadioType.BLUETOOTH to RadioLinkState.AVAILABLE
+                    )
                 )
             }
 
@@ -112,7 +117,12 @@ class CompositeBeaconScanner(
                     lastSeen = Instant.ofEpochMilli(raw.timestamp),
                     hopCount = if (direct) 0 else path.size,
                     link = if (direct) LinkType.DIRECT else LinkType.RELAYED,
-                    path = path
+                    path = path,
+                    transportStates = if (direct && raw.transport != null) {
+                        mapOf(raw.transport to RadioLinkState.CONNECTED)
+                    } else {
+                        emptyMap()
+                    }
                 )
             }
 
@@ -127,7 +137,12 @@ class CompositeBeaconScanner(
                 lastSeen = Instant.ofEpochMilli(raw.timestamp),
                 hopCount = 0,
                 link = LinkType.DIRECT,
-                path = listOf(packet.sender)
+                path = listOf(packet.sender),
+                transportStates = if (raw.transport != null) {
+                    mapOf(raw.transport to RadioLinkState.CONNECTED)
+                } else {
+                    emptyMap()
+                }
             )
         } catch (_: Exception) {
             null
