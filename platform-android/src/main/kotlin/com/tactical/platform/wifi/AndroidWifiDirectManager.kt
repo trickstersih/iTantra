@@ -559,7 +559,7 @@ class AndroidWifiDirectManager(
 
         val accepted = suspendCancellableCoroutine<Boolean> { continuation ->
             val config = WifiP2pConfig().apply {
-                deviceAddress = cleanedAddress
+                this.deviceAddress = cleanedAddress
             }
 
             try {
