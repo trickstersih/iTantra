@@ -131,9 +131,6 @@ class AndroidWifiDirectManager(
                     }
                 }
 
-                WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                    requestPeerList()
-                }
 
                 WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION -> {
                     val discovering = intent.getIntExtra(
@@ -376,54 +373,6 @@ class AndroidWifiDirectManager(
         }
     }
 
-    private fun addLocalServiceAwait(
-        serviceInfo: WifiP2pDnsSdServiceInfo,
-        finish: (TacticalResult<Unit>) -> Unit
-    ) {
-        try {
-            wifiP2pManager.addLocalService(
-                wifichannel,
-                serviceInfo,
-                object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() {
-                        android.util.Log.d(
-                            TAG,
-                            "iTantra Wi-Fi presence advertised"
-                        )
-                        finish(TacticalResult.Success(Unit))
-                    }
-
-                    override fun onFailure(reason: Int) {
-                        android.util.Log.w(
-                            TAG,
-                            "iTantra Wi-Fi presence registration failed: " +
-                                reason
-                        )
-                        finish(
-                            TacticalResult.Failure(
-                                "iTantra Wi-Fi service registration failed: " +
-                                    reason
-                            )
-                        )
-                    }
-                }
-            )
-        } catch (_: SecurityException) {
-            finish(
-                TacticalResult.Failure(
-                    "Wi-Fi Direct permission denied"
-                )
-            )
-        } catch (e: Exception) {
-            finish(
-                TacticalResult.Failure(
-                    "iTantra Wi-Fi service registration failed: " +
-                        (e.message ?: e.javaClass.simpleName)
-                )
-            )
-        }
-    }
-
     override suspend fun discoverPeers(): Flow<List<WifiDirectPeer>> {
         val startResult = start()
 
@@ -474,6 +423,11 @@ class AndroidWifiDirectManager(
                     )
                 },
                 WifiP2pManager.DnsSdTxtRecordListener { _, record, device ->
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi TXT from " + device.deviceAddress +
+                            ": " + record
+                    )
                     if (record["app"] != "itantra") return@DnsSdTxtRecordListener
 
                     val id = record["id"] ?: return@DnsSdTxtRecordListener
@@ -504,8 +458,15 @@ class AndroidWifiDirectManager(
                 }
             )
 
-            val request = WifiP2pDnsSdServiceRequest.newInstance()
+            val request = WifiP2pDnsSdServiceRequest.newInstance(
+                "_itantra",
+                "_presence._tcp"
+            )
             serviceRequest = request
+            android.util.Log.d(
+                TAG,
+                "Registering iTantra DNS-SD service request"
+            )
 
             wifiP2pManager.addServiceRequest(
                 wifichannel,
@@ -651,9 +612,6 @@ class AndroidWifiDirectManager(
 
     private fun resetP2pState() {
         removeServiceRequest()
-        peerDiscoveryStarted = false
-        peerDiscoveryRetryJob?.cancel()
-        peerDiscoveryRetryJob = null
         presenceRetryJob?.cancel()
         presenceRetryJob = null
         presenceRegistered = false
