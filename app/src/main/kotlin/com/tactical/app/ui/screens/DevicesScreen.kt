@@ -411,14 +411,25 @@ private fun AvailableDeviceCard(
                     )
                 }
 
+                val connectedTransports = buildList {
+                    if (peer.bleState == BleLinkState.CONNECTED) add("BLE")
+                    if (peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED) {
+                        add("Wi-Fi Direct")
+                    }
+                }
+                val transportStatus = connectedTransports.joinToString(" + ")
+                val statusText = when {
+                    transportStatus.isNotBlank() ->
+                        LocalUiStrings.current.text(UiTextKey.CONNECTED) + " • " + transportStatus
+                    peer.bleState == BleLinkState.CONNECTING ||
+                        peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTING ->
+                        LocalUiStrings.current.text(UiTextKey.CONNECTING)
+                    else -> LocalUiStrings.current.text(UiTextKey.AVAILABLE)
+                }
+
                 Text(
-                    when (peer.bleState) {
-                        BleLinkState.CONNECTED -> LocalUiStrings.current.text(UiTextKey.CONNECTED)
-                        BleLinkState.CONNECTING -> LocalUiStrings.current.text(UiTextKey.CONNECTING)
-                        BleLinkState.FAILED -> LocalUiStrings.current.text(UiTextKey.AVAILABLE)
-                        else -> LocalUiStrings.current.text(UiTextKey.AVAILABLE)
-                    },
-                    color = if (peer.bleState == BleLinkState.CONNECTED) {
+                    statusText,
+                    color = if (peer.isConnected) {
                         RedTacticalStatusGreen
                     } else {
                         RedTacticalStatusYellow
