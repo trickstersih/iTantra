@@ -168,6 +168,7 @@ class WifiDirectRadioTransport(
                 }
 
                 val socket = Socket()
+                var readLoopCompleted = false
                 try {
                     socket.tcpNoDelay = true
                     socket.connect(
@@ -176,8 +177,8 @@ class WifiDirectRadioTransport(
                     )
                     registerSocket(socket)
                     sendHello(socket)
+                    readLoopCompleted = true
                     readLoop(socket)
-                    return@launch
                 } catch (e: IOException) {
                     android.util.Log.d(
                         TAG,
@@ -185,11 +186,18 @@ class WifiDirectRadioTransport(
                             (attempt + 1) + "/" + SOCKET_CONNECT_ATTEMPTS +
                             " failed: " + (e.message ?: "I/O error")
                     )
+                } finally {
                     removeSocket(socket)
+                }
 
-                    if (attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
-                        kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
-                    }
+                if (wifiDirectManager.connectionInfo().value.groupOwnerAddress != groupOwnerAddress) {
+                    return@launch
+                }
+
+                if (readLoopCompleted && attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
+                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
+                } else if (attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
+                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
                 }
             }
         }
