@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import android.os.Build
+import com.tactical.domain.identity.RadioType
 import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.ble.BlePeerAddressRegistry
 import com.tactical.platform.ble.SquadControlCodec
@@ -39,6 +40,11 @@ class BleRadioTransport(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 ) : RadioTransport {
+
+    override val type: RadioType = RadioType.BLUETOOTH
+
+    override fun connectedPeerIds(): Set<String> =
+        connectionRegistry.connectedApplicationIds()
 
     private val bluetoothManager: BluetoothManager by lazy {
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -105,8 +111,9 @@ class BleRadioTransport(
                                 RawPacket(
                                     data = complete,
                                     rssi = connectionRegistry.lastKnownRssi(device) ?: UNKNOWN_RSSI,
-                                    timestamp = System.currentTimeMillis()
-                                )
+                                    timestamp = System.currentTimeMillis(),
+                                    transport = RadioType.BLUETOOTH
+                                }
                             )
                         }
                     }
@@ -295,7 +302,8 @@ class BleRadioTransport(
                     RawPacket(
                         data = complete,
                         rssi = connectionRegistry.lastKnownRssi(address) ?: UNKNOWN_RSSI,
-                        timestamp = System.currentTimeMillis()
+                        timestamp = System.currentTimeMillis(),
+                        transport = RadioType.BLUETOOTH
                     )
                 )
             }
