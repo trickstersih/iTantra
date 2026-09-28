@@ -85,6 +85,22 @@ class TacticalMeshService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, createNotification())
 
+        if (intent?.action == ACTION_REFRESH_WIFI_DIRECT) {
+            serviceScope.launch {
+                runCatching {
+                    (discoveryService as? com.tactical.engine.discovery.service.DefaultDiscoveryService)
+                        ?.refreshWifiDirect()
+                }.onFailure { error ->
+                    android.util.Log.w(
+                        "TacticalMeshService",
+                        "Failed to refresh Wi-Fi Direct after permission grant",
+                        error
+                    )
+                }
+            }
+            return START_STICKY
+        }
+
         // Injecting MeshService causes the mesh engine to be created.
         // DiscoveryService requires an explicit start().
         if (emergencyJob?.isActive != true) {
@@ -278,6 +294,8 @@ class TacticalMeshService : Service() {
     }
 
     companion object {
+        const val ACTION_REFRESH_WIFI_DIRECT =
+            "com.tactical.app.action.REFRESH_WIFI_DIRECT"
         private const val NOTIFICATION_ID = 1001
     }
 }
