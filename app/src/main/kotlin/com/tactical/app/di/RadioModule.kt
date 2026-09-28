@@ -45,8 +45,13 @@ object RadioModule {
     @Provides
     @Singleton
     fun provideWifiDirectRadioTransport(
-        wifiDirectManager: com.tactical.platform.api.wifi.WifiDirectManager
-    ): WifiDirectRadioTransport = WifiDirectRadioTransport(wifiDirectManager)
+        wifiDirectManager: com.tactical.platform.api.wifi.WifiDirectManager,
+        identityStore: DeviceIdentityStore
+    ): WifiDirectRadioTransport = WifiDirectRadioTransport(
+        wifiDirectManager = wifiDirectManager,
+        localDeviceId = identityStore.deviceIdValue,
+        localCallsignProvider = identityStore::callsign
+    )
 
     @Provides
     @Singleton
