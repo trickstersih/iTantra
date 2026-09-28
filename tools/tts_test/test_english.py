@@ -79,6 +79,9 @@ def main() -> int:
 
             start = time.perf_counter()
             with wave.open(str(output), "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(voice.config.sample_rate)
                 voice.synthesize(TEXT, wav_file)
             elapsed = time.perf_counter() - start
 
