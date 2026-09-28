@@ -1,5 +1,6 @@
 package com.tactical.platform.radio
 
+import com.tactical.domain.identity.RadioType
 import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.radio.RadioTransport
 import com.tactical.platform.api.radio.RawPacket
@@ -30,6 +31,11 @@ class CompositeRadioTransport(
     private val bleTransport: RadioTransport,
     private val wifiDirectTransport: RadioTransport
 ) : RadioTransport {
+
+    override val type: RadioType? = null
+
+    override fun connectedPeerIds(): Set<String> =
+        bleTransport.connectedPeerIds() + wifiDirectTransport.connectedPeerIds()
 
     override fun incoming(): Flow<RawPacket> =
         merge(
