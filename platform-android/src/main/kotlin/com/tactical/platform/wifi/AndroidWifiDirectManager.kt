@@ -151,6 +151,22 @@ class AndroidWifiDirectManager(
                         "Wi-Fi P2P discovery state=" +
                             if (discovering) "STARTED" else "STOPPED"
                     )
+
+                    // With generic peer discovery removed, this broadcast
+                    // now only matters as a recovery signal for the active
+                    // DNS-SD discovery operation.
+                    if (!discovering &&
+                        discoveryRequested &&
+                        serviceDiscoveryStarted &&
+                        !_connectionInfo.value.groupFormed
+                    ) {
+                        android.util.Log.w(
+                            TAG,
+                            "Wi-Fi DNS-SD discovery stopped; scheduling recovery"
+                        )
+                        removeServiceRequest()
+                        scheduleServiceDiscoveryRetry()
+                    }
                 }
             }
         }
