@@ -130,6 +130,15 @@ class BleConnectionRegistry {
 
     fun allConnectedAddresses(): Set<String> = inboundDevices.keys + outboundGatts.keys
 
+    /**
+     * Stable application IDs for every currently connected BLE peer whose
+     * address has been resolved through the iTantra identity registry.
+     */
+    fun connectedApplicationIds(): Set<String> =
+        allConnectedAddresses()
+            .mapNotNull { BlePeerAddressRegistry.applicationIdFor(it) }
+            .toSet()
+
     fun outboundGatt(address: String): BluetoothGatt? = outboundGatts[address]
     fun inboundDevice(address: String): BluetoothDevice? = inboundDevices[address]
 
