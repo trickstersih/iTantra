@@ -1,6 +1,13 @@
 name: Test pushed Piper TTS models
 
 on:
+  push:
+    branches:
+      - mesh-topology-discovery
+    paths:
+      - "app/src/main/assets/models/tts_piper(10).zip"
+      - "tools/tts_test/**"
+      - ".github/workflows/test-tts-models.yml"
   workflow_dispatch:
 
 jobs:
