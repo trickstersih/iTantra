@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
+import android.location.LocationManager
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pManager
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
@@ -104,6 +105,19 @@ class AndroidWifiDirectManager(
 
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
                     refreshConnectionInfo()
+                }
+
+                LocationManager.MODE_CHANGED_ACTION -> {
+                    if (isLocationModeEnabled()) {
+                        if (started.get() && wifiManager.isWifiEnabled) {
+                            startServiceDiscoveryInternal()
+                        }
+                    } else {
+                        removeServiceRequest()
+                        if (!_connectionInfo.value.groupFormed) {
+                            _state.value = RadioLinkState.FAILED
+                        }
+                    }
                 }
 
                 WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION -> {
@@ -295,6 +309,15 @@ class AndroidWifiDirectManager(
             !wifiManager.isWifiEnabled ||
             !hasWifiDirectPermission()
         ) {
+            return
+        }
+
+        if (!isLocationModeEnabled()) {
+            _state.value = RadioLinkState.FAILED
+            android.util.Log.w(
+                TAG,
+                "Wi-Fi Direct discovery is unavailable while Location Mode is off"
+            )
             return
         }
 
@@ -604,6 +627,7 @@ class AndroidWifiDirectManager(
             addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
             addAction(WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION)
             addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+            addAction(LocationManager.MODE_CHANGED_ACTION)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -620,6 +644,18 @@ class AndroidWifiDirectManager(
         receiverRegistered = true
     }
 
+    private fun isLocationModeEnabled(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            context.getSystemService(LocationManager::class.java)?.isLocationEnabled == true
+        } else {
+            runCatching {
+                android.provider.Settings.Secure.getInt(
+                    context.contentResolver,
+                    android.provider.Settings.Secure.LOCATION_MODE
+                ) != android.provider.Settings.Secure.LOCATION_MODE_OFF
+            }.getOrDefault(false)
+        }
+    }
     private fun hasWifiDirectPermission(): Boolean {
         val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             Manifest.permission.NEARBY_WIFI_DEVICES
