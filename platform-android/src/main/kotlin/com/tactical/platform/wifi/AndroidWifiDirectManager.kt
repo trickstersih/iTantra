@@ -86,9 +86,7 @@ class AndroidWifiDirectManager(
                             }
                         }
                         if (discoveryRequested) {
-                            if (discoveryRequested) {
-                                startServiceDiscoveryInternal()
-                            }
+                            startServiceDiscoveryInternal()
                         }
                     } else {
                         resetP2pState()
@@ -109,7 +107,9 @@ class AndroidWifiDirectManager(
                                     registerPresenceServiceAsync(id, callsign)
                                 }
                             }
-                            startServiceDiscoveryInternal()
+                            if (discoveryRequested) {
+                                startServiceDiscoveryInternal()
+                            }
                         }
                     } else if (
                         wifiState == WifiManager.WIFI_STATE_DISABLED ||
