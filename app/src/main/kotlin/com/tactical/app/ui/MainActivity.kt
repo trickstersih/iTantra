@@ -65,7 +65,10 @@ class MainActivity : ComponentActivity() {
     private val wirelessWarning = mutableStateOf<String?>(null)
     private val wirelessStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+            if (
+                intent.action == BluetoothAdapter.ACTION_STATE_CHANGED ||
+                intent.action == WifiManager.WIFI_STATE_CHANGED_ACTION
+            ) {
                 ensureWirelessEnabled()
             }
         }
@@ -335,7 +338,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        val filter = IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
                 wirelessStateReceiver,
