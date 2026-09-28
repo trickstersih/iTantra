@@ -39,6 +39,10 @@ import com.tactical.engine.discovery.service.DiscoveryService
 import com.tactical.engine.mesh.service.MeshService
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.ble.BleLinkState
+import com.tactical.platform.api.radio.RadioTransport
+import com.tactical.platform.api.squad.SquadMembershipStore
+import com.tactical.domain.identity.RadioLinkState
+import com.tactical.domain.identity.RadioType
 import com.tactical.platform.api.ble.SquadRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -62,7 +66,8 @@ data class PeerNodeUi(
     val distanceText: String,
     val signalBars: Int,
     val linkText: String,
-    val bleState: BleLinkState = BleLinkState.AVAILABLE
+    val bleState: BleLinkState = BleLinkState.AVAILABLE,
+    val wifiDirectState: RadioLinkState = RadioLinkState.UNAVAILABLE
 )
 
 data class ChatMessageUi(
@@ -146,6 +151,8 @@ class MainViewModel @Inject constructor(
     private val meshService: MeshService,
     private val identityStore: DeviceIdentityStore,
     private val bleConnectionManager: BleConnectionManager,
+    private val radioTransport: RadioTransport,
+    private val squadMembershipStore: SquadMembershipStore,
     private val audioRecorder: AudioRecorder,
     private val speechToText: SpeechToText,
     private val hapticEngine: HapticEngine,
@@ -410,22 +417,49 @@ class MainViewModel @Inject constructor(
                             )
                         }
 
+                        val bluetoothState = if (
+                            previous?.bleState != null
+                        ) {
+                            previous.bleState
+                        } else {
+                            BleLinkState.AVAILABLE
+                        }
+                        val wifiState =
+                            device.transportStates[RadioType.WIFI_DIRECT]
+                                ?: previous?.wifiDirectState
+                                ?: RadioLinkState.UNAVAILABLE
+
+                        val hasLiveRadio =
+                            bluetoothState == BleLinkState.CONNECTED ||
+                                wifiState == RadioLinkState.CONNECTED ||
+                                previous?.isConnected == true
+
                         val routeText = routeLinkText(
                             device = device,
                             knownCallsigns = knownCallsigns
                         )
-                        val effectiveLinkText = if (
-                            previous?.isConnected == true
-                        ) {
-                            "DIRECT"
-                        } else {
-                            routeText
+                        val transportText = buildList {
+                            if (bluetoothState == BleLinkState.CONNECTED) {
+                                add("BLE")
+                            }
+                            if (wifiState == RadioLinkState.CONNECTED) {
+                                add("Wi-Fi")
+                            }
+                        }.joinToString(" + ")
+
+                        val effectiveLinkText = when {
+                            hasLiveRadio && transportText.isNotBlank() ->
+                                "DIRECT • $transportText"
+                            hasLiveRadio ->
+                                "DIRECT"
+                            else ->
+                                routeText
                         }
 
                         PeerNodeUi(
                             deviceAddress = id,
                             callsign = callsign,
-                            isConnected = previous?.isConnected ?: false,
+                            isConnected = hasLiveRadio,
                             distanceText = if (hasRssi) {
                                 formatDistance(estimator.estimate(device.rssi))
                             } else {
@@ -437,7 +471,8 @@ class MainViewModel @Inject constructor(
                                 previous?.signalBars ?: 0
                             },
                             linkText = effectiveLinkText,
-                            bleState = previous?.bleState ?: BleLinkState.AVAILABLE
+                            bleState = bluetoothState,
+                            wifiDirectState = wifiState
                         )
                     }
 
@@ -485,7 +520,9 @@ class MainViewModel @Inject constructor(
      * the source of truth even when an inbound and outbound GATT callback race.
      */
     private fun refreshSquadConnectionStates() {
-        val connectedIds = bleConnectionManager.connectedSquadDeviceIds()
+        val connectedIds =
+            radioTransport.connectedPeerIds() intersect
+                squadMembershipStore.squadDeviceIds()
         _uiState.update { state ->
             fun updatePeer(peer: PeerNodeUi): PeerNodeUi =
                 peer.copy(
@@ -1213,7 +1250,7 @@ class MainViewModel @Inject constructor(
             // timeout just because a squad member is temporarily disconnected.
             // The connection manager already performs background retries.
             val hasConnectedPeer = squadIds.any { peerId ->
-                bleConnectionManager.state(peerId).first() == BleLinkState.CONNECTED
+                peerId in radioTransport.connectedPeerIds()
             }
 
             val connectionReady = if (hasConnectedPeer) {
