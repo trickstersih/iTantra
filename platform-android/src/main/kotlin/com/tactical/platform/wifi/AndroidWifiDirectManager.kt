@@ -313,17 +313,36 @@ class AndroidWifiDirectManager(
                 }
 
                 try {
-                    wifiP2pManager.clearLocalServices(
+                    // Do not clear all local P2P services before every
+                    // advertisement. On some Android/OEM Wi-Fi stacks the
+                    // clear+add sequence races the P2P discovery engine and
+                    // leaves both operations reporting BUSY. A local service
+                    // is safe to add directly; stop() clears it during the
+                    // manager lifecycle shutdown.
+                    wifiP2pManager.addLocalService(
                         wifichannel,
+                        serviceInfo,
                         object : WifiP2pManager.ActionListener {
                             override fun onSuccess() {
-                                addLocalServiceAwait(serviceInfo, ::finish)
+                                android.util.Log.d(
+                                    TAG,
+                                    "iTantra Wi-Fi presence advertised"
+                                )
+                                finish(TacticalResult.Success(Unit))
                             }
 
                             override fun onFailure(reason: Int) {
-                                // No stale local service is fatal here. Still
-                                // attempt to install the current iTantra one.
-                                addLocalServiceAwait(serviceInfo, ::finish)
+                                android.util.Log.w(
+                                    TAG,
+                                    "iTantra Wi-Fi presence registration failed: " +
+                                        reason
+                                )
+                                finish(
+                                    TacticalResult.Failure(
+                                        "iTantra Wi-Fi service registration failed: " +
+                                            reason
+                                    )
+                                )
                             }
                         }
                     )
