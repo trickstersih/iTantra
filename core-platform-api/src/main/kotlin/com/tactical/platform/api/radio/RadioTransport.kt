@@ -28,5 +28,5 @@ interface RadioTransport {
      * Identifies this transport when a caller needs to report which bearer
      * delivered an incoming packet.
      */
-    val type: RadioType
+    val type: RadioType?
 }
