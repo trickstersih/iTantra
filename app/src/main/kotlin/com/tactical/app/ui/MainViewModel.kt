@@ -520,30 +520,51 @@ class MainViewModel @Inject constructor(
      * the source of truth even when an inbound and outbound GATT callback race.
      */
     private fun refreshSquadConnectionStates() {
-        val connectedIds = radioTransport.connectedPeerIds()
+        val connectedByTransport = radioTransport.connectedPeerIdsByTransport()
+        val connectedIds = connectedByTransport.values.flatten().toSet()
+        val connectedBleIds = connectedByTransport[RadioType.BLUETOOTH].orEmpty()
+        val connectedWifiIds = connectedByTransport[RadioType.WIFI_DIRECT].orEmpty()
+
         _uiState.update { state ->
-            fun updatePeer(peer: PeerNodeUi): PeerNodeUi =
-                peer.copy(
-                    isConnected = peer.deviceAddress in connectedIds,
-                    linkText = if (peer.deviceAddress in connectedIds) {
-                        connectedTransportText(peer, connectedIds)
+            fun updatePeer(peer: PeerNodeUi): PeerNodeUi {
+                val bleConnected = peer.deviceAddress in connectedBleIds
+                val wifiConnected = peer.deviceAddress in connectedWifiIds
+                val isConnected = peer.deviceAddress in connectedIds
+
+                return peer.copy(
+                    isConnected = isConnected,
+                    linkText = if (isConnected) {
+                        connectedTransportText(
+                            peer.copy(
+                                bleState = if (bleConnected) {
+                                    BleLinkState.CONNECTED
+                                } else {
+                                    peer.bleState
+                                },
+                                wifiDirectState = if (wifiConnected) {
+                                    RadioLinkState.CONNECTED
+                                } else {
+                                    peer.wifiDirectState
+                                }
+                            )
+                        )
                     } else {
                         peer.linkText
                     },
-                    bleState = if (
-                        peer.bleState == BleLinkState.CONNECTED &&
-                        peer.deviceAddress !in connectedIds
-                    ) {
-                        BleLinkState.DISCONNECTED
-                    } else if (
-                        peer.deviceAddress in connectedIds &&
-                        peer.bleState == BleLinkState.CONNECTING
-                    ) {
-                        BleLinkState.CONNECTING
-                    } else {
-                        peer.bleState
+                    bleState = when {
+                        bleConnected -> BleLinkState.CONNECTED
+                        peer.bleState == BleLinkState.CONNECTED ->
+                            BleLinkState.DISCONNECTED
+                        else -> peer.bleState
+                    },
+                    wifiDirectState = when {
+                        wifiConnected -> RadioLinkState.CONNECTED
+                        peer.wifiDirectState == RadioLinkState.CONNECTED ->
+                            RadioLinkState.DISCONNECTED
+                        else -> peer.wifiDirectState
                     }
                 )
+            }
 
             val updatedSquadPeers = state.squadPeers.map(::updatePeer)
             val updatedAvailablePeers = state.availablePeers
@@ -557,9 +578,6 @@ class MainViewModel @Inject constructor(
         }
 
         if (connectedIds.isEmpty() && !_uiState.value.pttEnabled) {
-            // Never leave continuous CALL mode running without a live squad
-            // GATT session. Return to normal PTT so microphone capture and
-            // voice transmission cannot run disconnected.
             viewModelScope.launch {
                 if (_uiState.value.pttContinuousSession) {
                     runCatching { pttController.stopContinuous() }
@@ -1495,8 +1513,7 @@ class MainViewModel @Inject constructor(
     }
 
     private fun connectedTransportText(
-        peer: PeerNodeUi,
-        connectedIds: Set<String>
+        peer: PeerNodeUi
     ): String {
         val transports = buildList {
             if (
