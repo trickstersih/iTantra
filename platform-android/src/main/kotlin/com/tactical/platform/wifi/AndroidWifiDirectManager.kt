@@ -143,6 +143,7 @@ class AndroidWifiDirectManager(
                     } else if (!discovering &&
                         !_connectionInfo.value.groupFormed
                     ) {
+                        removeServiceRequest()
                         scheduleServiceDiscoveryRetry()
                     }
                 }
