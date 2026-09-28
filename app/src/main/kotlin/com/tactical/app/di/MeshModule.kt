@@ -28,6 +28,7 @@ import com.tactical.platform.api.ble.BleBeaconAdvertiser
 import com.tactical.platform.api.ble.BleBeaconScanner
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.wifi.WifiDirectManager
+import com.tactical.platform.api.squad.SquadMembershipStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -49,6 +50,12 @@ object MeshModule {
     @LocalCallsign
     fun provideLocalCallsign(identityStore: DeviceIdentityStore): String =
         identityStore.callsign
+
+    @Provides
+    @Singleton
+    fun provideSquadMembershipStore(
+        store: PersistentSquadMembershipStore
+    ): SquadMembershipStore = store
 
     @Provides
     @Singleton
@@ -96,14 +103,14 @@ object MeshModule {
         serializer: PacketSerializer,
         transport: RadioTransport,
         qualityMonitor: LinkQualityMonitor,
-        bleConnectionManager: BleConnectionManager
+        squadMembershipStore: SquadMembershipStore
     ): MeshService = DefaultMeshService(
         localDeviceId = DeviceId(localDeviceIdValue),
         router = router,
         serializer = serializer,
         transport = transport,
         qualityMonitor = qualityMonitor,
-        squadDeviceIdsProvider = bleConnectionManager::squadDeviceIds
+        squadDeviceIdsProvider = squadMembershipStore::squadDeviceIds
     )
 
     @Provides
