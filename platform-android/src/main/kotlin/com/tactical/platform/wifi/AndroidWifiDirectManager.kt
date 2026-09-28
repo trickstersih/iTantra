@@ -17,7 +17,6 @@ import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.wifi.WifiDirectConnectionInfo
 import com.tactical.platform.api.wifi.WifiDirectManager
 import com.tactical.platform.api.wifi.WifiDirectPeer
-import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -34,7 +33,7 @@ import kotlin.coroutines.resume
  * Single owner of the Android Wi-Fi Direct P2P lifecycle.
  *
  * Discovery and group state are shared hot flows. Consumers do not register
- * their own WifiP2pManager receivers, avoiding duplicate lifecycle ownership.
+ * their own WifiP2pManager receivers.
  */
 class AndroidWifiDirectManager(
     private val context: Context,
@@ -60,14 +59,32 @@ class AndroidWifiDirectManager(
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION,
-                WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION -> {
                     val enabled = intent.getIntExtra(
                         WifiP2pManager.EXTRA_WIFI_STATE,
                         WifiP2pManager.WIFI_P2P_STATE_DISABLED
                     ) == WifiP2pManager.WIFI_P2P_STATE_ENABLED
 
                     if (enabled && wifiManager.isWifiEnabled) {
+                        _state.value = RadioLinkState.AVAILABLE
+                        advertisedDeviceId?.let { id ->
+                            advertisedCallsign?.let { callsign ->
+                                registerPresenceService(id, callsign)
+                            }
+                        }
+                        startServiceDiscoveryInternal()
+                    } else {
+                        resetP2pState()
+                    }
+                }
+
+                WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                    val wifiState = intent.getIntExtra(
+                        WifiManager.EXTRA_WIFI_STATE,
+                        WifiManager.WIFI_STATE_UNKNOWN
+                    )
+
+                    if (wifiState == WifiManager.WIFI_STATE_ENABLED) {
                         if (started.get()) {
                             _state.value = RadioLinkState.AVAILABLE
                             advertisedDeviceId?.let { id ->
@@ -77,23 +94,11 @@ class AndroidWifiDirectManager(
                             }
                             startServiceDiscoveryInternal()
                         }
-                    } else {
-                        serviceDiscoveryStarted = false
-                        serviceRequest?.let { request ->
-                            runCatching {
-                                if (hasWifiDirectPermission()) {
-                                    wifiP2pManager.removeServiceRequest(
-                                        wifichannel,
-                                        request,
-                                        null
-                                    )
-                                }
-                            }
-                        }
-                        serviceRequest = null
-                        _connectionInfo.value = WifiDirectConnectionInfo()
-                        _peers.value = emptyList()
-                        _state.value = RadioLinkState.UNAVAILABLE
+                    } else if (
+                        wifiState == WifiManager.WIFI_STATE_DISABLED ||
+                        wifiState == WifiManager.WIFI_STATE_DISABLING
+                    ) {
+                        resetP2pState()
                     }
                 }
 
@@ -133,26 +138,17 @@ class AndroidWifiDirectManager(
             return TacticalResult.Success(Unit)
         }
 
-        if (!wifiManager.isWifiEnabled) {
-            try {
-                registerReceiverOnce()
-                _state.value = RadioLinkState.UNAVAILABLE
-                return TacticalResult.Failure("Wi-Fi is off")
-            } catch (e: Exception) {
-                started.set(false)
-                _state.value = RadioLinkState.FAILED
-                return TacticalResult.Failure("Wi-Fi Direct startup failed: ${e.message ?: e.javaClass.simpleName}")
-            }
-        }
-
-            return TacticalResult.Success(Unit)
-        }
-
         return try {
             registerReceiverOnce()
-            _state.value = RadioLinkState.AVAILABLE
-            refreshConnectionInfo()
-            TacticalResult.Success(Unit)
+
+            if (!wifiManager.isWifiEnabled) {
+                _state.value = RadioLinkState.UNAVAILABLE
+                TacticalResult.Failure("Wi-Fi is off")
+            } else {
+                _state.value = RadioLinkState.AVAILABLE
+                refreshConnectionInfo()
+                TacticalResult.Success(Unit)
+            }
         } catch (e: SecurityException) {
             started.set(false)
             _state.value = RadioLinkState.FAILED
@@ -204,27 +200,34 @@ class AndroidWifiDirectManager(
         deviceId: String,
         callsign: String
     ): TacticalResult<Unit> {
-        val startedResult = start()
-        if (startedResult is TacticalResult.Failure && startedResult.error != "Wi-Fi is off") {
-            return startedResult
+        val startResult = start()
+        if (startResult is TacticalResult.Failure &&
+            startResult.error !in setOf("Wi-Fi is off")
+        ) {
+            return startResult
         }
 
         advertisedDeviceId = deviceId
         advertisedCallsign = callsign
-        registerPresenceService(deviceId, callsign)
 
-        return if (wifiManager.isWifiEnabled) {
-            TacticalResult.Success(Unit)
-        } else {
-            TacticalResult.Failure("Wi-Fi is off")
+        if (!wifiManager.isWifiEnabled) {
+            return TacticalResult.Failure("Wi-Fi is off")
         }
+
+        registerPresenceService(deviceId, callsign)
+        return TacticalResult.Success(Unit)
     }
 
     private fun registerPresenceService(
         deviceId: String,
         callsign: String
     ) {
-        if (!started.get() || !wifiManager.isWifiEnabled || !hasWifiDirectPermission()) return
+        if (!started.get() ||
+            !wifiManager.isWifiEnabled ||
+            !hasWifiDirectPermission()
+        ) {
+            return
+        }
 
         val record = mapOf(
             "app" to "itantra",
@@ -259,8 +262,12 @@ class AndroidWifiDirectManager(
                     override fun onSuccess() {
                         android.util.Log.d(TAG, "iTantra Wi-Fi presence advertised")
                     }
+
                     override fun onFailure(reason: Int) {
-                        android.util.Log.w(TAG, "iTantra Wi-Fi presence failed: " + reason)
+                        android.util.Log.w(
+                            TAG,
+                            "iTantra Wi-Fi presence registration failed: " + reason
+                        )
                     }
                 }
             )
@@ -269,53 +276,29 @@ class AndroidWifiDirectManager(
         }
     }
 
-    private fun addLocalService(
-        serviceInfo: WifiP2pDnsSdServiceInfo,
-        continuation: CancellableContinuation<TacticalResult<Unit>>
-    ) {
-        try {
-            wifiP2pManager.addLocalService(
-                wifichannel,
-                serviceInfo,
-                object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() {
-                        if (continuation.isActive) {
-                            continuation.resume(TacticalResult.Success(Unit))
-                        }
-                    }
-
-                    override fun onFailure(reason: Int) {
-                        if (continuation.isActive) {
-                            continuation.resume(
-                                TacticalResult.Failure(
-                                    "iTantra Wi-Fi service registration failed: $reason"
-                                )
-                            )
-                        }
-                    }
-                }
-            )
-        } catch (e: SecurityException) {
-            if (continuation.isActive) {
-                continuation.resume(
-                    TacticalResult.Failure("Wi-Fi Direct permission denied")
-                )
-            }
-        }
-    }
-
     override suspend fun discoverPeers(): Flow<List<WifiDirectPeer>> {
-        val startedResult = start()
-        if (startedResult is TacticalResult.Failure) {
+        val startResult = start()
+
+        if (startResult is TacticalResult.Failure &&
+            startResult.error !in setOf("Wi-Fi is off")
+        ) {
             return _peers.asStateFlow()
         }
 
-        startServiceDiscoveryInternal()
+        if (wifiManager.isWifiEnabled) {
+            startServiceDiscoveryInternal()
+        }
+
         return _peers.asStateFlow()
     }
 
     private fun startServiceDiscoveryInternal() {
-        if (!started.get() || serviceDiscoveryStarted || !hasWifiDirectPermission()) {
+        if (!started.get() ||
+            serviceDiscoveryStarted ||
+            serviceRequest != null ||
+            !wifiManager.isWifiEnabled ||
+            !hasWifiDirectPermission()
+        ) {
             return
         }
 
@@ -325,7 +308,8 @@ class AndroidWifiDirectManager(
                 WifiP2pManager.DnsSdServiceResponseListener { instanceName, _, device ->
                     android.util.Log.d(
                         TAG,
-                        "iTantra Wi-Fi service: ${instanceName} @ ${device.deviceAddress}"
+                        "iTantra Wi-Fi service: " +
+                            instanceName + " @ " + device.deviceAddress
                     )
                 },
                 WifiP2pManager.DnsSdTxtRecordListener { _, record, device ->
@@ -348,7 +332,12 @@ class AndroidWifiDirectManager(
                     )
 
                     _peers.value = _peers.value
-                        .filterNot { it.deviceAddress.equals(device.deviceAddress, ignoreCase = true) }
+                        .filterNot {
+                            it.deviceAddress.equals(
+                                device.deviceAddress,
+                                ignoreCase = true
+                            )
+                        }
                         .plus(peer)
                         .sortedBy { it.callsign ?: it.deviceName }
                 }
@@ -376,17 +365,17 @@ class AndroidWifiDirectManager(
                                     }
 
                                     override fun onFailure(reason: Int) {
-                                        serviceDiscoveryStarted = false
+                                        removeServiceRequest()
                                         _state.value = RadioLinkState.FAILED
                                         android.util.Log.w(
                                             TAG,
-                                            "Wi-Fi service discovery failed: $reason"
+                                            "Wi-Fi service discovery failed: " + reason
                                         )
                                     }
                                 }
                             )
                         } catch (e: SecurityException) {
-                            serviceDiscoveryStarted = false
+                            removeServiceRequest()
                             _state.value = RadioLinkState.FAILED
                             android.util.Log.w(
                                 TAG,
@@ -397,18 +386,17 @@ class AndroidWifiDirectManager(
                     }
 
                     override fun onFailure(reason: Int) {
-                        serviceDiscoveryStarted = false
-                        serviceRequest = null
+                        removeServiceRequest()
                         _state.value = RadioLinkState.FAILED
                         android.util.Log.w(
                             TAG,
-                            "Wi-Fi service request failed: $reason"
+                            "Wi-Fi service request failed: " + reason
                         )
                     }
                 }
             )
         } catch (e: SecurityException) {
-            serviceDiscoveryStarted = false
+            removeServiceRequest()
             _state.value = RadioLinkState.FAILED
             android.util.Log.w(
                 TAG,
@@ -416,7 +404,7 @@ class AndroidWifiDirectManager(
                 e
             )
         } catch (e: Exception) {
-            serviceDiscoveryStarted = false
+            removeServiceRequest()
             _state.value = RadioLinkState.FAILED
             android.util.Log.w(
                 TAG,
@@ -426,6 +414,27 @@ class AndroidWifiDirectManager(
         }
     }
 
+    private fun removeServiceRequest() {
+        serviceDiscoveryStarted = false
+        serviceRequest?.let { request ->
+            runCatching {
+                wifiP2pManager.removeServiceRequest(
+                    wifichannel,
+                    request,
+                    null
+                )
+            }
+        }
+        serviceRequest = null
+    }
+
+    private fun resetP2pState() {
+        removeServiceRequest()
+        _connectionInfo.value = WifiDirectConnectionInfo()
+        _peers.value = emptyList()
+        _state.value = RadioLinkState.UNAVAILABLE
+    }
+
     private fun refreshConnectionInfo() {
         if (!started.get() || !hasWifiDirectPermission()) return
 
@@ -433,6 +442,7 @@ class AndroidWifiDirectManager(
             wifiP2pManager.requestConnectionInfo(wifichannel) { info ->
                 if (info == null || !info.groupFormed) {
                     _connectionInfo.value = WifiDirectConnectionInfo()
+
                     if (_state.value != RadioLinkState.CONNECTING) {
                         _state.value = if (wifiManager.isWifiEnabled) {
                             RadioLinkState.AVAILABLE
@@ -487,14 +497,14 @@ class AndroidWifiDirectManager(
                             if (continuation.isActive) {
                                 continuation.resume(
                                     TacticalResult.Failure(
-                                        "Wi-Fi Direct disconnect failed: $reason"
+                                        "Wi-Fi Direct disconnect failed: " + reason
                                     )
                                 )
                             }
                         }
                     }
                 )
-            } catch (e: SecurityException) {
+            } catch (_: SecurityException) {
                 if (continuation.isActive) {
                     continuation.resume(
                         TacticalResult.Failure("Wi-Fi Direct permission denied")
@@ -515,7 +525,9 @@ class AndroidWifiDirectManager(
         }
 
         val startResult = start()
-        if (startResult is TacticalResult.Failure) return startResult
+        if (startResult is TacticalResult.Failure) {
+            return startResult
+        }
 
         _state.value = RadioLinkState.CONNECTING
         _peers.value = _peers.value.map {
@@ -527,7 +539,9 @@ class AndroidWifiDirectManager(
         }
 
         val accepted = suspendCancellableCoroutine<Boolean> { continuation ->
-            val config = WifiP2pConfig().apply { deviceAddress = cleanedAddress }
+            val config = WifiP2pConfig().apply {
+                deviceAddress = cleanedAddress
+            }
 
             try {
                 wifiP2pManager.connect(
@@ -550,45 +564,40 @@ class AndroidWifiDirectManager(
 
         if (!accepted) {
             _state.value = RadioLinkState.FAILED
-            _peers.value = _peers.value.map {
-                if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
-                    it.copy(linkState = RadioLinkState.FAILED)
-                } else {
-                    it
-                }
-            }
+            markPeerState(cleanedAddress, RadioLinkState.FAILED)
             return TacticalResult.Failure(
-                "connect(${cleanedAddress}) was rejected by Android"
+                "connect(" + cleanedAddress + ") was rejected by Android"
             )
         }
 
-        val established = _connectionInfo.value.groupFormed ||
-            withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
-                _connectionInfo.first { it.groupFormed }
-                true
-            } == true
+        val established =
+            _connectionInfo.value.groupFormed ||
+                withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+                    _connectionInfo.first { it.groupFormed }
+                    true
+                } == true
 
         if (!established) {
             _state.value = RadioLinkState.FAILED
-            _peers.value = _peers.value.map {
-                if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
-                    it.copy(linkState = RadioLinkState.FAILED)
-                } else {
-                    it
-                }
-            }
+            markPeerState(cleanedAddress, RadioLinkState.FAILED)
             return TacticalResult.Failure("Wi-Fi Direct connection timed out")
         }
 
+        markPeerState(cleanedAddress, RadioLinkState.CONNECTED)
+        return TacticalResult.Success(Unit)
+    }
+
+    private fun markPeerState(
+        deviceAddress: String,
+        state: RadioLinkState
+    ) {
         _peers.value = _peers.value.map {
-            if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
-                it.copy(linkState = RadioLinkState.CONNECTED)
+            if (it.deviceAddress.equals(deviceAddress, ignoreCase = true)) {
+                it.copy(linkState = state)
             } else {
                 it
             }
         }
-
-        return TacticalResult.Success(Unit)
     }
 
     private fun registerReceiverOnce() {
