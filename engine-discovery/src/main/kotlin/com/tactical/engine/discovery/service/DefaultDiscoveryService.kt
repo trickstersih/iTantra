@@ -3,6 +3,8 @@ package com.tactical.engine.discovery.service
 import com.tactical.domain.identity.DeviceId
 import com.tactical.domain.identity.DeviceNode
 import com.tactical.domain.identity.LinkType
+import com.tactical.domain.identity.RadioType
+import com.tactical.domain.identity.RadioLinkState
 import com.tactical.engine.discovery.beacon.BeaconEmitter
 import com.tactical.engine.discovery.catalog.DeviceCatalog
 import com.tactical.engine.discovery.scanner.BeaconScanner
@@ -33,6 +35,15 @@ class DefaultDiscoveryService(
         beaconingStarted = true
 
         emitter.start()
+
+        val wifiStart = wifiDirectManager.start()
+        if (wifiStart is com.tactical.domain.result.TacticalResult.Failure) {
+            // BLE remains usable when Wi-Fi Direct is unavailable.
+            android.util.Log.d(
+                TAG,
+                "Wi-Fi Direct not started: " + wifiStart.error
+            )
+        }
 
         // Register the same app-specific identity over Wi-Fi Direct.
         // Failure here is non-fatal: BLE can still discover the peer.
@@ -93,9 +104,15 @@ class DefaultDiscoveryService(
                                         id = DeviceId(appDeviceId),
                                         callsign = peer.callsign ?: peer.deviceName,
                                         rssi = 0,
-                                        lastSeen = java.time.Instant.now(),
+                                        lastSeen = java.time.Instant.ofEpochMilli(
+                                            peer.lastSeenEpochMs.takeIf { it > 0L }
+                                                ?: System.currentTimeMillis()
+                                        ),
                                         hopCount = 0,
-                                        link = LinkType.DIRECT
+                                        link = LinkType.DIRECT,
+                                        transportStates = mapOf(
+                                            RadioType.WIFI_DIRECT to peer.linkState
+                                        )
                                     )
                                 )
                             }
@@ -147,6 +164,12 @@ class DefaultDiscoveryService(
             emitter.stop()
             beaconingStarted = false
         }
+
+        wifiDirectManager.stop()
+    }
+
+    companion object {
+        private const val TAG = "DefaultDiscoveryService"
     }
 
     companion object {
