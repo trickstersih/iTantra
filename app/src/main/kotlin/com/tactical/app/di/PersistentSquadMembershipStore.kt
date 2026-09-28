@@ -59,7 +59,9 @@ class PersistentSquadMembershipStore @Inject constructor(
     override fun add(deviceId: String) {
         ensureInitialized()
         val cleaned = deviceId.trim()
-        if (cleaned.isBlank() || UUID.fromString(cleaned) == null) {
+        if (cleaned.isBlank()) return
+
+        if (runCatching { UUID.fromString(cleaned) }.isFailure) {
             // Stable iTantra IDs are UUIDs. Keep invalid identifiers out of
             // the shared membership store.
             return
