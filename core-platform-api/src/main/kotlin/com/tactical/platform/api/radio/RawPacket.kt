@@ -1,20 +1,25 @@
 package com.tactical.platform.api.radio
 
+import com.tactical.domain.identity.RadioType
+
 /**
  * Data class wrapping received bytes from any radio bearer, plus the
- * signal strength and time they were received at. Bearer-agnostic and
- * content-agnostic — RadioTransport doesn't know or care what's inside
- * `data`, that's core-protocol's job once it's handed off.
+ * signal strength and time they were received at.
  */
 data class RawPacket(
     val data: ByteArray,
     val rssi: Int,
     val timestamp: Long,
     /**
+     * The bearer that delivered this packet. Null is used for an outgoing
+     * bearer-agnostic broadcast that may be copied to multiple radios.
+     */
+    val transport: RadioType? = null,
+    /**
      * Optional stable iTantra application IDs for direct delivery.
      *
-     * null means transport-wide broadcast (used by mesh relays and
-     * emergency packets). An empty set means there are no direct recipients.
+     * null means transport-wide broadcast. An empty set means there are no
+     * direct recipients.
      */
     val targetDeviceIds: Set<String>? = null
 ) {
@@ -28,6 +33,7 @@ data class RawPacket(
         return data.contentEquals(other.data) &&
             rssi == other.rssi &&
             timestamp == other.timestamp &&
+            transport == other.transport &&
             targetDeviceIds == other.targetDeviceIds
     }
 
@@ -35,6 +41,7 @@ data class RawPacket(
         var result = data.contentHashCode()
         result = 31 * result + rssi
         result = 31 * result + timestamp.hashCode()
+        result = 31 * result + (transport?.hashCode() ?: 0)
         result = 31 * result + (targetDeviceIds?.hashCode() ?: 0)
         return result
     }
