@@ -85,6 +85,9 @@ class WifiDirectRadioTransport(
     override fun connectedPeerIds(): Set<String> =
         socketsByPeerId.keys.toSet()
 
+    override fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> =
+        mapOf(RadioType.WIFI_DIRECT to connectedPeerIds())
+
     override suspend fun broadcast(raw: RawPacket): TacticalResult<Unit> =
         withContext(Dispatchers.IO) {
             val peers = socketsByPeerId.values.distinct()
@@ -159,28 +162,38 @@ class WifiDirectRadioTransport(
 
     private fun connectToGroupOwner(groupOwnerAddress: String) {
         scope.launch {
-            val socket = Socket()
+            repeat(SOCKET_CONNECT_ATTEMPTS) { attempt ->
+                if (wifiDirectManager.connectionInfo().value.groupOwnerAddress != groupOwnerAddress) {
+                    return@launch
+                }
 
-            try {
-                socket.tcpNoDelay = true
-                socket.connect(
-                    InetSocketAddress(groupOwnerAddress, TRANSPORT_PORT),
-                    CONNECT_TIMEOUT_MS
-                )
-                registerSocket(socket)
-                sendHello(socket)
-                readLoop(socket)
-            } catch (e: IOException) {
-                android.util.Log.d(
-                    TAG,
-                    "Wi-Fi Direct group-owner socket not ready: ${e.message}"
-                )
-            } finally {
-                removeSocket(socket)
+                val socket = Socket()
+                try {
+                    socket.tcpNoDelay = true
+                    socket.connect(
+                        InetSocketAddress(groupOwnerAddress, TRANSPORT_PORT),
+                        CONNECT_TIMEOUT_MS
+                    )
+                    registerSocket(socket)
+                    sendHello(socket)
+                    readLoop(socket)
+                    return@launch
+                } catch (e: IOException) {
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi Direct group-owner socket attempt " +
+                            (attempt + 1) + "/" + SOCKET_CONNECT_ATTEMPTS +
+                            " failed: " + (e.message ?: "I/O error")
+                    )
+                    removeSocket(socket)
+
+                    if (attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
+                        kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
+                    }
+                }
             }
         }
     }
-
     private fun registerSocket(socket: Socket) {
         writeLocks[socket] = Mutex()
     }
@@ -392,6 +405,8 @@ class WifiDirectRadioTransport(
         private const val TAG = "WifiDirectRadioTransport"
         private const val TRANSPORT_PORT = 8988
         private const val CONNECT_TIMEOUT_MS = 10_000
+        private const val SOCKET_CONNECT_ATTEMPTS = 5
+        private const val SOCKET_RETRY_DELAY_MS = 1_000L
         private const val MAX_FRAME_SIZE = 64 * 1024
         private const val MAX_HELLO_FIELD = 255
         private const val PROTOCOL_VERSION = 1
