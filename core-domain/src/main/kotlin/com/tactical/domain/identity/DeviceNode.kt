@@ -3,9 +3,11 @@ package com.tactical.domain.identity
 import java.time.Instant
 
 /**
- * Immutable snapshot of a peer device for discovery and mesh status.
- * Produced by engine-discovery, consumed by the roster UI and mesh
- * quality monitors.
+ * Immutable logical peer snapshot for discovery and mesh status.
+ *
+ * A DeviceNode represents exactly one iTantra identity. The same peer may
+ * simultaneously be visible or connected through BLE and Wi-Fi Direct, so
+ * transport state is stored as a map instead of creating duplicate nodes.
  */
 data class DeviceNode(
     val id: DeviceId,
@@ -16,7 +18,9 @@ data class DeviceNode(
     val link: LinkType,
     val battery: Int? = null,
     /** Nodes traversed from the original sender before reaching this device. */
-    val path: List<DeviceId> = emptyList()
+    val path: List<DeviceId> = emptyList(),
+    /** Latest known state of each physical bearer for this logical peer. */
+    val transportStates: Map<RadioType, RadioLinkState> = emptyMap()
 ) {
     init {
         require(callsign.isNotBlank()) { "callsign must not be blank" }
@@ -24,4 +28,3 @@ data class DeviceNode(
         require(battery == null || battery in 0..100) { "battery must be in 0..100" }
     }
 }
-
