@@ -38,10 +38,6 @@ class DefaultDiscoveryService(
         val wifiStart = wifiDirectManager.start()
         if (wifiStart is com.tactical.domain.result.TacticalResult.Failure) {
             // BLE remains usable when Wi-Fi Direct is unavailable.
-            android.util.Log.d(
-                TAG,
-                "Wi-Fi Direct not started: " + wifiStart.error
-            )
         }
 
         // Register the same app-specific identity over Wi-Fi Direct.
@@ -168,8 +164,6 @@ class DefaultDiscoveryService(
     }
 
     companion object {
-        private const val TAG = "DefaultDiscoveryService"
-
         // Short scan windows preserve discovery responsiveness while keeping
         // the scanner off most of the time. The 15s catalog TTL is long enough
         // to tolerate the gap between maintenance scans.
