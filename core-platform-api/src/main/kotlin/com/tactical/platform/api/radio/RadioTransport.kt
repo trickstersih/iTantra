@@ -25,6 +25,12 @@ interface RadioTransport {
     fun connectedPeerIds(): Set<String> = emptySet()
 
     /**
+     * Stable logical peers grouped by physical bearer. Composite transports
+     * merge these maps; concrete transports return only their own bearer.
+     */
+    fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> = emptyMap()
+
+    /**
      * Identifies this transport when a caller needs to report which bearer
      * delivered an incoming packet.
      */
