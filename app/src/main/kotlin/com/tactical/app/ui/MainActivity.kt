@@ -502,15 +502,43 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasWifiDirectRuntimePermission(): Boolean {
-        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            Manifest.permission.NEARBY_WIFI_DEVICES
-        } else {
-            Manifest.permission.ACCESS_FINE_LOCATION
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val wifiPermissionGranted =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.NEARBY_WIFI_DEVICES
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+            if (wifiPermissionGranted) return true
+
+            /*
+             * Android puts NEARBY_WIFI_DEVICES and the Android 12+ Bluetooth
+             * runtime permissions in the same NEARBY_DEVICES group. The
+             * platform documentation states that this group is enabled or
+             * disabled as a whole. Some OEM builds can therefore show
+             * "Nearby devices: Allowed" in Settings while a direct
+             * check of NEARBY_WIFI_DEVICES is stale/inconsistent.
+             *
+             * We already require both Bluetooth scan/connect permissions for
+             * Itantra's mesh. Treating the granted group as sufficient keeps
+             * Wi-Fi Direct from being falsely blocked on those builds.
+             */
+            val nearbyGroupGranted =
+                ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.BLUETOOTH_SCAN
+                ) == android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(
+                        this,
+                        Manifest.permission.BLUETOOTH_CONNECT
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+            return nearbyGroupGranted
         }
 
         return ContextCompat.checkSelfPermission(
             this,
-            permission
+            Manifest.permission.ACCESS_FINE_LOCATION
         ) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
