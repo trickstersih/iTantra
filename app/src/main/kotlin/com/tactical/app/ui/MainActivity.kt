@@ -73,8 +73,19 @@ class MainActivity : ComponentActivity() {
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
+        val criticalPermissions = buildSet {
+            add(Manifest.permission.RECORD_AUDIO)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
+                add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            } else {
+                add(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        }
+
         val criticalDenied = grants.any { (permission, granted) ->
-            permission != Manifest.permission.POST_NOTIFICATIONS && !granted
+            permission in criticalPermissions && !granted
         }
 
         if (!criticalDenied) {
@@ -370,6 +381,7 @@ class MainActivity : ComponentActivity() {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
             } else {
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
