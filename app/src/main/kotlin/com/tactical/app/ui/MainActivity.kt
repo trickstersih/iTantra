@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     private var startupCheckPending = false
+    private var runtimePermissionRequestInFlight = false
     private var meshServiceStarted = false
     private val wirelessWarning = mutableStateOf<String?>(null)
     private val wirelessStateReceiver = object : BroadcastReceiver() {
@@ -77,6 +78,8 @@ class MainActivity : ComponentActivity() {
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
+        runtimePermissionRequestInFlight = false
+
         val microphoneDenied =
             grants[Manifest.permission.RECORD_AUDIO] == false
 
@@ -398,8 +401,39 @@ class MainActivity : ComponentActivity() {
         if (missing.isEmpty()) {
             ensureWirelessEnabled()
             ensureVoiceModeIfPermissionGranted()
-        } else {
+        } else if (!runtimePermissionRequestInFlight) {
+            runtimePermissionRequestInFlight = true
             requestPermissions.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun hasWifiDirectRuntimePermission(): Boolean {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.NEARBY_WIFI_DEVICES
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+
+        return ContextCompat.checkSelfPermission(
+            this,
+            permission
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestMissingWifiDirectPermission() {
+        if (runtimePermissionRequestInFlight) return
+
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.NEARBY_WIFI_DEVICES
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+
+        if (!hasWifiDirectRuntimePermission()) {
+            runtimePermissionRequestInFlight = true
+            requestPermissions.launch(
+                arrayOf(permission)
+            )
         }
     }
 
@@ -410,13 +444,24 @@ class MainActivity : ComponentActivity() {
             getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true
         val wifiOn =
             getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+        val wifiPermissionGranted = hasWifiDirectRuntimePermission()
 
-        wirelessWarning.value = if (bluetoothOn || wifiOn) {
-            null
-        } else {
-            com.tactical.app.ui.i18n.UiStrings
-                .forCode(viewModel.uiState.value.uiLanguageCode)
-                .text(UiTextKey.BLUETOOTH_OFF)
+        wirelessWarning.value = when {
+            bluetoothOn || (wifiOn && wifiPermissionGranted) -> null
+            wifiOn && !wifiPermissionGranted -> {
+                "Wi-Fi Direct permission is required for device discovery"
+            }
+            else -> {
+                com.tactical.app.ui.i18n.UiStrings
+                    .forCode(viewModel.uiState.value.uiLanguageCode)
+                    .text(UiTextKey.BLUETOOTH_OFF)
+            }
+        }
+
+        if (wifiOn && !wifiPermissionGranted) {
+            startupCheckPending = true
+            requestMissingWifiDirectPermission()
+            return
         }
 
         if (bluetoothOn || wifiOn) {
