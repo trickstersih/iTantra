@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.location.LocationManager
 import android.net.wifi.p2p.WifiP2pConfig
+import android.net.wifi.p2p.WifiP2pDevice
 import android.net.wifi.p2p.WifiP2pManager
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
@@ -59,9 +60,10 @@ class AndroidWifiDirectManager(
     private val started = AtomicBoolean(false)
     private var receiverRegistered = false
     private var serviceDiscoveryStarted = false
+    private var peerDiscoveryStarted = false
     private var discoveryRequested = false
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
-    private var discoveryRetryJob: Job? = null
+    private var discoveryLoopJob: Job? = null
     private var presenceRetryJob: Job? = null
     private var advertisedDeviceId: String? = null
     private var advertisedCallsign: String? = null
@@ -86,7 +88,7 @@ class AndroidWifiDirectManager(
                             }
                         }
                         if (discoveryRequested) {
-                            startServiceDiscoveryInternal()
+                            startDiscoveryLoop()
                         }
                     } else {
                         resetP2pState()
@@ -108,7 +110,7 @@ class AndroidWifiDirectManager(
                                 }
                             }
                             if (discoveryRequested) {
-                                startServiceDiscoveryInternal()
+                                startDiscoveryLoop()
                             }
                         }
                     } else if (
@@ -129,7 +131,7 @@ class AndroidWifiDirectManager(
                             wifiManager.isWifiEnabled &&
                             discoveryRequested
                         ) {
-                            startServiceDiscoveryInternal()
+                            startDiscoveryLoop()
                         }
                     } else {
                         removeServiceRequest()
@@ -152,20 +154,8 @@ class AndroidWifiDirectManager(
                             if (discovering) "STARTED" else "STOPPED"
                     )
 
-                    // With generic peer discovery removed, this broadcast
-                    // now only matters as a recovery signal for the active
-                    // DNS-SD discovery operation.
-                    if (!discovering &&
-                        discoveryRequested &&
-                        serviceDiscoveryStarted &&
-                        !_connectionInfo.value.groupFormed
-                    ) {
-                        android.util.Log.w(
-                            TAG,
-                            "Wi-Fi DNS-SD discovery stopped; scheduling recovery"
-                        )
-                        removeServiceRequest()
-                        scheduleServiceDiscoveryRetry()
+                    if (!discovering) {
+                        peerDiscoveryStarted = false
                     }
                 }
             }
@@ -173,8 +163,20 @@ class AndroidWifiDirectManager(
     }
 
     override suspend fun start(): TacticalResult<Unit> {
+        android.util.Log.d(
+            TAG,
+            "Wi-Fi Direct start: wifiOn=" + wifiManager.isWifiEnabled +
+                " permission=" + hasWifiDirectPermission() +
+                " location=" + isLocationModeEnabled() +
+                " feature=" +
+                context.packageManager.hasSystemFeature(
+                    PackageManager.FEATURE_WIFI_DIRECT
+                )
+        )
+
         if (!hasWifiDirectPermission()) {
             _state.value = RadioLinkState.FAILED
+            android.util.Log.w(TAG, "Wi-Fi Direct disabled: missing permission")
             return TacticalResult.Failure("Missing Wi-Fi Direct permission")
         }
 
@@ -215,9 +217,10 @@ class AndroidWifiDirectManager(
         if (!started.compareAndSet(true, false)) return
 
         serviceDiscoveryStarted = false
+        peerDiscoveryStarted = false
         discoveryRequested = false
-        discoveryRetryJob?.cancel()
-        discoveryRetryJob = null
+        discoveryLoopJob?.cancel()
+        discoveryLoopJob = null
         presenceRetryJob?.cancel()
         presenceRetryJob = null
         presenceRegistered = false
@@ -260,6 +263,10 @@ class AndroidWifiDirectManager(
 
         advertisedDeviceId = deviceId
         advertisedCallsign = callsign
+        android.util.Log.d(
+            TAG,
+            "Advertising iTantra Wi-Fi presence for id=" + deviceId
+        )
 
         if (!wifiManager.isWifiEnabled) {
             return TacticalResult.Failure("Wi-Fi is off")
@@ -408,12 +415,7 @@ class AndroidWifiDirectManager(
 
         if (wifiManager.isWifiEnabled) {
             discoveryRequested = true
-
-            // iTantra identity discovery uses DNS-SD. Do not run generic
-            // discoverPeers() at the same time: Android keeps peer discovery
-            // active until a connection/group is formed, which can make the
-            // separate service-discovery operation return BUSY.
-            startServiceDiscoveryInternal()
+            startDiscoveryLoop()
         }
 
         return _peers.asStateFlow()
@@ -504,8 +506,6 @@ class AndroidWifiDirectManager(
                                 wifichannel,
                                 object : WifiP2pManager.ActionListener {
                                     override fun onSuccess() {
-                                        discoveryRetryJob?.cancel()
-                                        discoveryRetryJob = null
                                         serviceDiscoveryStarted = true
                                         _state.value = RadioLinkState.AVAILABLE
                                         android.util.Log.d(
@@ -521,7 +521,7 @@ class AndroidWifiDirectManager(
                                             TAG,
                                             "Wi-Fi service discovery failed: " + reason
                                         )
-                                        scheduleServiceDiscoveryRetry()
+                                        serviceDiscoveryStarted = false
                                     }
                                 }
                             )
@@ -543,7 +543,7 @@ class AndroidWifiDirectManager(
                             TAG,
                             "Wi-Fi service request failed: " + reason
                         )
-                        scheduleServiceDiscoveryRetry()
+                        serviceDiscoveryStarted = false
                     }
                 }
             )
@@ -566,63 +566,226 @@ class AndroidWifiDirectManager(
         }
     }
 
-    private fun schedulePresenceRetry() {
-        if (presenceRetryJob?.isActive == true) return
-        if (!started.get() ||
-            !wifiManager.isWifiEnabled ||
-            !hasWifiDirectPermission()
-        ) {
-            return
-        }
-
-        val id = advertisedDeviceId ?: return
-        val callsign = advertisedCallsign ?: return
-
-        presenceRetryJob = managerScope.launch {
-            while (started.get() &&
-                wifiManager.isWifiEnabled &&
-                hasWifiDirectPermission() &&
-                !presenceRegistered
-            ) {
-                delay(PRESENCE_RETRY_MS)
-                if (started.get() &&
-                    wifiManager.isWifiEnabled &&
-                    hasWifiDirectPermission() &&
-                    !presenceRegistered
-                ) {
-                    registerPresenceServiceAsync(id, callsign)
-                }
-            }
-            presenceRetryJob = null
-        }
-    }
-
-    private fun scheduleServiceDiscoveryRetry() {
-        if (discoveryRetryJob?.isActive == true) return
+    private fun startDiscoveryLoop() {
+        if (discoveryLoopJob?.isActive == true) return
         if (!started.get() ||
             !discoveryRequested ||
             !wifiManager.isWifiEnabled ||
-            !hasWifiDirectPermission()
+            !hasWifiDirectPermission() ||
+            !isLocationModeEnabled() ||
+            _connectionInfo.value.groupFormed
         ) {
             return
         }
 
-        discoveryRetryJob = managerScope.launch {
-            while (started.get() &&
+        discoveryLoopJob = managerScope.launch {
+            while (
+                isActive &&
+                started.get() &&
+                discoveryRequested &&
                 wifiManager.isWifiEnabled &&
                 hasWifiDirectPermission() &&
-                !serviceDiscoveryStarted
+                isLocationModeEnabled() &&
+                !_connectionInfo.value.groupFormed
             ) {
-                delay(SERVICE_DISCOVERY_RETRY_MS)
-                if (started.get() &&
-                    wifiManager.isWifiEnabled &&
-                    hasWifiDirectPermission() &&
-                    !serviceDiscoveryStarted
-                ) {
-                    startServiceDiscoveryInternal()
-                }
+                runPeerDiscoveryPhase()
+                if (!isActive || !discoveryRequested) break
+
+                delay(DISCOVERY_PHASE_GAP_MS)
+
+                runServiceDiscoveryPhase()
+                delay(DISCOVERY_PHASE_GAP_MS)
             }
-            discoveryRetryJob = null
+
+            discoveryLoopJob = null
+        }
+    }
+
+    private suspend fun runPeerDiscoveryPhase() {
+        if (!started.get() ||
+            !discoveryRequested ||
+            !wifiManager.isWifiEnabled ||
+            !hasWifiDirectPermission() ||
+            !isLocationModeEnabled()
+        ) {
+            return
+        }
+
+        if (!peerDiscoveryStarted) {
+            try {
+                suspendCancellableCoroutine<Boolean> { continuation ->
+                    wifiP2pManager.discoverPeers(
+                        wifichannel,
+                        object : WifiP2pManager.ActionListener {
+                            override fun onSuccess() {
+                                peerDiscoveryStarted = true
+                                android.util.Log.d(
+                                    TAG,
+                                    "Wi-Fi P2P peer discovery started"
+                                )
+                                if (continuation.isActive) {
+                                    continuation.resume(true)
+                                }
+                            }
+
+                            override fun onFailure(reason: Int) {
+                                peerDiscoveryStarted = false
+                                android.util.Log.w(
+                                    TAG,
+                                    "Wi-Fi P2P peer discovery failed: " +
+                                        reason
+                                )
+                                if (continuation.isActive) {
+                                    continuation.resume(false)
+                                }
+                            }
+                        }
+                    )
+                }
+            } catch (e: SecurityException) {
+                peerDiscoveryStarted = false
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi P2P peer discovery permission denied",
+                    e
+                )
+                return
+            } catch (e: Exception) {
+                peerDiscoveryStarted = false
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi P2P peer discovery setup failed",
+                    e
+                )
+                return
+            }
+        }
+
+        delay(PEER_DISCOVERY_PHASE_MS)
+        requestPeerList()
+
+        if (peerDiscoveryStarted && !_connectionInfo.value.groupFormed) {
+            try {
+                suspendCancellableCoroutine<Boolean> { continuation ->
+                    wifiP2pManager.stopPeerDiscovery(
+                        wifichannel,
+                        object : WifiP2pManager.ActionListener {
+                            override fun onSuccess() {
+                                peerDiscoveryStarted = false
+                                android.util.Log.d(
+                                    TAG,
+                                    "Wi-Fi P2P peer discovery stopped"
+                                )
+                                if (continuation.isActive) {
+                                    continuation.resume(true)
+                                }
+                            }
+
+                            override fun onFailure(reason: Int) {
+                                android.util.Log.w(
+                                    TAG,
+                                    "Wi-Fi P2P peer discovery stop failed: " +
+                                        reason
+                                )
+                                if (continuation.isActive) {
+                                    continuation.resume(false)
+                                }
+                            }
+                        }
+                    )
+                }
+            } catch (e: Exception) {
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi P2P peer discovery stop threw",
+                    e
+                )
+            }
+        }
+    }
+
+    private fun requestPeerList() {
+        if (!started.get() || !hasWifiDirectPermission()) return
+
+        try {
+            wifiP2pManager.requestPeers(
+                wifichannel,
+                WifiP2pManager.PeerListListener { devices ->
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi P2P peers=" +
+                            devices.deviceList.joinToString { device ->
+                                device.deviceAddress +
+                                    " (" + device.deviceName + ")"
+                            }
+                    )
+
+                    mergePhysicalPeerHints(devices.deviceList)
+                }
+            )
+        } catch (e: SecurityException) {
+            android.util.Log.w(
+                TAG,
+                "Wi-Fi P2P peer-list request permission denied",
+                e
+            )
+        } catch (e: Exception) {
+            android.util.Log.w(
+                TAG,
+                "Wi-Fi P2P peer-list request failed",
+                e
+            )
+        }
+    }
+
+    private fun mergePhysicalPeerHints(
+        devices: Collection<WifiP2pDevice>
+    ) {
+        if (devices.isEmpty()) return
+
+        val discoveredAddresses = devices.map {
+            it.deviceAddress.lowercase()
+        }.toSet()
+
+        _peers.value = _peers.value.map { peer ->
+            if (peer.deviceAddress.lowercase() in discoveredAddresses) {
+                peer.copy(
+                    deviceName = devices.first {
+                        it.deviceAddress.equals(
+                            peer.deviceAddress,
+                            ignoreCase = true
+                        )
+                    }.deviceName,
+                    lastSeenEpochMs = System.currentTimeMillis()
+                )
+            } else {
+                peer
+            }
+        }
+    }
+
+    private suspend fun runServiceDiscoveryPhase() {
+        if (!started.get() ||
+            !discoveryRequested ||
+            !wifiManager.isWifiEnabled ||
+            !hasWifiDirectPermission() ||
+            !isLocationModeEnabled() ||
+            _connectionInfo.value.groupFormed
+        ) {
+            return
+        }
+
+        startServiceDiscoveryInternal()
+        if (!serviceDiscoveryStarted) return
+
+        delay(SERVICE_DISCOVERY_PHASE_MS)
+
+        if (!_connectionInfo.value.groupFormed) {
+            removeServiceRequest()
+            android.util.Log.d(
+                TAG,
+                "Wi-Fi DNS-SD service discovery phase ended"
+            )
         }
     }
 
@@ -642,6 +805,9 @@ class AndroidWifiDirectManager(
 
     private fun resetP2pState() {
         removeServiceRequest()
+        peerDiscoveryStarted = false
+        discoveryLoopJob?.cancel()
+        discoveryLoopJob = null
         presenceRetryJob?.cancel()
         presenceRetryJob = null
         presenceRegistered = false
@@ -868,5 +1034,8 @@ class AndroidWifiDirectManager(
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
+        private const val PEER_DISCOVERY_PHASE_MS = 4_000L
+        private const val SERVICE_DISCOVERY_PHASE_MS = 6_000L
+        private const val DISCOVERY_PHASE_GAP_MS = 750L
     }
 }
