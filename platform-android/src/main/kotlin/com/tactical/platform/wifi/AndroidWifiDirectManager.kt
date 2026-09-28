@@ -288,7 +288,23 @@ class AndroidWifiDirectManager(
                     TAG,
                     "Wi-Fi Direct presence registration failed; retrying"
                 )
-                schedulePresenceRetry()
+                if (presenceRetryJob?.isActive != true) {
+                    val id = advertisedDeviceId
+                    val advertisedName = advertisedCallsign
+                    if (id != null && advertisedName != null) {
+                        presenceRetryJob = managerScope.launch {
+                            delay(PRESENCE_RETRY_MS)
+                            if (started.get() &&
+                                wifiManager.isWifiEnabled &&
+                                hasWifiDirectPermission() &&
+                                !presenceRegistered
+                            ) {
+                                registerPresenceServiceAsync(id, advertisedName)
+                            }
+                            presenceRetryJob = null
+                        }
+                    }
+                }
             } else {
                 presenceRetryJob?.cancel()
                 presenceRetryJob = null
@@ -580,7 +596,6 @@ class AndroidWifiDirectManager(
 
         discoveryLoopJob = managerScope.launch {
             while (
-                isActive &&
                 started.get() &&
                 discoveryRequested &&
                 wifiManager.isWifiEnabled &&
@@ -589,7 +604,7 @@ class AndroidWifiDirectManager(
                 !_connectionInfo.value.groupFormed
             ) {
                 runPeerDiscoveryPhase()
-                if (!isActive || !discoveryRequested) break
+                if (!discoveryRequested) break
 
                 delay(DISCOVERY_PHASE_GAP_MS)
 
