@@ -16,7 +16,7 @@ import javax.inject.Singleton
  */
 @Singleton
 class PersistentSquadMembershipStore @Inject constructor(
-    @ApplicationContext context: Context
+    @ApplicationContext private val context: Context
 ) : SquadMembershipStore {
 
     private val preferences =
