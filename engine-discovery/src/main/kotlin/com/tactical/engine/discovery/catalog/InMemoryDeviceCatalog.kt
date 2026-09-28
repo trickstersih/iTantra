@@ -11,6 +11,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * ConcurrentHashMap-backed catalog with a 15s TTL eviction for stale nodes.
+ *
+ * Upserts are merged by stable DeviceId. A BLE observation must not erase
+ * a Wi-Fi Direct observation for the same peer, and vice versa.
  */
 class InMemoryDeviceCatalog(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
@@ -22,7 +25,6 @@ class InMemoryDeviceCatalog(
     private val _nodesFlow = MutableStateFlow<List<DeviceNode>>(emptyList())
 
     init {
-        // Periodic eviction task
         scope.launch {
             while (isActive) {
                 delay(1000)
@@ -34,11 +36,28 @@ class InMemoryDeviceCatalog(
     override fun all(): StateFlow<List<DeviceNode>> = _nodesFlow.asStateFlow()
 
     override suspend fun upsert(node: DeviceNode) {
-        val current = nodes[node.id]
-        if (current == null || shouldReplace(current, node)) {
-            nodes[node.id] = node
-            updateFlow()
+        nodes.compute(node.id) { _, current ->
+            if (current == null) {
+                node
+            } else {
+                merge(current, node)
+            }
         }
+        updateFlow()
+    }
+
+    private fun merge(
+        current: DeviceNode,
+        incoming: DeviceNode
+    ): DeviceNode {
+        val selected = if (shouldReplace(current, incoming)) incoming else current
+
+        val mergedTransportStates =
+            current.transportStates + incoming.transportStates
+
+        return selected.copy(
+            transportStates = mergedTransportStates
+        )
     }
 
     private fun shouldReplace(
@@ -46,13 +65,10 @@ class InMemoryDeviceCatalog(
         incoming: DeviceNode
     ): Boolean {
         if (incoming.link == LinkType.DIRECT) {
-            // A newly observed direct path always outranks any relayed path.
             return true
         }
 
         if (current.link == LinkType.DIRECT) {
-            // Keep a direct observation while it is still fresh. Once it has
-            // aged past the stale threshold, a live mesh path may take over.
             val age = currentTimeMillis() - current.lastSeen.toEpochMilli()
             if (age <= ttlMillis / 2L) return false
             return true
@@ -60,8 +76,6 @@ class InMemoryDeviceCatalog(
 
         if (current.link == LinkType.STALE) return true
 
-        // Both are relayed: prefer fewer hops. If the hop count is equal,
-        // use the newest observation so route changes are reflected promptly.
         return when {
             incoming.hopCount < current.hopCount -> true
             incoming.hopCount > current.hopCount -> false
@@ -73,20 +87,22 @@ class InMemoryDeviceCatalog(
         val now = currentTimeMillis()
         var changed = false
         val iterator = nodes.entries.iterator()
-        
+
         while (iterator.hasNext()) {
             val entry = iterator.next()
             val lastSeen = entry.value.lastSeen.toEpochMilli()
             if (lastSeen + ttlMillis < now) {
                 iterator.remove()
                 changed = true
-            } else if (lastSeen + (ttlMillis / 2) < now && entry.value.link != LinkType.STALE) {
-                // Mark as STALE if halfway to eviction
+            } else if (
+                lastSeen + (ttlMillis / 2) < now &&
+                entry.value.link != LinkType.STALE
+            ) {
                 nodes[entry.key] = entry.value.copy(link = LinkType.STALE)
                 changed = true
             }
         }
-        
+
         if (changed) {
             updateFlow()
         }
