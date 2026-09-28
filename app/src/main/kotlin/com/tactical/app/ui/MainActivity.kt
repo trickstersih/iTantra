@@ -3,6 +3,7 @@ package com.tactical.app.ui
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.net.wifi.WifiManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -73,27 +74,21 @@ class MainActivity : ComponentActivity() {
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
-        val criticalPermissions = buildSet {
-            add(Manifest.permission.RECORD_AUDIO)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                add(Manifest.permission.BLUETOOTH_SCAN)
-                add(Manifest.permission.BLUETOOTH_CONNECT)
-                add(Manifest.permission.BLUETOOTH_ADVERTISE)
-            } else {
-                add(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
-        }
+        val microphoneDenied =
+            grants[Manifest.permission.RECORD_AUDIO] == false
 
-        val criticalDenied = grants.any { (permission, granted) ->
-            permission in criticalPermissions && !granted
-        }
-
-        if (!criticalDenied) {
-            ensureWirelessEnabled()
+        if (!microphoneDenied) {
             ensureVoiceModeIfPermissionGranted()
         } else {
-            wirelessWarning.value = com.tactical.app.ui.i18n.UiStrings.forCode(viewModel.uiState.value.uiLanguageCode).text(UiTextKey.BLUETOOTH_MIC_PERMISSIONS)
+            wirelessWarning.value =
+                com.tactical.app.ui.i18n.UiStrings
+                    .forCode(viewModel.uiState.value.uiLanguageCode)
+                    .text(UiTextKey.BLUETOOTH_MIC_PERMISSIONS)
         }
+
+        // Bluetooth and Wi-Fi Direct are independent bearers. A denial of one
+        // must never prevent the other from starting the mesh service.
+        ensureWirelessEnabled()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -407,13 +402,18 @@ class MainActivity : ComponentActivity() {
 
         val bluetoothOn =
             getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true
-        wirelessWarning.value = if (bluetoothOn) {
+        val wifiOn =
+            getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+
+        wirelessWarning.value = if (bluetoothOn || wifiOn) {
             null
         } else {
-            com.tactical.app.ui.i18n.UiStrings.forCode(viewModel.uiState.value.uiLanguageCode).text(UiTextKey.BLUETOOTH_OFF)
+            com.tactical.app.ui.i18n.UiStrings
+                .forCode(viewModel.uiState.value.uiLanguageCode)
+                .text(UiTextKey.BLUETOOTH_OFF)
         }
 
-        if (bluetoothOn) {
+        if (bluetoothOn || wifiOn) {
             startupCheckPending = false
             if (!meshServiceStarted) {
                 meshServiceStarted = true
