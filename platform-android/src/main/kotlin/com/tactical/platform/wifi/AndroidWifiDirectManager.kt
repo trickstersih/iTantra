@@ -18,6 +18,11 @@ import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.wifi.WifiDirectConnectionInfo
 import com.tactical.platform.api.wifi.WifiDirectManager
 import com.tactical.platform.api.wifi.WifiDirectPeer
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -54,8 +59,12 @@ class AndroidWifiDirectManager(
     private var receiverRegistered = false
     private var serviceDiscoveryStarted = false
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
+    private var discoveryRetryJob: Job? = null
     private var advertisedDeviceId: String? = null
     private var advertisedCallsign: String? = null
+    private var presenceRegistrationInProgress = false
+    private var presenceRegistered = false
+    private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -70,7 +79,7 @@ class AndroidWifiDirectManager(
                         _state.value = RadioLinkState.AVAILABLE
                         advertisedDeviceId?.let { id ->
                             advertisedCallsign?.let { callsign ->
-                                registerPresenceService(id, callsign)
+                                registerPresenceServiceAsync(id, callsign)
                             }
                         }
                         startServiceDiscoveryInternal()
@@ -90,7 +99,7 @@ class AndroidWifiDirectManager(
                             _state.value = RadioLinkState.AVAILABLE
                             advertisedDeviceId?.let { id ->
                                 advertisedCallsign?.let { callsign ->
-                                    registerPresenceService(id, callsign)
+                                    registerPresenceServiceAsync(id, callsign)
                                 }
                             }
                             startServiceDiscoveryInternal()
@@ -131,6 +140,10 @@ class AndroidWifiDirectManager(
                         !_connectionInfo.value.groupFormed
                     ) {
                         _state.value = RadioLinkState.AVAILABLE
+                    } else if (!discovering &&
+                        !_connectionInfo.value.groupFormed
+                    ) {
+                        scheduleServiceDiscoveryRetry()
                     }
                 }
             }
@@ -180,6 +193,9 @@ class AndroidWifiDirectManager(
         if (!started.compareAndSet(true, false)) return
 
         serviceDiscoveryStarted = false
+        discoveryRetryJob?.cancel()
+        discoveryRetryJob = null
+        presenceRegistered = false
 
         serviceRequest?.let { request ->
             runCatching {
@@ -224,65 +240,162 @@ class AndroidWifiDirectManager(
             return TacticalResult.Failure("Wi-Fi is off")
         }
 
-        registerPresenceService(deviceId, callsign)
-        return TacticalResult.Success(Unit)
+        return registerPresenceServiceAwait(deviceId, callsign)
     }
 
-    private fun registerPresenceService(
+    private fun registerPresenceServiceAsync(
         deviceId: String,
         callsign: String
     ) {
+        if (presenceRegistered || presenceRegistrationInProgress) return
+
+        managerScope.launch {
+            runCatching {
+                registerPresenceServiceAwait(deviceId, callsign)
+            }.onFailure {
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi Direct presence registration retry failed",
+                    it
+                )
+            }
+        }
+    }
+
+    private suspend fun registerPresenceServiceAwait(
+        deviceId: String,
+        callsign: String
+    ): TacticalResult<Unit> {
         if (!started.get() ||
             !wifiManager.isWifiEnabled ||
             !hasWifiDirectPermission()
         ) {
-            return
+            return TacticalResult.Failure("Wi-Fi Direct unavailable")
         }
 
-        val record = mapOf(
-            "app" to "itantra",
-            "id" to deviceId,
-            "callsign" to callsign.take(32)
-        )
-        val serviceInfo = WifiP2pDnsSdServiceInfo.newInstance(
-            "_itantra",
-            "_presence._tcp",
-            record
-        )
+        synchronized(this) {
+            if (presenceRegistered) {
+                return TacticalResult.Success(Unit)
+            }
+            if (presenceRegistrationInProgress) {
+                // Another lifecycle callback is already registering the same
+                // service. Let the next discovery retry observe the result.
+                return TacticalResult.Success(Unit)
+            }
+            presenceRegistrationInProgress = true
+        }
 
-        try {
-            wifiP2pManager.clearLocalServices(
-                wifichannel,
-                object : WifiP2pManager.ActionListener {
-                    override fun onSuccess() = addPresenceService(serviceInfo)
-                    override fun onFailure(reason: Int) = addPresenceService(serviceInfo)
+        return try {
+            suspendCancellableCoroutine { continuation ->
+                val record = mapOf(
+                    "app" to "itantra",
+                    "id" to deviceId,
+                    "callsign" to callsign.take(32)
+                )
+                val serviceInfo = WifiP2pDnsSdServiceInfo.newInstance(
+                    "_itantra",
+                    "_presence._tcp",
+                    record
+                )
+
+                fun finish(result: TacticalResult<Unit>) {
+                    synchronized(this) {
+                        presenceRegistrationInProgress = false
+                        if (result is TacticalResult.Success) {
+                            presenceRegistered = true
+                        }
+                    }
+                    if (continuation.isActive) {
+                        continuation.resume(result)
+                    }
                 }
+
+                try {
+                    wifiP2pManager.clearLocalServices(
+                        wifichannel,
+                        object : WifiP2pManager.ActionListener {
+                            override fun onSuccess() {
+                                addLocalServiceAwait(serviceInfo, ::finish)
+                            }
+
+                            override fun onFailure(reason: Int) {
+                                // No stale local service is fatal here. Still
+                                // attempt to install the current iTantra one.
+                                addLocalServiceAwait(serviceInfo, ::finish)
+                            }
+                        }
+                    )
+                } catch (_: SecurityException) {
+                    finish(
+                        TacticalResult.Failure(
+                            "Wi-Fi Direct permission denied"
+                        )
+                    )
+                } catch (e: Exception) {
+                    finish(
+                        TacticalResult.Failure(
+                            "iTantra Wi-Fi service registration failed: " +
+                                (e.message ?: e.javaClass.simpleName)
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            synchronized(this) {
+                presenceRegistrationInProgress = false
+            }
+            TacticalResult.Failure(
+                "iTantra Wi-Fi service registration failed: " +
+                    (e.message ?: e.javaClass.simpleName)
             )
-        } catch (_: SecurityException) {
-            android.util.Log.w(TAG, "Wi-Fi Direct presence registration denied")
         }
     }
 
-    private fun addPresenceService(serviceInfo: WifiP2pDnsSdServiceInfo) {
+    private fun addLocalServiceAwait(
+        serviceInfo: WifiP2pDnsSdServiceInfo,
+        finish: (TacticalResult<Unit>) -> Unit
+    ) {
         try {
             wifiP2pManager.addLocalService(
                 wifichannel,
                 serviceInfo,
                 object : WifiP2pManager.ActionListener {
                     override fun onSuccess() {
-                        android.util.Log.d(TAG, "iTantra Wi-Fi presence advertised")
+                        android.util.Log.d(
+                            TAG,
+                            "iTantra Wi-Fi presence advertised"
+                        )
+                        finish(TacticalResult.Success(Unit))
                     }
 
                     override fun onFailure(reason: Int) {
                         android.util.Log.w(
                             TAG,
-                            "iTantra Wi-Fi presence registration failed: " + reason
+                            "iTantra Wi-Fi presence registration failed: " +
+                                reason
+                        )
+                        finish(
+                            TacticalResult.Failure(
+                                "iTantra Wi-Fi service registration failed: " +
+                                    reason
+                            )
                         )
                     }
                 }
             )
         } catch (_: SecurityException) {
-            android.util.Log.w(TAG, "Wi-Fi Direct presence registration denied")
+            finish(
+                TacticalResult.Failure(
+                    "Wi-Fi Direct permission denied"
+                )
+            )
+        } catch (e: Exception) {
+            finish(
+                TacticalResult.Failure(
+                    "iTantra Wi-Fi service registration failed: " +
+                        (e.message ?: e.javaClass.simpleName)
+                )
+            )
         }
     }
 
@@ -375,6 +488,8 @@ class AndroidWifiDirectManager(
                                 wifichannel,
                                 object : WifiP2pManager.ActionListener {
                                     override fun onSuccess() {
+                                        discoveryRetryJob?.cancel()
+                                        discoveryRetryJob = null
                                         serviceDiscoveryStarted = true
                                         _state.value = RadioLinkState.AVAILABLE
                                         android.util.Log.d(
@@ -390,6 +505,7 @@ class AndroidWifiDirectManager(
                                             TAG,
                                             "Wi-Fi service discovery failed: " + reason
                                         )
+                                        scheduleServiceDiscoveryRetry()
                                     }
                                 }
                             )
@@ -411,6 +527,7 @@ class AndroidWifiDirectManager(
                             TAG,
                             "Wi-Fi service request failed: " + reason
                         )
+                        scheduleServiceDiscoveryRetry()
                     }
                 }
             )
@@ -430,6 +547,31 @@ class AndroidWifiDirectManager(
                 "Wi-Fi service discovery setup failed",
                 e
             )
+        }
+    }
+
+    private fun scheduleServiceDiscoveryRetry() {
+        if (discoveryRetryJob?.isActive == true) return
+        if (!started.get() || !wifiManager.isWifiEnabled || !hasWifiDirectPermission()) {
+            return
+        }
+
+        discoveryRetryJob = managerScope.launch {
+            while (started.get() &&
+                wifiManager.isWifiEnabled &&
+                hasWifiDirectPermission() &&
+                !serviceDiscoveryStarted
+            ) {
+                delay(SERVICE_DISCOVERY_RETRY_MS)
+                if (started.get() &&
+                    wifiManager.isWifiEnabled &&
+                    hasWifiDirectPermission() &&
+                    !serviceDiscoveryStarted
+                ) {
+                    startServiceDiscoveryInternal()
+                }
+            }
+            discoveryRetryJob = null
         }
     }
 
@@ -670,5 +812,6 @@ class AndroidWifiDirectManager(
     companion object {
         private const val TAG = "AndroidWifiDirect"
         private const val CONNECT_TIMEOUT_MS = 15_000L
+        private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
     }
 }
