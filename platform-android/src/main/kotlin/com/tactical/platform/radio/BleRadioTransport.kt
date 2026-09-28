@@ -116,7 +116,7 @@ class BleRadioTransport(
                                     rssi = connectionRegistry.lastKnownRssi(device) ?: UNKNOWN_RSSI,
                                     timestamp = System.currentTimeMillis(),
                                     transport = RadioType.BLUETOOTH
-                                }
+                                )
                             )
                         }
                     }
