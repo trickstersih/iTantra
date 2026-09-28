@@ -79,20 +79,26 @@ def main() -> int:
 
             start = time.perf_counter()
             with wave.open(str(output), "wb") as wav_file:
-                wav_file.setnchannels(1)
-                wav_file.setsampwidth(2)
-                wav_file.setframerate(voice.config.sample_rate)
-                voice.synthesize(TEXT, wav_file)
+                # Piper 1.8.x: synthesize_wav writes the generated chunks.
+                voice.synthesize_wav(TEXT, wav_file)
             elapsed = time.perf_counter() - start
 
             with wave.open(str(output), "rb") as wav_file:
-                duration = wav_file.getnframes() / wav_file.getframerate()
+                frames = wav_file.getnframes()
+                sample_rate = wav_file.getframerate()
+                channels = wav_file.getnchannels()
+                sample_width = wav_file.getsampwidth()
+                duration = frames / sample_rate if sample_rate else 0.0
 
             print()
             print("RESULT")
-            print("  synthesis       : PASS")
+            print("  synthesis       : PASS" if frames > 0 else "  synthesis       : FAIL (empty WAV)")
             print(f"  synthesis time  : {elapsed:.3f} s")
             print(f"  audio duration  : {duration:.3f} s")
+            print(f"  sample rate     : {sample_rate} Hz")
+            print(f"  channels        : {channels}")
+            print(f"  sample width    : {sample_width * 8}-bit")
+            print(f"  frames          : {frames}")
             print(f"  output          : {output}")
             print()
             print("Listen to the WAV for pronunciation, naturalness, rhythm, and artifacts.")
