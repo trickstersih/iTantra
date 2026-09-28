@@ -4,7 +4,6 @@ import com.tactical.domain.identity.DeviceId
 import com.tactical.domain.identity.DeviceNode
 import com.tactical.domain.identity.LinkType
 import com.tactical.domain.identity.RadioType
-import com.tactical.domain.identity.RadioLinkState
 import com.tactical.engine.discovery.beacon.BeaconEmitter
 import com.tactical.engine.discovery.catalog.DeviceCatalog
 import com.tactical.engine.discovery.scanner.BeaconScanner
@@ -170,9 +169,7 @@ class DefaultDiscoveryService(
 
     companion object {
         private const val TAG = "DefaultDiscoveryService"
-    }
 
-    companion object {
         // Short scan windows preserve discovery responsiveness while keeping
         // the scanner off most of the time. The 15s catalog TTL is long enough
         // to tolerate the gap between maintenance scans.
