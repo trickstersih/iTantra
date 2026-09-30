@@ -4,7 +4,8 @@ import com.tactical.domain.identity.DeviceId
 
 enum class SquadControlAction {
     REQUEST,
-    RESPONSE
+    RESPONSE,
+    REMOVE
 }
 
 /**
