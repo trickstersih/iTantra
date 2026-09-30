@@ -154,6 +154,14 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
         }
     }
 
+    private fun closeRuntime() {
+        runCatching { modelSession?.close() }
+        modelSession = null
+        preprocessor = null
+        vocabulary = null
+        blankIndex = null
+    }
+
     private suspend fun loadRuntime(): Runtime = loadMutex.withLock {
         val existingModel = modelSession
         val existingPreprocessor = preprocessor
@@ -416,7 +424,7 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                         previousRawToken = bestId
                     }
 
-                    buildString {
+                    return buildString {
                         for (tokenId in tokens) {
                             append(vocabulary[tokenId])
                         }
