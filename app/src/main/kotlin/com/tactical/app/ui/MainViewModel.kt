@@ -918,7 +918,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun setSelectedLanguage(languageCode: String) {
-        if (languageCode !in setOf("hi", "en")) return
+        if (languageCode !in SUPPORTED_SPEECH_LANGUAGE_CODES) return
         if (_uiState.value.languageLoadingCode != null) return
         if (_uiState.value.selectedLanguageCode == languageCode) return
 
@@ -1513,6 +1513,14 @@ class MainViewModel @Inject constructor(
     private fun displayLanguageName(languageCode: String): String =
         when (languageCode) {
             "hi" -> "हिन्दी"
+            "gu" -> "ગુજરાતી"
+            "mr" -> "मराठी"
+            "kn" -> "ಕನ್ನಡ"
+            "ml" -> "മലയാളം"
+            "ta" -> "தமிழ்"
+            "te" -> "తెలుగు"
+            "or" -> "ଓଡ଼ିଆ"
+            "bn" -> "বাংলা"
             "en" -> "English"
             else -> languageCode.uppercase(Locale.US)
         }
@@ -1680,5 +1688,10 @@ class MainViewModel @Inject constructor(
     }
     companion object {
         private const val MANUAL_SCAN_DISPLAY_MS = 5000L
+
+        private val SUPPORTED_SPEECH_LANGUAGE_CODES = setOf(
+            "hi", "gu", "mr", "kn", "ml",
+            "ta", "te", "or", "bn", "en"
+        )
     }
 }
