@@ -6,6 +6,7 @@ import ai.onnxruntime.OrtSession
 import com.tactical.domain.audio.AudioFrame
 import com.tactical.domain.speech.TranscriptionChunk
 import com.tactical.platform.api.speech.SpeechToText
+import com.tactical.platform.speech.SpeechLanguagePreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
@@ -30,7 +31,8 @@ import kotlin.math.sqrt
  * preprocess.json; it does not use Moonshine or Vosk.
  */
 class Andr2SpeechToText(
-    private val modelStore: Andr2SttModelStore
+    private val modelStore: Andr2SttModelStore,
+    private val languagePreferences: SpeechLanguagePreferences
 ) : SpeechToText {
 
     private val environment = OrtEnvironment.getEnvironment()
