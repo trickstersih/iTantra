@@ -1,0 +1,4 @@
+onnxruntime>=1.19
+numpy>=1.26
+soundfile>=0.12
+tokenizers>=0.20

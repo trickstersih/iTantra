@@ -765,14 +765,14 @@ private data class SquadLanguageOption(
 
 private val SQUAD_LANGUAGE_OPTIONS = listOf(
     SquadLanguageOption("hi", "Hindi", "हिन्दी", true),
-    SquadLanguageOption("gu", "Gujarati", "ગુજરાતી", false),
-    SquadLanguageOption("mr", "Marathi", "मराठी", false),
-    SquadLanguageOption("kn", "Kannada", "ಕನ್ನಡ", false),
-    SquadLanguageOption("ml", "Malayalam", "മലയാളം", false),
-    SquadLanguageOption("ta", "Tamil", "தமிழ்", false),
-    SquadLanguageOption("te", "Telugu", "తెలుగు", false),
-    SquadLanguageOption("or", "Odia", "ଓଡ଼ିଆ", false),
-    SquadLanguageOption("bn", "Bengali", "বাংলা", false),
+    SquadLanguageOption("gu", "Gujarati", "ગુજરાતી", true),
+    SquadLanguageOption("mr", "Marathi", "मराठी", true),
+    SquadLanguageOption("kn", "Kannada", "ಕನ್ನಡ", true),
+    SquadLanguageOption("ml", "Malayalam", "മലയാളം", true),
+    SquadLanguageOption("ta", "Tamil", "தமிழ்", true),
+    SquadLanguageOption("te", "Telugu", "తెలుగు", true),
+    SquadLanguageOption("or", "Odia", "ଓଡ଼ିଆ", true),
+    SquadLanguageOption("bn", "Bengali", "বাংলা", true),
     SquadLanguageOption("en", "English", "English", true)
 )
 

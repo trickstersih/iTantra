@@ -40,6 +40,14 @@ class SpeechLanguagePreferences @Inject constructor(
 
         private val SUPPORTED_LANGUAGE_CODES = setOf(
             "hi",
+            "gu",
+            "mr",
+            "kn",
+            "ml",
+            "ta",
+            "te",
+            "or",
+            "bn",
             "en"
         )
     }

@@ -1,37 +1,8 @@
-import java.io.File
-import PrepareMoonshineModelTask
-
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
     alias(libs.plugins.google.devtools.ksp)
-}
-
-val moonshineModelDir = layout.projectDirectory.dir("src/main/assets/models").asFile
-val moonshineModelZip = File(moonshineModelDir, "moonshine_stt_tiny_en.zip")
-val moonshineModelBaseUrl =
-    "https://download.moonshine.ai/model/tiny-streaming-en/quantized_26_08_21"
-
-val moonshineModelFiles = listOf(
-    "adapter.ort",
-    "cross_kv.ort",
-    "decoder_kv.ort",
-    "encoder.ort",
-    "frontend.model.ort",
-    "frontend.weights.ort",
-    "streaming_config.json",
-    "tokenizer.bin"
-)
-
-val prepareMoonshineModel = tasks.register<PrepareMoonshineModelTask>("prepareMoonshineModel") {
-    outputArchive.set(moonshineModelZip)
-    baseUrl.set(moonshineModelBaseUrl)
-    modelFiles.set(moonshineModelFiles)
-}
-
-tasks.named("preBuild").configure {
-    dependsOn(prepareMoonshineModel)
 }
 
 android {
