@@ -60,6 +60,14 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                 )
                 try {
                     runtime.transcribe(bytes)
+                } catch (t: Throwable) {
+                    android.util.Log.e(
+                        TAG,
+                        "English STT inference/decode failed: " +
+                            (t.message ?: t.javaClass.simpleName),
+                        t
+                    )
+                    throw t
                 } finally {
                     val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
                     android.util.Log.d(
@@ -404,21 +412,55 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
 
                     if (encodedLength <= 0L) return ""
 
-                    val buffer = outputTensor.floatBuffer.duplicate()
-                    buffer.rewind()
+                    android.util.Log.d(
+                        "EnglishConformerCtc",
+                        "English STT output shape=" +
+                            outputShape.contentToString() +
+                            " encodedLength=" + encodedLength
+                    )
+
+                    /*
+                     * Read the actual Java tensor value instead of assuming the
+                     * returned ONNX tensor exposes a flat FloatBuffer with the
+                     * expected layout. ONNX Runtime Java represents a rank-3
+                     * float tensor as Array<Any?> -> Array<Any?> -> FloatArray.
+                     * This matches the logical [batch, time, vocab] shape and
+                     * avoids a buffer-layout assumption in the decoder.
+                     */
+                    val rawValue = outputTensor.value
+                    val batchValues = rawValue as? Array<*>
+                        ?: error(
+                            "English STT logprobs value is not a rank-3 float array"
+                        )
+                    require(batchValues.size == 1) {
+                        "English STT expected one output batch, got " +
+                            batchValues.size
+                    }
+
+                    val timeValues = batchValues[0] as? Array<*>
+                        ?: error(
+                            "English STT logprobs time dimension is not an array"
+                        )
 
                     val tokens = ArrayList<Int>()
                     var previousRawToken = blankIndex
 
                     for (timeIndex in 0 until encodedLength.toInt()) {
-                        val base =
-                            timeIndex * outputVocabSize.toInt()
+                        val row = timeValues[timeIndex] as? FloatArray
+                            ?: error(
+                                "English STT logprobs row $timeIndex is not FloatArray"
+                            )
+
+                        require(row.size >= vocabulary.size) {
+                            "English STT logprobs row is smaller than vocab: " +
+                                row.size + " vs " + vocabulary.size
+                        }
 
                         var bestId = 0
                         var bestValue = Float.NEGATIVE_INFINITY
 
-                        for (tokenId in 0 until vocabulary.size) {
-                            val value = buffer.get(base + tokenId)
+                        for (tokenId in vocabulary.indices) {
+                            val value = row[tokenId]
                             if (value > bestValue) {
                                 bestValue = value
                                 bestId = tokenId
@@ -436,6 +478,11 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
 
                         previousRawToken = bestId
                     }
+
+                    android.util.Log.d(
+                        "EnglishConformerCtc",
+                        "English STT decoded token count=" + tokens.size
+                    )
 
                     val decoded = buildString {
                         for (tokenId in tokens) {
