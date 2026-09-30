@@ -885,53 +885,6 @@ class AndroidWifiDirectManager(
         }
     }
 
-    private suspend fun scheduleAutoReconnectAttempt() {
-        if (reconnectAttemptJob?.isActive == true) return
-
-        val squadIds = squadMembershipStore.squadDeviceIds()
-        if (squadIds.isEmpty()) return
-
-        val target = _peers.value
-            .asSequence()
-            .filter { peer ->
-                val id = peer.appDeviceId
-                id != null &&
-                    id in squadIds &&
-                    peer.linkState != RadioLinkState.CONNECTING
-            }
-            .maxByOrNull { it.lastSeenEpochMs }
-            ?: return
-
-        reconnectAttemptJob = managerScope.launch {
-            try {
-                android.util.Log.d(
-                    TAG,
-                    "Wi-Fi Direct auto-reconnect candidate: " +
-                        (target.callsign ?: target.deviceName) +
-                        " / " + target.deviceAddress
-                )
-
-                val result = runCatching {
-                    connect(target.deviceAddress)
-                }.getOrElse { error ->
-                    TacticalResult.Failure(
-                        "Wi-Fi Direct auto-reconnect failed: " +
-                            (error.message ?: error.javaClass.simpleName)
-                    )
-                }
-
-                if (result is TacticalResult.Failure) {
-                    android.util.Log.d(
-                        TAG,
-                        "Wi-Fi Direct auto-reconnect failed: " + result.error
-                    )
-                }
-            } finally {
-                reconnectAttemptJob = null
-            }
-        }
-    }
-
     private fun scheduleServiceDiscoveryRetry() {
         if (discoveryRetryJob?.isActive == true) return
         if (!started.get() || !wifiManager.isWifiEnabled || !hasWifiDirectPermission()) {
