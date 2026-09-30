@@ -407,17 +407,19 @@ class MainViewModel @Inject constructor(
                             previous?.callsign ?: id
                         }
 
-                        if (id in squadMembershipStore.squadDeviceIds()) {
-                            localAppDataStore.savePairedDevice(
-                                StoredPairedDevice(
-                                    deviceId = id,
-                                    callsign = callsign,
-                                    lastSeenEpochMs = device.lastSeen.toEpochMilli(),
-                                    rssi = device.rssi,
-                                    linkText = device.link.name
-                                )
+                        // Persist discovered callsigns for every peer, not
+                        // just squad members. Messages can come from any available
+                        // device, so the sender name must be resolvable even when
+                        // that peer has never been added to the squad.
+                        localAppDataStore.savePairedDevice(
+                            StoredPairedDevice(
+                                deviceId = id,
+                                callsign = callsign,
+                                lastSeenEpochMs = device.lastSeen.toEpochMilli(),
+                                rssi = device.rssi,
+                                linkText = device.link.name
                             )
-                        }
+                        )
 
                         val bluetoothState = if (
                             previous?.bleState != null
@@ -1606,7 +1608,7 @@ class MainViewModel @Inject constructor(
 
     private fun storedSentMessageToUi(message: StoredSentMessage): ChatMessageUi =
         ChatMessageUi(
-            sender = message.senderName,
+            sender = senderName,
             text = message.text,
             timestampText = if (message.timestampEpochMs > 0L) {
                 formatTimestamp(message.timestampEpochMs)
@@ -1619,7 +1621,7 @@ class MainViewModel @Inject constructor(
             isAlert = message.isAlert,
             emergencyData = if (message.isAlert) {
                 EmergencyAlertData(
-                    sender = message.senderName,
+                    sender = senderName,
                     timestampText = formatTimestamp(message.timestampEpochMs),
                     severity = message.severity ?: Severity.CRITICAL.name,
                     message = message.text,
@@ -1653,6 +1655,10 @@ class MainViewModel @Inject constructor(
         )
 
     private fun storedMessageToUi(message: StoredReceivedMessage): ChatMessageUi {
+        val senderName = localAppDataStore.callsignForPeer(message.senderId)
+            ?.takeIf { it.isNotBlank() }
+            ?: message.senderName
+
         val emergencyData = if (message.isAlert) {
             EmergencyAlertData(
                 sender = message.senderName,
