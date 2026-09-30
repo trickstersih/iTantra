@@ -1009,8 +1009,14 @@ class MainViewModel @Inject constructor(
             return
         }
 
-        if (!enabled && bleConnectionManager.connectedSquadDeviceIds().isEmpty()) {
-            return
+        if (!enabled) {
+            val squadIds = squadMembershipStore.squadDeviceIds()
+            val connectedTransportIds = radioTransport.connectedPeerIds()
+            val hasConnectedSquadTransport = squadIds.any { it in connectedTransportIds }
+
+            if (!hasConnectedSquadTransport) {
+                return
+            }
         }
 
         pttModePreferences.setPttEnabled(enabled)
@@ -1029,7 +1035,13 @@ class MainViewModel @Inject constructor(
      * Starts continuous voice mode after microphone permission is available.
      */
     fun ensureVoiceMode() {
-        if (!_uiState.value.pttEnabled && bleConnectionManager.connectedSquadDeviceIds().isNotEmpty()) {
+        if (_uiState.value.pttEnabled) return
+
+        val squadIds = squadMembershipStore.squadDeviceIds()
+        val connectedTransportIds = radioTransport.connectedPeerIds()
+        val hasConnectedSquadTransport = squadIds.any { it in connectedTransportIds }
+
+        if (hasConnectedSquadTransport) {
             viewModelScope.launch {
                 runCatching { pttController.startContinuous() }
             }
