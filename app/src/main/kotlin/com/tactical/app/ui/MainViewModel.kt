@@ -669,7 +669,8 @@ class MainViewModel @Inject constructor(
                         }
                     }
 
-                    peer?.wifiDirectState != RadioLinkState.UNAVAILABLE &&
+                    peer != null &&
+                        peer.wifiDirectState != RadioLinkState.UNAVAILABLE &&
                         peer.bleState != BleLinkState.CONNECTED -> {
                         // We have a Wi-Fi Direct discovery entry but no active
                         // data socket yet. This is the original connection path.
