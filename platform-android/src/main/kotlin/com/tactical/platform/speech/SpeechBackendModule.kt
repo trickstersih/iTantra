@@ -12,10 +12,10 @@ import javax.inject.Singleton
 /**
  * THE ONE FILE YOU EDIT TO SWAP INFERENCE BACKENDS.
  *
- * Binds STT and TTS to their active platform backends. STT is routed by the
- * saved outgoing language: Hindi uses the offline Vosk small Hindi model,
- * English uses Moonshine Tiny Streaming. TTS remains on the existing
- * TFLite implementation used by this module's speech wiring.
+ * Binds STT and TTS to their active platform backends. STT is routed through
+ * the bundled andr2 multilingual ONNX model using the saved outgoing
+ * language as the decoder conditioning prefix. TTS remains on the existing
+ * MMS implementation.
  * Feature modules only see the backend-neutral interfaces from
  * core-platform-api.
  *
