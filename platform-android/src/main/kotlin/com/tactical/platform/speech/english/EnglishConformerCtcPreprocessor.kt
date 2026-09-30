@@ -41,7 +41,7 @@ class EnglishConformerCtcPreprocessor {
      */
     fun pcm16ToFeatures(pcm: ByteArray): Features {
         require(pcm.size % 2 == 0) {
-            "English STT PCM16 buffer has an odd byte count: ${{pcm.size}"
+            "English STT PCM16 buffer has an odd byte count: ${pcm.size}"
         }
 
         return audioToFeatures(pcm16ToFloat(pcm))
