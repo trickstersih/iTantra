@@ -20,6 +20,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
+import javax.inject.Inject
+import javax.inject.Singleton
 import kotlin.math.sqrt
 
 /**
@@ -32,7 +34,8 @@ import kotlin.math.sqrt
  * The model is language-conditioned by the selected language prefix from
  * preprocess.json; it does not use Moonshine or Vosk.
  */
-class Andr2SpeechToText(
+@Singleton
+class Andr2SpeechToText @Inject constructor(
     private val modelStore: Andr2SttModelStore,
     private val languagePreferences: SpeechLanguagePreferences
 ) : SpeechToText {
