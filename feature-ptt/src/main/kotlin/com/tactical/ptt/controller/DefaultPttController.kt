@@ -141,20 +141,18 @@ class DefaultPttController(
                         }
                     }
                 } else {
-                    android.util.Log.w(
-                        "DefaultPttController",
-                        "PTT ended with no transcription; no packet will be sent"
+                    println(
+                        "[DefaultPttController] PTT ended with no transcription; no packet will be sent"
                     )
                     _state.update { it.copy(sessionState = SessionState.IDLE) }
                 }
                 currentSession = null
             } catch (t: Throwable) {
-                android.util.Log.e(
-                    "DefaultPttController",
-                    "PTT transcription pipeline failed: " +
-                        (t.message ?: t.javaClass.simpleName),
-                    t
+                println(
+                    "[DefaultPttController] PTT transcription pipeline failed: " +
+                        (t.message ?: t.javaClass.simpleName)
                 )
+                t.printStackTrace()
                 _state.update {
                     it.copy(
                         sessionState = SessionState.IDLE,
