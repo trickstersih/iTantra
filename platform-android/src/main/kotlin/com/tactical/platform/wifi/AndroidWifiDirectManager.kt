@@ -59,6 +59,7 @@ class AndroidWifiDirectManager(
     private val started = AtomicBoolean(false)
     private var receiverRegistered = false
     private var serviceDiscoveryStarted = false
+    private val serviceDiscoveryStarting = AtomicBoolean(false)
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
     private var discoveryRetryJob: Job? = null
     private var peerRefreshJob: Job? = null
@@ -536,6 +537,14 @@ class AndroidWifiDirectManager(
             return
         }
 
+        // startServiceDiscoveryInternal() can be triggered concurrently by
+        // Activity startup, permission refresh, and P2P broadcasts. Android
+        // rejects/duplicates overlapping DNS-SD setup, so serialize startup
+        // until the asynchronous discoverServices() callback completes.
+        if (!serviceDiscoveryStarting.compareAndSet(false, true)) {
+            return
+        }
+
         if (!isLocationModeEnabled()) {
             _state.value = RadioLinkState.FAILED
             android.util.Log.w(
@@ -643,6 +652,7 @@ class AndroidWifiDirectManager(
                                         discoveryRetryJob?.cancel()
                                         discoveryRetryJob = null
                                         serviceDiscoveryStarted = true
+                                        serviceDiscoveryStarting.set(false)
                                         _state.value = RadioLinkState.AVAILABLE
                                         startPeerRefreshLoop()
                                         android.util.Log.d(
@@ -653,6 +663,7 @@ class AndroidWifiDirectManager(
 
                                     override fun onFailure(reason: Int) {
                                         removeServiceRequest()
+                                        serviceDiscoveryStarting.set(false)
                                         _state.value = RadioLinkState.FAILED
                                         android.util.Log.w(
                                             TAG,
@@ -664,6 +675,7 @@ class AndroidWifiDirectManager(
                             )
                         } catch (e: SecurityException) {
                             removeServiceRequest()
+                            serviceDiscoveryStarting.set(false)
                             _state.value = RadioLinkState.FAILED
                             android.util.Log.w(
                                 TAG,
@@ -675,6 +687,7 @@ class AndroidWifiDirectManager(
 
                     override fun onFailure(reason: Int) {
                         removeServiceRequest()
+                        serviceDiscoveryStarting.set(false)
                         _state.value = RadioLinkState.FAILED
                         android.util.Log.w(
                             TAG,
@@ -686,6 +699,7 @@ class AndroidWifiDirectManager(
             )
         } catch (e: SecurityException) {
             removeServiceRequest()
+            serviceDiscoveryStarting.set(false)
             _state.value = RadioLinkState.FAILED
             android.util.Log.w(
                 TAG,
@@ -694,6 +708,7 @@ class AndroidWifiDirectManager(
             )
         } catch (e: Exception) {
             removeServiceRequest()
+            serviceDiscoveryStarting.set(false)
             _state.value = RadioLinkState.FAILED
             android.util.Log.w(
                 TAG,
@@ -774,6 +789,7 @@ class AndroidWifiDirectManager(
 
     private fun removeServiceRequest() {
         serviceDiscoveryStarted = false
+        serviceDiscoveryStarting.set(false)
         peerRefreshJob?.cancel()
         peerRefreshJob = null
 
