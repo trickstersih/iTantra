@@ -782,6 +782,18 @@ class AndroidWifiDirectManager(
         }
     }
 
+    override suspend fun connectByAppDeviceId(
+        deviceId: String
+    ): TacticalResult<Unit> {
+        val peer = _peers.value.firstOrNull {
+            it.appDeviceId.equals(deviceId, ignoreCase = true)
+        } ?: return TacticalResult.Failure(
+            "Wi-Fi Direct peer is no longer discovered"
+        )
+
+        return connect(peer.deviceAddress)
+    }
+
     override suspend fun connect(deviceAddress: String): TacticalResult<Unit> {
         if (!hasWifiDirectPermission()) {
             return TacticalResult.Failure("Missing Wi-Fi Direct permission")
