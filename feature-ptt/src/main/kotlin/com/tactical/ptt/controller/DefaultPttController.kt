@@ -337,9 +337,16 @@ class DefaultPttController(
         val job = sessionJob
         if (job != null) {
             // Only the recording/transcription coroutine is subject to the
-            // short release grace period. A transmission already handed to
+            // release grace period. A transmission already handed to
             // transmissionJob is intentionally allowed to finish.
             withTimeoutOrNull(releaseGraceMs) { job.join() }
+            if (job.isActive) {
+                // Give a final STT inference a little longer to finish instead
+                // of discarding an otherwise valid utterance on release.
+                // The English Conformer backend performs one final inference
+                // after the audio stream closes.
+                withTimeoutOrNull(15_000L) { job.join() }
+            }
             if (job.isActive) {
                 job.cancel()
             }
