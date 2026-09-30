@@ -5,8 +5,8 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Dependency-free mixed-radix FFT for the exact 400-point transform required
- * by andr2. 400 = 2*2*2*2*5*5.
+ * Dependency-free mixed-radix FFT. Used by both andr2 (400-point) and the
+ * English Conformer backend (512-point) without bringing in another FFT lib.
  */
 class Andr2Fft(private val size: Int = 400) {
     private val cosTables = HashMap<Int, DoubleArray>()
