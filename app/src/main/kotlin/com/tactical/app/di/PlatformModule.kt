@@ -105,11 +105,13 @@ object PlatformModule {
     fun provideWifiDirectManager(
         @ApplicationContext context: Context,
         manager: WifiP2pManager,
-        channel: WifiP2pManager.Channel
+        channel: WifiP2pManager.Channel,
+        squadMembershipStore: SquadMembershipStore
     ): WifiDirectManager =
         AndroidWifiDirectManager(
-            context,
-            manager,
-            channel
+            context = context,
+            wifiP2pManager = manager,
+            wifichannel = channel,
+            squadMembershipStore = squadMembershipStore
         )
 }
