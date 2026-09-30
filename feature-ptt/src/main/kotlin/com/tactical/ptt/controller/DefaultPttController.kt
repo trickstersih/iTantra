@@ -341,11 +341,10 @@ class DefaultPttController(
             // transmissionJob is intentionally allowed to finish.
             withTimeoutOrNull(releaseGraceMs) { job.join() }
             if (job.isActive) {
-                // Give a final STT inference a little longer to finish instead
-                // of discarding an otherwise valid utterance on release.
-                // The English Conformer backend performs one final inference
-                // after the audio stream closes.
-                withTimeoutOrNull(15_000L) { job.join() }
+                // English Conformer can take longer than the old 5s grace
+                // period for its final full-model inference. Give it one
+                // bounded extension instead of canceling a valid utterance.
+                withTimeoutOrNull(10_000L) { job.join() }
             }
             if (job.isActive) {
                 job.cancel()
