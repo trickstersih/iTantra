@@ -491,8 +491,12 @@ class MainViewModel @Inject constructor(
                     }
                     state.copy(
                         squadPeers = currentSquad,
+                        // "Available" means discovered and not yet in the squad.
+                        // A live Wi-Fi Direct TCP connection must not make the
+                        // device disappear from the list; it should remain
+                        // visible with its transport status.
                         availablePeers = peers.filter {
-                            it.deviceAddress !in squadIds && !it.isConnected
+                            it.deviceAddress !in squadIds
                         }
                     )
                 }
@@ -571,7 +575,6 @@ class MainViewModel @Inject constructor(
             val updatedSquadPeers = state.squadPeers.map(::updatePeer)
             val updatedAvailablePeers = state.availablePeers
                 .map(::updatePeer)
-                .filter { !it.isConnected }
 
             state.copy(
                 squadPeers = updatedSquadPeers,
@@ -772,7 +775,7 @@ class MainViewModel @Inject constructor(
             state.copy(
                 squadPeers = squad,
                 availablePeers = allKnown.filter {
-                    it.deviceAddress !in squadIds && !it.isConnected
+                    it.deviceAddress !in squadIds
                 }
             )
         }
@@ -803,10 +806,11 @@ class MainViewModel @Inject constructor(
 
                     state.copy(
                         squadPeers = updatedPeers.filter { it.deviceAddress in squadIds },
-                        // A live GATT peer is not an "available" device and
-                        // must not offer another Add to Squad action.
+                        // Keep discovered peers visible even when a transport
+                        // is already connected. "Available" here means not in
+                        // the squad; the card displays the live transport state.
                         availablePeers = updatedPeers.filter {
-                            it.deviceAddress !in squadIds && !it.isConnected
+                            it.deviceAddress !in squadIds
                         }
                     )
                 }
