@@ -61,6 +61,7 @@ class AndroidWifiDirectManager(
     private var serviceDiscoveryStarted = false
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
     private var discoveryRetryJob: Job? = null
+    private var presenceRetryJob: Job? = null
     private var advertisedDeviceId: String? = null
     private var advertisedCallsign: String? = null
     private var presenceRegistrationInProgress = false
@@ -212,6 +213,8 @@ class AndroidWifiDirectManager(
         serviceDiscoveryStarted = false
         discoveryRetryJob?.cancel()
         discoveryRetryJob = null
+        presenceRetryJob?.cancel()
+        presenceRetryJob = null
         presenceRegistered = false
 
         serviceRequest?.let { request ->
@@ -261,7 +264,11 @@ class AndroidWifiDirectManager(
             return TacticalResult.Failure("Wi-Fi is off")
         }
 
-        return registerPresenceServiceAwait(deviceId, callsign)
+        val result = registerPresenceServiceAwait(deviceId, callsign)
+        if (result is TacticalResult.Failure) {
+            schedulePresenceRetry()
+        }
+        return result
     }
 
     private fun registerPresenceServiceAsync(
@@ -271,19 +278,66 @@ class AndroidWifiDirectManager(
         if (presenceRegistered || presenceRegistrationInProgress) return
 
         managerScope.launch {
-            runCatching {
+            val result = runCatching {
                 registerPresenceServiceAwait(deviceId, callsign)
-            }.onFailure {
+            }.getOrElse {
                 android.util.Log.w(
                     TAG,
                     "Wi-Fi Direct presence registration retry failed",
                     it
                 )
+                TacticalResult.Failure(
+                    "Wi-Fi Direct presence registration failed"
+                )
+            }
+
+            if (result is TacticalResult.Failure) {
+                schedulePresenceRetry()
             }
         }
     }
 
-    private suspend fun registerPresenceServiceAwait(
+    private fun schedulePresenceRetry() {
+        if (presenceRegistered || presenceRetryJob?.isActive == true) return
+        if (
+            !started.get() ||
+            !wifiManager.isWifiEnabled ||
+            !hasWifiDirectPermission()
+        ) {
+            return
+        }
+
+        val deviceId = advertisedDeviceId ?: return
+        val callsign = advertisedCallsign ?: return
+
+        presenceRetryJob = managerScope.launch {
+            while (
+                started.get() &&
+                wifiManager.isWifiEnabled &&
+                hasWifiDirectPermission() &&
+                !presenceRegistered
+            ) {
+                delay(PRESENCE_RETRY_MS)
+
+                if (
+                    !started.get() ||
+                    !wifiManager.isWifiEnabled ||
+                    !hasWifiDirectPermission() ||
+                    presenceRegistered
+                ) {
+                    break
+                }
+
+                val result = registerPresenceServiceAwait(deviceId, callsign)
+                if (result is TacticalResult.Success) {
+                    break
+                }
+            }
+            presenceRetryJob = null
+        }
+    }
+
+    private suspend fun registerPresenceServiceAwait (
         deviceId: String,
         callsign: String
     ): TacticalResult<Unit> {
@@ -477,12 +531,19 @@ class AndroidWifiDirectManager(
         try {
             wifiP2pManager.setDnsSdResponseListeners(
                 wifichannel,
-                WifiP2pManager.DnsSdServiceResponseListener { instanceName, _, device ->
-                    android.util.Log.d(
-                        TAG,
-                        "iTantra Wi-Fi service: " +
-                            instanceName + " @ " + device.deviceAddress
-                    )
+                WifiP2pManager.DnsSdServiceResponseListener { instanceName, registrationType, device ->
+                    if (
+                        instanceName == "_itantra" &&
+                        registrationType == "_presence._tcp"
+                    ) {
+                        android.util.Log.d(
+                            TAG,
+                            "iTantra Wi-Fi service: " +
+                                instanceName + " / " +
+                                registrationType +
+                                " @ " + device.deviceAddress
+                        )
+                    }
                 },
                 WifiP2pManager.DnsSdTxtRecordListener { _, record, device ->
                     if (record["app"] != "itantra") return@DnsSdTxtRecordListener
@@ -515,9 +576,9 @@ class AndroidWifiDirectManager(
                 }
             )
 
-            val request = WifiP2pDnsSdServiceRequest.newInstance(
-                "_presence._tcp"
-            )
+            // Search all Bonjour services, matching Android's reference
+            // implementation. Filter to Itantra in the response callback.
+            val request = WifiP2pDnsSdServiceRequest.newInstance()
             serviceRequest = request
 
             wifiP2pManager.addServiceRequest(
@@ -856,5 +917,6 @@ class AndroidWifiDirectManager(
         private const val TAG = "AndroidWifiDirect"
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
+        private const val PRESENCE_RETRY_MS = 5_000L
     }
 }
