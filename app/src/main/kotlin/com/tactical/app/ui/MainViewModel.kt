@@ -40,6 +40,7 @@ import com.tactical.engine.mesh.service.MeshService
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.ble.BleLinkState
 import com.tactical.platform.api.radio.RadioTransport
+import com.tactical.platform.api.wifi.WifiDirectManager
 import com.tactical.platform.api.squad.SquadMembershipStore
 import com.tactical.domain.identity.RadioLinkState
 import com.tactical.domain.identity.RadioType
@@ -151,6 +152,7 @@ class MainViewModel @Inject constructor(
     private val meshService: MeshService,
     private val identityStore: DeviceIdentityStore,
     private val bleConnectionManager: BleConnectionManager,
+    private val wifiDirectManager: WifiDirectManager,
     private val radioTransport: RadioTransport,
     private val squadMembershipStore: SquadMembershipStore,
     private val audioRecorder: AudioRecorder,
@@ -622,13 +624,57 @@ class MainViewModel @Inject constructor(
             .firstOrNull { it.deviceAddress == deviceAddress }
 
         viewModelScope.launch {
-            if (peer != null && (peer.linkText.startsWith("VIA ") || peer.linkText == "RELAYED")) {
-                runCatching {
-                    meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+            val result = runCatching {
+                when {
+                    peer != null &&
+                        (peer.linkText.startsWith("VIA ") || peer.linkText == "RELAYED") -> {
+                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
+                    peer != null &&
+                        peer.wifiDirectState != RadioLinkState.UNAVAILABLE &&
+                        peer.bleState != BleLinkState.CONNECTED -> {
+                        val connectResult =
+                            wifiDirectManager.connectByAppDeviceId(deviceAddress)
+
+                        if (connectResult is com.tactical.domain.result.TacticalResult.Failure) {
+                            connectResult
+                        } else {
+                            val ready = withTimeoutOrNull(5_000L) {
+                                while (deviceAddress !in radioTransport.connectedPeerIds()) {
+                                    delay(100L)
+                                }
+                                true
+                            } == true
+
+                            if (!ready) {
+                                TacticalResult.Failure(
+                                    "Wi-Fi Direct connected, but the data link did not become ready"
+                                )
+                            } else {
+                                meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                            }
+                        }
+                    }
+
+                    else -> {
+                        bleConnectionManager.addToSquad(deviceAddress)
+                    }
                 }
-            } else {
-                runCatching {
-                    bleConnectionManager.addToSquad(deviceAddress)
+            }.getOrElse {
+                TacticalResult.Failure(
+                    it.message ?: it.javaClass.simpleName
+                )
+            }
+
+            if (result is TacticalResult.Failure) {
+                val error = result.error
+                android.util.Log.w(
+                    "MainViewModel",
+                    "Add to squad failed for " + deviceAddress + ": " + error
+                )
+                _uiState.update {
+                    it.copy(squadRequestError = error)
                 }
             }
         }
