@@ -1608,7 +1608,7 @@ class MainViewModel @Inject constructor(
 
     private fun storedSentMessageToUi(message: StoredSentMessage): ChatMessageUi =
         ChatMessageUi(
-            sender = senderName,
+            sender = message.senderName,
             text = message.text,
             timestampText = if (message.timestampEpochMs > 0L) {
                 formatTimestamp(message.timestampEpochMs)
@@ -1621,7 +1621,7 @@ class MainViewModel @Inject constructor(
             isAlert = message.isAlert,
             emergencyData = if (message.isAlert) {
                 EmergencyAlertData(
-                    sender = senderName,
+                    sender = message.senderName,
                     timestampText = formatTimestamp(message.timestampEpochMs),
                     severity = message.severity ?: Severity.CRITICAL.name,
                     message = message.text,
@@ -1661,7 +1661,7 @@ class MainViewModel @Inject constructor(
 
         val emergencyData = if (message.isAlert) {
             EmergencyAlertData(
-                sender = message.senderName,
+                sender = senderName,
                 timestampText = formatTimestamp(message.timestampEpochMs),
                 severity = message.severity ?: Severity.CRITICAL.name,
                 message = message.text,
@@ -1675,7 +1675,7 @@ class MainViewModel @Inject constructor(
         }
 
         return ChatMessageUi(
-            sender = message.senderName,
+            sender = senderName,
             text = message.text,
             timestampText = formatTimestamp(message.timestampEpochMs),
             statusText = if (message.isAlert) "Emergency" else "",
