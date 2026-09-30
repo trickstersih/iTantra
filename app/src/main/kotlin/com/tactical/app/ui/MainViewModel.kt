@@ -1168,6 +1168,66 @@ class MainViewModel @Inject constructor(
         resumeContinuousVoiceIfNeeded()
     }
 
+    /**
+     * Emergency is a true broadcast: every currently discovered direct peer
+     * (available or already in the squad) should have a chance to receive it.
+     * MeshService already broadcasts EmergencyPacket to all connected radios;
+     * this step brings discovered-but-not-yet-connected direct peers online
+     * before that broadcast. Relayed peers are intentionally left alone because
+     * the mesh relay path handles them through the peers already connected.
+     */
+    private suspend fun prepareEmergencyRecipients() {
+        val state = _uiState.value
+        val recipients = (state.availablePeers + state.squadPeers)
+            .distinctBy { it.deviceAddress }
+            .filter { peer ->
+                peer.linkText != "RELAYED" &&
+                    !peer.linkText.startsWith("VIA ")
+            }
+
+        if (recipients.isEmpty()) return
+
+        coroutineScope {
+            recipients
+                .filter { it.deviceAddress !in radioTransport.connectedPeerIds() }
+                .map { peer ->
+                    async {
+                        val deviceId = peer.deviceAddress
+
+                        // Prefer Wi-Fi Direct when this peer was discovered
+                        // through the Wi-Fi P2P layer; BLE is the fallback.
+                        if (peer.wifiDirectState != RadioLinkState.UNAVAILABLE) {
+                            val wifiResult = runCatching {
+                                wifiDirectManager.connectByAppDeviceId(deviceId)
+                            }.getOrNull()
+
+                            if (wifiResult is TacticalResult.Success) {
+                                withTimeoutOrNull(3_000L) {
+                                    while (deviceId !in radioTransport.connectedPeerIds()) {
+                                        delay(100L)
+                                    }
+                                }
+                                if (deviceId in radioTransport.connectedPeerIds()) {
+                                    return@async
+                                }
+                            }
+                        }
+
+                        runCatching {
+                            bleConnectionManager.connect(deviceId)
+                        }
+
+                        withTimeoutOrNull(3_000L) {
+                            while (deviceId !in radioTransport.connectedPeerIds()) {
+                                delay(100L)
+                            }
+                        }
+                    }
+                }
+                .awaitAll()
+        }
+    }
+
     fun sendEmergency() {
         if (_uiState.value.emergencySending) return
 
@@ -1201,6 +1261,10 @@ class MainViewModel @Inject constructor(
                 languageCode = _uiState.value.selectedLanguageCode
             )
 
+            // Bring every currently discovered direct recipient online first.
+            // The emergency mesh broadcast itself remains unrestricted and is
+            // then delivered to all connected BLE/Wi-Fi Direct peers.
+            prepareEmergencyRecipients()
             val result = emergencyBroadcaster.broadcastSos(packet)
             val status = when (result) {
                 is TacticalResult.Success -> "Sent"
