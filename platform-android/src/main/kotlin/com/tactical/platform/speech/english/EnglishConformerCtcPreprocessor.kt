@@ -59,7 +59,7 @@ class EnglishConformerCtcPreprocessor {
         val preemphasized = FloatArray(sampleCount)
         preemphasized[0] = samples[0]
         for (i in 1 until sampleCount) {
-            preemphasized[i] = samples[i] - PREEMPHASIS * samples[i - 1]
+            preemphasized[i] = samples[i] - PREEMPHASIS.toFloat() * samples[i - 1]
         }
 
         // Zero-pad n_fft/2 samples on both ends, matching onnx-asr.
