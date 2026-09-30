@@ -780,9 +780,25 @@ class MainViewModel @Inject constructor(
     }
     fun removePeerFromSquad(deviceAddress: String) {
         viewModelScope.launch {
-            bleConnectionManager.removeFromSquad(deviceAddress)
-            localAppDataStore.removePairedDevice(deviceAddress)
-            refreshSquadPeers()
+            val result = runCatching {
+                meshSquadControlCoordinator.removeFromSquad(deviceAddress)
+            }.getOrElse {
+                TacticalResult.Failure(
+                    it.message ?: it.javaClass.simpleName
+                )
+            }
+
+            if (result is TacticalResult.Success) {
+                localAppDataStore.removePairedDevice(deviceAddress)
+                refreshSquadPeers()
+            } else {
+                val error = (result as TacticalResult.Failure).error
+                android.util.Log.w(
+                    "MainViewModel",
+                    "Remove from squad failed for " + deviceAddress + ": " + error
+                )
+                _uiState.update { it.copy(squadRequestError = error) }
+            }
         }
     }
 
