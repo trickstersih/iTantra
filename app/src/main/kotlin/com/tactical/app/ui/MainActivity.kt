@@ -64,8 +64,6 @@ class MainActivity : ComponentActivity() {
 
     private var startupCheckPending = false
     private var runtimePermissionRequestInFlight = false
-    private var wifiPermissionRequestInFlight = false
-    private var wifiPermissionRequested = false
     private var meshServiceStarted = false
     private val wirelessWarning = mutableStateOf<String?>(null)
     private val wirelessStateReceiver = object : BroadcastReceiver() {
@@ -96,37 +94,8 @@ class MainActivity : ComponentActivity() {
                     .text(UiTextKey.BLUETOOTH_MIC_PERMISSIONS)
         }
 
-        // Wi-Fi Direct gets its own Android permission dialog so the user can
-        // explicitly grant nearby Wi-Fi access instead of having it hidden in
-        // the general startup permission request.
-        requestWifiDirectPermission()
-
-        // Bluetooth and Wi-Fi Direct are independent bearers. A denial of one
-        // must never prevent the other from starting the mesh service.
-        ensureWirelessEnabled()
-    }
-
-    private val requestWifiPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        wifiPermissionRequestInFlight = false
-
-        if (granted) {
-            wirelessWarning.value = null
-            ContextCompat.startForegroundService(
-                this,
-                Intent(
-                    this,
-                    TacticalMeshService::class.java
-                ).apply {
-                    action = TacticalMeshService.ACTION_REFRESH_WIFI_DIRECT
-                }
-            )
-        } else {
-            wirelessWarning.value =
-                "Wi-Fi Direct permission is required for device discovery. Tap ALLOW to try again."
-        }
-
+        // Bluetooth and Wi-Fi Direct runtime permissions are requested together
+        // from Android's Nearby Devices permission group.
         ensureWirelessEnabled()
     }
 
@@ -274,45 +243,14 @@ class MainActivity : ComponentActivity() {
                                         .fillMaxWidth(),
                                     color = Color(0xFF7A1F1F)
                                 ) {
-                                    if (
-                                        message.startsWith(
-                                            "Wi-Fi Direct permission is required"
+                                    Text(
+                                        text = message,
+                                        color = Color.White,
+                                        modifier = Modifier.padding(
+                                            horizontal = 16.dp,
+                                            vertical = 10.dp
                                         )
-                                    ) {
-                                        androidx.compose.foundation.layout.Row(
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(
-                                                    start = 16.dp,
-                                                    end = 8.dp,
-                                                    top = 4.dp,
-                                                    bottom = 4.dp
-                                                ),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = message,
-                                                color = Color.White,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            TextButton(
-                                                onClick = {
-                                                    requestWifiDirectPermission()
-                                                }
-                                            ) {
-                                                Text("ALLOW", color = Color.White)
-                                            }
-                                        }
-                                    } else {
-                                        Text(
-                                            text = message,
-                                            color = Color.White,
-                                            modifier = Modifier.padding(
-                                                horizontal = 16.dp,
-                                                vertical = 10.dp
-                                            )
-                                        )
-                                    }
+                                    )
                                 }
                             }
 
@@ -449,6 +387,7 @@ class MainActivity : ComponentActivity() {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
             } else {
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
@@ -462,52 +401,12 @@ class MainActivity : ComponentActivity() {
         }
 
         if (missing.isEmpty()) {
-            requestWifiDirectPermission()
             ensureWirelessEnabled()
             ensureVoiceModeIfPermissionGranted()
         } else if (!runtimePermissionRequestInFlight) {
             runtimePermissionRequestInFlight = true
             requestPermissions.launch(missing.toTypedArray())
         }
-    }
-
-    private fun requestWifiDirectPermission() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            return
-        }
-
-        val permission = Manifest.permission.NEARBY_WIFI_DEVICES
-
-        if (
-            ContextCompat.checkSelfPermission(
-                this,
-                permission
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        ) {
-            wifiPermissionRequested = false
-            return
-        }
-
-        if (wifiPermissionRequestInFlight) return
-
-        // After a denial that Android will no longer show as a dialog,
-        // take the user directly to Itantra's app permission settings.
-        if (
-            wifiPermissionRequested &&
-            !shouldShowRequestPermissionRationale(permission)
-        ) {
-            startActivity(
-                Intent(
-                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                    Uri.parse("package:$packageName")
-                )
-            )
-            return
-        }
-
-        wifiPermissionRequested = true
-        wifiPermissionRequestInFlight = true
-        requestWifiPermission.launch(permission)
     }
 
     private fun hasWifiDirectRuntimePermission(): Boolean {
@@ -546,9 +445,6 @@ class MainActivity : ComponentActivity() {
 
         if (wifiOn && !wifiPermissionGranted) {
             startupCheckPending = true
-            if (!wifiPermissionRequested && !wifiPermissionRequestInFlight) {
-                requestWifiDirectPermission()
-            }
             return
         }
 
