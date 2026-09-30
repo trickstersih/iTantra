@@ -88,12 +88,9 @@ class BleRadioTransport(
             null
         }
 
-        if (adapter == null || !adapter.isEnabled) {
-            android.util.Log.d(
-                TAG,
-                "BLE GATT server waiting for Bluetooth to turn ON"
-            )
-        }
+        // Bluetooth may legitimately be OFF while Wi-Fi Direct is the active
+        // bearer. The retry loop below still waits for Bluetooth without
+        // spamming logcat on every half-second iteration.
 
         val serverCallback = object : BluetoothGattServerCallback() {
             override fun onCharacteristicWriteRequest(
@@ -212,7 +209,6 @@ class BleRadioTransport(
             }
 
             if (currentAdapter == null || !currentAdapter.isEnabled) {
-                android.util.Log.d(TAG, "BLE GATT server waiting for Bluetooth to turn ON")
                 return
             }
 
