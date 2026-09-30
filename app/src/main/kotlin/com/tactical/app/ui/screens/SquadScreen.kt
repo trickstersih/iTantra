@@ -42,6 +42,7 @@ import com.tactical.app.ui.MainUiState
 import com.tactical.app.ui.PeerNodeUi
 import com.tactical.ptt.session.SessionState
 import com.tactical.app.ui.theme.*
+import com.tactical.platform.api.ble.BleLinkState
 
 @Composable
 fun SquadScreen(
