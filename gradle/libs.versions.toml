@@ -50,7 +50,7 @@ material = "1.4.0"
 hilt = "2.60.1"
 tensorflowLite = "2.16.1"
 tensorflowLiteSupport = "0.4.4"
-onnxruntimeAndroid = "1.23.2"
+onnxruntimeAndroid = "1.30.0"
 robolectric = "4.13"
 
 [libraries]
