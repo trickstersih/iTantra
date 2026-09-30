@@ -14,8 +14,11 @@ import com.tactical.platform.api.ble.BleBeaconPayloadCodec
 import com.tactical.platform.api.ble.BleBeaconScanner
 import com.tactical.platform.api.ble.ScannedBleDevice
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class AndroidBleScanner(
     private val context: Context
@@ -30,6 +33,11 @@ class AndroidBleScanner(
 
     private val scanner: BluetoothLeScanner?
         get() = bluetoothAdapter?.bluetoothLeScanner
+
+    // Serialize hardware scan sessions and enforce a cooldown between starts.
+    // This protects Android's BLE stack when startup/lifecycle callers race.
+    private val scanMutex = Mutex()
+    private var lastScanStartedAtMs = 0L
 
     override fun scan(): Flow<ScannedBleDevice> = callbackFlow {
         val requiredPermission = if (
@@ -169,43 +177,62 @@ class AndroidBleScanner(
             .setReportDelay(0L)
             .build()
 
-        try {
-            /*
-             * Use an unfiltered scan for OEM compatibility. The application
-             * beacon is still filtered strictly in the callback using the
-             * manufacturer ID and BleBeaconPayloadCodec magic bytes.
-             */
-            le.startScan(
-                null,
-                settings,
-                callback
-            )
+        scanMutex.withLock {
+            val now = System.currentTimeMillis()
+            val waitMs = (
+                MIN_SCAN_START_INTERVAL_MS -
+                    (now - lastScanStartedAtMs)
+                ).coerceAtLeast(0L)
 
-        } catch (e: SecurityException) {
-            close(
-                SecurityException(
-                    "Bluetooth scan permission is not granted",
-                    e
+            if (waitMs > 0L) {
+                android.util.Log.d(
+                    TAG,
+                    "BLE scan delayed " + waitMs +
+                        "ms to avoid scanner throttling"
                 )
-            )
-            return@callbackFlow
-        } catch (e: Exception) {
-            close(
-                IllegalStateException(
-                    "Unable to start BLE scan",
-                    e
-                )
-            )
-            return@callbackFlow
-        }
+                delay(waitMs)
+            }
 
-        awaitClose {
+            lastScanStartedAtMs = System.currentTimeMillis()
+
             try {
-                le.stopScan(callback)
-            } catch (_: SecurityException) {
-                // Permission was revoked.
-            } catch (_: Exception) {
-                // Bluetooth stack may already be unavailable.
+                /*
+                 * Use an unfiltered scan for OEM compatibility. The application
+                 * beacon is still filtered strictly in the callback using the
+                 * manufacturer ID and BleBeaconPayloadCodec magic bytes.
+                 */
+                le.startScan(
+                    null,
+                    settings,
+                    callback
+                )
+
+            } catch (e: SecurityException) {
+                close(
+                    SecurityException(
+                        "Bluetooth scan permission is not granted",
+                        e
+                    )
+                )
+                return@withLock
+            } catch (e: Exception) {
+                close(
+                    IllegalStateException(
+                        "Unable to start BLE scan",
+                        e
+                    )
+                )
+                return@withLock
+            }
+
+            awaitClose {
+                try {
+                    le.stopScan(callback)
+                } catch (_: SecurityException) {
+                    // Permission was revoked.
+                } catch (_: Exception) {
+                    // Bluetooth stack may already be unavailable.
+                }
             }
         }
     }
@@ -217,5 +244,6 @@ class AndroidBleScanner(
 
         private const val MAGIC_1: Byte = 0x53 // 'S'
         private const val MAGIC_2: Byte = 0x42 // 'B'
+        private const val MIN_SCAN_START_INTERVAL_MS = 10_000L
     }
 }
