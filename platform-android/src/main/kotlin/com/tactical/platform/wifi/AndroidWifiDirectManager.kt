@@ -337,7 +337,7 @@ class AndroidWifiDirectManager(
         }
     }
 
-    private suspend fun registerPresenceServiceAwait (
+    private suspend fun registerPresenceServiceAwait(
         deviceId: String,
         callsign: String
     ): TacticalResult<Unit> {
@@ -694,6 +694,10 @@ class AndroidWifiDirectManager(
 
     private fun resetP2pState() {
         removeServiceRequest()
+        presenceRetryJob?.cancel()
+        presenceRetryJob = null
+        presenceRegistered = false
+        presenceRegistrationInProgress = false
         _connectionInfo.value = WifiDirectConnectionInfo()
         _peers.value = emptyList()
         _state.value = RadioLinkState.UNAVAILABLE
