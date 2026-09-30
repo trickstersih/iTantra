@@ -458,8 +458,10 @@ class Andr2SpeechToText(
     ) {
         val encoderInput = encoder.inputInfo["input_features"]
             ?: error("andr2 encoder input_features is missing")
-        require(encoderInput.info.shape == listOf(1L, 80L, 1000L)) {
-            "Unexpected andr2 encoder input shape: " + encoderInput.info.shape
+        require(
+            encoderInput.info.shape.contentEquals(longArrayOf(1L, 80L, 1000L))
+        ) {
+            "Unexpected andr2 encoder input shape: " + encoderInput.info.shape.contentToString()
         }
 
         require(encoder.outputInfo.size == 2) {
@@ -475,8 +477,10 @@ class Andr2SpeechToText(
 
         val logits = decoder.outputInfo["logits"]
             ?: error("andr2 decoder logits output is missing")
-        require(logits.info.shape == listOf(1L, 1L, 5181L)) {
-            "Unexpected andr2 logits shape: " + logits.info.shape
+        require(
+            logits.info.shape.contentEquals(longArrayOf(1L, 1L, 5181L))
+        ) {
+            "Unexpected andr2 logits shape: " + logits.info.shape.contentToString()
         }
 
         require(metadata.prefixNewIds.keys.containsAll(REQUIRED_LANGUAGES)) {
