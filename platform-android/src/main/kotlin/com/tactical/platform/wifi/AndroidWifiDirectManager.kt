@@ -61,6 +61,7 @@ class AndroidWifiDirectManager(
     private var serviceDiscoveryStarted = false
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
     private var discoveryRetryJob: Job? = null
+    private var serviceDiscoveryRefreshJob: Job? = null
     private var peerRefreshJob: Job? = null
     private var presenceRetryJob: Job? = null
     private var advertisedDeviceId: String? = null
@@ -133,7 +134,21 @@ class AndroidWifiDirectManager(
                 }
 
                 WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                    android.util.Log.d(TAG, "Wi-Fi P2P peer list changed")
+                    if (
+                        started.get() &&
+                        wifiManager.isWifiEnabled &&
+                        hasWifiDirectPermission()
+                    ) {
+                        runCatching {
+                            wifiP2pManager.requestPeers(wifichannel) { peerList ->
+                                android.util.Log.d(
+                                    TAG,
+                                    "Wi-Fi P2P peer list changed: " +
+                                        peerList.deviceList.size + " device(s)"
+                                )
+                            }
+                        }
+                    }
                 }
 
                 WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION -> {
@@ -214,6 +229,8 @@ class AndroidWifiDirectManager(
         serviceDiscoveryStarted = false
         discoveryRetryJob?.cancel()
         discoveryRetryJob = null
+        serviceDiscoveryRefreshJob?.cancel()
+        serviceDiscoveryRefreshJob = null
         peerRefreshJob?.cancel()
         peerRefreshJob = null
         presenceRetryJob?.cancel()
@@ -531,6 +548,38 @@ class AndroidWifiDirectManager(
             return
         }
 
+        // Service discovery is separate from Android's normal P2P peer
+        // discovery. Start both: peer discovery populates the nearby P2P
+        // device list, while DNS-SD resolves the iTantra application UUID.
+        if (!_connectionInfo.value.groupFormed) {
+            try {
+                wifiP2pManager.discoverPeers(
+                    wifichannel,
+                    object : WifiP2pManager.ActionListener {
+                        override fun onSuccess() {
+                            android.util.Log.d(
+                                TAG,
+                                "Wi-Fi P2P peer discovery started"
+                            )
+                        }
+
+                        override fun onFailure(reason: Int) {
+                            android.util.Log.d(
+                                TAG,
+                                "Wi-Fi P2P peer discovery failed: " + reason
+                            )
+                        }
+                    }
+                )
+            } catch (e: SecurityException) {
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi P2P peer discovery permission denied",
+                    e
+                )
+            }
+        }
+
         try {
             wifiP2pManager.setDnsSdResponseListeners(
                 wifichannel,
@@ -599,6 +648,7 @@ class AndroidWifiDirectManager(
                                         serviceDiscoveryStarted = true
                                         _state.value = RadioLinkState.AVAILABLE
                                         startPeerRefreshLoop()
+                                        startServiceDiscoveryRefreshLoop()
                                         android.util.Log.d(
                                             TAG,
                                             "iTantra Wi-Fi service discovery started"
@@ -726,10 +776,45 @@ class AndroidWifiDirectManager(
         }
     }
 
+    private fun startServiceDiscoveryRefreshLoop() {
+        if (serviceDiscoveryRefreshJob?.isActive == true) return
+
+        serviceDiscoveryRefreshJob = managerScope.launch {
+            while (
+                started.get() &&
+                wifiManager.isWifiEnabled &&
+                hasWifiDirectPermission()
+            ) {
+                delay(SERVICE_DISCOVERY_REFRESH_MS)
+
+                if (
+                    !started.get() ||
+                    !wifiManager.isWifiEnabled ||
+                    !hasWifiDirectPermission()
+                ) {
+                    break
+                }
+
+                // Some Android/OEM Wi-Fi P2P stacks stop returning Bonjour
+                // callbacks even though discoverServices() originally
+                // succeeded. Restart the request periodically so discovery
+                // remains self-healing without exposing scanning in the UI.
+                if (serviceDiscoveryStarted) {
+                    removeServiceRequest()
+                }
+
+                startServiceDiscoveryInternal()
+            }
+
+            serviceDiscoveryRefreshJob = null
+        }
+    }
+
     private fun removeServiceRequest() {
         serviceDiscoveryStarted = false
         peerRefreshJob?.cancel()
         peerRefreshJob = null
+
         serviceRequest?.let { request ->
             runCatching {
                 wifiP2pManager.removeServiceRequest(
@@ -744,6 +829,8 @@ class AndroidWifiDirectManager(
 
     private fun resetP2pState() {
         removeServiceRequest()
+        serviceDiscoveryRefreshJob?.cancel()
+        serviceDiscoveryRefreshJob = null
         presenceRetryJob?.cancel()
         presenceRetryJob = null
         presenceRegistered = false
@@ -985,5 +1072,6 @@ class AndroidWifiDirectManager(
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
         private const val PEER_REFRESH_MS = 5_000L
+        private const val SERVICE_DISCOVERY_REFRESH_MS = 15_000L
     }
 }
