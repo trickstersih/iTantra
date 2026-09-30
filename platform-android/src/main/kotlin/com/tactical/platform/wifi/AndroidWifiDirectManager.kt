@@ -18,6 +18,7 @@ import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.wifi.WifiDirectConnectionInfo
 import com.tactical.platform.api.wifi.WifiDirectManager
 import com.tactical.platform.api.wifi.WifiDirectPeer
+import com.tactical.platform.api.squad.SquadMembershipStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -45,7 +46,8 @@ import kotlin.coroutines.resume
 class AndroidWifiDirectManager(
     private val context: Context,
     private val wifiP2pManager: WifiP2pManager,
-    private val wifichannel: WifiP2pManager.Channel
+    private val wifichannel: WifiP2pManager.Channel,
+    private val squadMembershipStore: SquadMembershipStore
 ) : WifiDirectManager {
 
     private val wifiManager by lazy {
@@ -64,11 +66,13 @@ class AndroidWifiDirectManager(
     private var discoveryRetryJob: Job? = null
     private var peerRefreshJob: Job? = null
     private var presenceRetryJob: Job? = null
+    private var autoReconnectJob: Job? = null
     private var advertisedDeviceId: String? = null
     private var advertisedCallsign: String? = null
     private var presenceRegistrationInProgress = false
     private var presenceRegistered = false
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val connectMutex = kotlinx.coroutines.sync.Mutex()
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -81,6 +85,7 @@ class AndroidWifiDirectManager(
 
                     if (enabled && wifiManager.isWifiEnabled) {
                         _state.value = RadioLinkState.AVAILABLE
+                        ensureAutoReconnectLoop()
                         advertisedDeviceId?.let { id ->
                             advertisedCallsign?.let { callsign ->
                                 registerPresenceServiceAsync(id, callsign)
@@ -101,6 +106,7 @@ class AndroidWifiDirectManager(
                     if (wifiState == WifiManager.WIFI_STATE_ENABLED) {
                         if (started.get()) {
                             _state.value = RadioLinkState.AVAILABLE
+                            ensureAutoReconnectLoop()
                             advertisedDeviceId?.let { id ->
                                 advertisedCallsign?.let { callsign ->
                                     registerPresenceServiceAsync(id, callsign)
@@ -201,6 +207,7 @@ class AndroidWifiDirectManager(
 
         return try {
             registerReceiverOnce()
+            ensureAutoReconnectLoop()
 
             if (!wifiManager.isWifiEnabled) {
                 _state.value = RadioLinkState.UNAVAILABLE
@@ -233,6 +240,8 @@ class AndroidWifiDirectManager(
         peerRefreshJob = null
         presenceRetryJob?.cancel()
         presenceRetryJob = null
+        autoReconnectJob?.cancel()
+        autoReconnectJob = null
         presenceRegistered = false
 
         serviceRequest?.let { request ->
@@ -546,6 +555,7 @@ class AndroidWifiDirectManager(
         }
 
         if (!isLocationModeEnabled()) {
+            serviceDiscoveryStarting.set(false)
             _state.value = RadioLinkState.FAILED
             android.util.Log.w(
                 TAG,
@@ -762,6 +772,72 @@ class AndroidWifiDirectManager(
         }
     }
 
+    /**
+     * Keeps Wi-Fi Direct squad links self-healing without requiring the
+     * Activity to be open. Squad membership is persistent, while the P2P
+     * device address is rediscovered dynamically after range or Wi-Fi changes.
+     */
+    private fun ensureAutoReconnectLoop() {
+        if (autoReconnectJob?.isActive == true) return
+
+        autoReconnectJob = managerScope.launch {
+            while (started.get()) {
+                if (
+                    wifiManager.isWifiEnabled &&
+                    hasWifiDirectPermission() &&
+                    isLocationModeEnabled()
+                ) {
+                    autoReconnectOnce()
+                }
+
+                delay(AUTO_RECONNECT_INTERVAL_MS)
+            }
+
+            autoReconnectJob = null
+        }
+    }
+
+    private suspend fun autoReconnectOnce() {
+        if (_connectionInfo.value.groupFormed) return
+
+        val squadIds = squadMembershipStore.squadDeviceIds()
+        if (squadIds.isEmpty()) return
+
+        val target = _peers.value
+            .asSequence()
+            .filter { peer ->
+                val id = peer.appDeviceId
+                id != null &&
+                    id in squadIds &&
+                    peer.linkState != RadioLinkState.CONNECTING
+            }
+            .maxByOrNull { it.lastSeenEpochMs }
+            ?: return
+
+        android.util.Log.d(
+            TAG,
+            "Wi-Fi Direct auto-reconnect candidate: " +
+                (target.callsign ?: target.deviceName) +
+                " / " + target.deviceAddress
+        )
+
+        val result = runCatching {
+            connect(target.deviceAddress)
+        }.getOrElse { error ->
+            TacticalResult.Failure(
+                "Wi-Fi Direct auto-reconnect failed: " +
+                    (error.message ?: error.javaClass.simpleName)
+            )
+        }
+
+        if (result is TacticalResult.Failure) {
+            android.util.Log.d(
+                TAG,
+                "Wi-Fi Direct auto-reconnect failed: " + result.error
+            )
+        }
+    }
+
     private fun scheduleServiceDiscoveryRetry() {
         if (discoveryRetryJob?.isActive == true) return
         if (!started.get() || !wifiManager.isWifiEnabled || !hasWifiDirectPermission()) {
@@ -822,6 +898,7 @@ class AndroidWifiDirectManager(
         try {
             wifiP2pManager.requestConnectionInfo(wifichannel) { info ->
                 if (info == null || !info.groupFormed) {
+                    val wasGroupFormed = _connectionInfo.value.groupFormed
                     _connectionInfo.value = WifiDirectConnectionInfo()
 
                     if (_state.value != RadioLinkState.CONNECTING) {
@@ -831,6 +908,18 @@ class AndroidWifiDirectManager(
                             RadioLinkState.UNAVAILABLE
                         }
                     }
+
+                    if (wasGroupFormed && wifiManager.isWifiEnabled) {
+                        // Some OEM stacks drop the P2P discovery engine together
+                        // with the group without sending a discovery-changed
+                        // broadcast. Rebuild our discovery bookkeeping explicitly.
+                        removeServiceRequest()
+                        managerScope.launch {
+                            delay(250L)
+                            startServiceDiscoveryInternal()
+                        }
+                    }
+
                     return@requestConnectionInfo
                 }
 
@@ -907,7 +996,12 @@ class AndroidWifiDirectManager(
         return connect(peer.deviceAddress)
     }
 
-    override suspend fun connect(deviceAddress: String): TacticalResult<Unit> {
+    override suspend fun connect(deviceAddress: String): TacticalResult<Unit> =
+        connectMutex.withLock {
+            connectInternal(deviceAddress)
+        }
+
+    private suspend fun connectInternal(deviceAddress: String): TacticalResult<Unit> {
         if (!hasWifiDirectPermission()) {
             return TacticalResult.Failure("Missing Wi-Fi Direct permission")
         }
@@ -1047,6 +1141,7 @@ class AndroidWifiDirectManager(
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
+        private const val AUTO_RECONNECT_INTERVAL_MS = 3_000L
         private const val PEER_REFRESH_MS = 5_000L
     }
 }
