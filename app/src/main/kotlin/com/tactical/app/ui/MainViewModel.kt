@@ -120,6 +120,7 @@ data class MainUiState(
     val selectedLanguage: String = "हिन्दी",
     val uiLanguageCode: String = "en",
     val languageLoadingCode: String? = null,
+    val languageLoadError: String? = null,
     val squadPeers: List<PeerNodeUi> = emptyList(),
     val availablePeers: List<PeerNodeUi> = emptyList(),
     val messages: List<ChatMessageUi> = emptyList(),
@@ -924,31 +925,36 @@ class MainViewModel @Inject constructor(
         if (_uiState.value.languageLoadingCode != null) return
         if (_uiState.value.selectedLanguageCode == languageCode) return
 
-        val previousLanguageCode = _uiState.value.selectedLanguageCode
         val wasContinuousCallMode =
             !_uiState.value.pttEnabled && _uiState.value.pttContinuousSession
 
         viewModelScope.launch {
-            _uiState.update { it.copy(languageLoadingCode = languageCode) }
+            _uiState.update {
+                it.copy(
+                    languageLoadingCode = languageCode,
+                    languageLoadError = null
+                )
+            }
 
             try {
                 if (wasContinuousCallMode) {
                     runCatching { pttController.stopContinuous() }
                 }
 
+                // Persist and expose the new language before model warm-up.
+                // A preload failure must not silently switch the user back to
+                // the old language; the STT backend can retry lazily on use.
                 speechLanguagePreferences.setSelectedLanguageCode(languageCode)
                 routingSpeechToText.onSelectedLanguageChanged(languageCode)
 
-                // The loading indicator represents actual outgoing STT
-                // readiness. It clears only after the native model preload
-                // returns successfully. TTS warming is separate.
                 routingSpeechToText.preloadSelectedLanguage()
 
                 _uiState.update {
                     it.copy(
                         selectedLanguageCode = languageCode,
                         selectedLanguage = displayLanguageName(languageCode),
-                        languageLoadingCode = null
+                        languageLoadingCode = null,
+                        languageLoadError = null
                     )
                 }
 
@@ -958,14 +964,21 @@ class MainViewModel @Inject constructor(
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
 
-                speechLanguagePreferences.setSelectedLanguageCode(previousLanguageCode)
-                routingSpeechToText.onSelectedLanguageChanged(previousLanguageCode)
+                val message = t.message ?: t.javaClass.simpleName
+                android.util.Log.e(
+                    "MainViewModel",
+                    "Failed to preload STT for language $languageCode: $message",
+                    t
+                )
 
+                // Keep the user's selection. transcribe() will retry loading
+                // the selected backend when the next voice transmission starts.
                 _uiState.update {
                     it.copy(
-                        selectedLanguageCode = previousLanguageCode,
-                        selectedLanguage = displayLanguageName(previousLanguageCode),
-                        languageLoadingCode = null
+                        selectedLanguageCode = languageCode,
+                        selectedLanguage = displayLanguageName(languageCode),
+                        languageLoadingCode = null,
+                        languageLoadError = "STT preload failed; will retry when recording starts."
                     )
                 }
 
@@ -996,8 +1009,14 @@ class MainViewModel @Inject constructor(
             return
         }
 
-        if (!enabled && bleConnectionManager.connectedSquadDeviceIds().isEmpty()) {
-            return
+        if (!enabled) {
+            val squadIds = squadMembershipStore.squadDeviceIds()
+            val connectedTransportIds = radioTransport.connectedPeerIds()
+            val hasConnectedSquadTransport = squadIds.any { it in connectedTransportIds }
+
+            if (!hasConnectedSquadTransport) {
+                return
+            }
         }
 
         pttModePreferences.setPttEnabled(enabled)
@@ -1016,7 +1035,13 @@ class MainViewModel @Inject constructor(
      * Starts continuous voice mode after microphone permission is available.
      */
     fun ensureVoiceMode() {
-        if (!_uiState.value.pttEnabled && bleConnectionManager.connectedSquadDeviceIds().isNotEmpty()) {
+        if (_uiState.value.pttEnabled) return
+
+        val squadIds = squadMembershipStore.squadDeviceIds()
+        val connectedTransportIds = radioTransport.connectedPeerIds()
+        val hasConnectedSquadTransport = squadIds.any { it in connectedTransportIds }
+
+        if (hasConnectedSquadTransport) {
             viewModelScope.launch {
                 runCatching { pttController.startContinuous() }
             }

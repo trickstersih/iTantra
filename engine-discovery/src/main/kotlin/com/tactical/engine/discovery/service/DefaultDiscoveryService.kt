@@ -98,55 +98,59 @@ class DefaultDiscoveryService(
     }
 
     fun startDiscovery() {
-        if (scanJob == null) {
-            scanJob = scope.launch {
-                while (isActive) {
-                    runBleScanWindow()
+        // Startup and permission callbacks can race. Guard job creation so
+        // only one BLE scan loop and one Wi-Fi collector can exist at a time.
+        synchronized(this) {
+            if (scanJob == null || !scanJob!!.isActive) {
+                scanJob = scope.launch {
+                    while (isActive) {
+                        runBleScanWindow()
 
-                    // Sleep between short scan windows to avoid continuously
-                    // burning CPU/battery, but wake immediately for a manual
-                    // Home-screen SCAN request.
-                    withTimeoutOrNull(BACKGROUND_SCAN_INTERVAL_MS) {
-                        immediateScanRequests.receive()
+                        // Sleep between short scan windows to avoid continuously
+                        // burning CPU/battery, but wake immediately for a manual
+                        // Home-screen SCAN request.
+                        withTimeoutOrNull(BACKGROUND_SCAN_INTERVAL_MS) {
+                            immediateScanRequests.receive()
+                        }
+                        // Either the normal maintenance interval elapsed or a
+                        // manual scan request woke the loop early.
                     }
-                    // Either the normal maintenance interval elapsed or a
-                    // manual scan request woke the loop early.
                 }
             }
-        }
 
-        if (wifiJob == null) {
-            wifiJob = scope.launch {
-                try {
-                    wifiDirectManager.discoverPeers().collect { peers ->
-                        peers.forEach { peer ->
-                            val appDeviceId = peer.appDeviceId ?: return@forEach
-                            if (appDeviceId == localDeviceId) return@forEach
+            if (wifiJob == null || !wifiJob!!.isActive) {
+                wifiJob = scope.launch {
+                    try {
+                        wifiDirectManager.discoverPeers().collect { peers ->
+                            peers.forEach { peer ->
+                                val appDeviceId = peer.appDeviceId ?: return@forEach
+                                if (appDeviceId == localDeviceId) return@forEach
 
-                            runCatching {
-                                catalog.upsert(
-                                    DeviceNode(
-                                        id = DeviceId(appDeviceId),
-                                        callsign = peer.callsign ?: peer.deviceName,
-                                        rssi = 0,
-                                        lastSeen = java.time.Instant.ofEpochMilli(
-                                            peer.lastSeenEpochMs.takeIf { it > 0L }
-                                                ?: System.currentTimeMillis()
-                                        ),
-                                        hopCount = 0,
-                                        link = LinkType.DIRECT,
-                                        transportStates = mapOf(
-                                            RadioType.WIFI_DIRECT to peer.linkState
+                                runCatching {
+                                    catalog.upsert(
+                                        DeviceNode(
+                                            id = DeviceId(appDeviceId),
+                                            callsign = peer.callsign ?: peer.deviceName,
+                                            rssi = 0,
+                                            lastSeen = java.time.Instant.ofEpochMilli(
+                                                peer.lastSeenEpochMs.takeIf { it > 0L }
+                                                    ?: System.currentTimeMillis()
+                                            ),
+                                            hopCount = 0,
+                                            link = LinkType.DIRECT,
+                                            transportStates = mapOf(
+                                                RadioType.WIFI_DIRECT to peer.linkState
+                                            )
                                         )
                                     )
-                                )
+                                }
                             }
                         }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        // Wi-Fi Direct is optional; BLE remains the primary fallback.
                     }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    // Wi-Fi Direct is optional; BLE remains the primary fallback.
                 }
             }
         }

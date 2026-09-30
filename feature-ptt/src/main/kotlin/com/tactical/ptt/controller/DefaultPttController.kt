@@ -141,10 +141,18 @@ class DefaultPttController(
                         }
                     }
                 } else {
+                    println(
+                        "[DefaultPttController] PTT ended with no transcription; no packet will be sent"
+                    )
                     _state.update { it.copy(sessionState = SessionState.IDLE) }
                 }
                 currentSession = null
             } catch (t: Throwable) {
+                println(
+                    "[DefaultPttController] PTT transcription pipeline failed: " +
+                        (t.message ?: t.javaClass.simpleName)
+                )
+                t.printStackTrace()
                 _state.update {
                     it.copy(
                         sessionState = SessionState.IDLE,
@@ -337,9 +345,15 @@ class DefaultPttController(
         val job = sessionJob
         if (job != null) {
             // Only the recording/transcription coroutine is subject to the
-            // short release grace period. A transmission already handed to
+            // release grace period. A transmission already handed to
             // transmissionJob is intentionally allowed to finish.
             withTimeoutOrNull(releaseGraceMs) { job.join() }
+            if (job.isActive) {
+                // English Conformer can take longer than the old 5s grace
+                // period for its final full-model inference. Give it one
+                // bounded extension instead of canceling a valid utterance.
+                withTimeoutOrNull(10_000L) { job.join() }
+            }
             if (job.isActive) {
                 job.cancel()
             }

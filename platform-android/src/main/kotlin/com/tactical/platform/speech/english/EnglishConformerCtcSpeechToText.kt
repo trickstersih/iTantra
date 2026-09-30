@@ -50,11 +50,31 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
         val pcmBuffer = ByteArrayOutputStream()
         var accumulatedDurationMs = 0L
         var silenceDurationMs = 0L
-        var lastPartialAtMs = 0L
 
         suspend fun infer(bytes: ByteArray): String =
             inferenceMutex.withLock {
-                runtime.transcribe(bytes)
+                val startedAt = android.os.SystemClock.elapsedRealtime()
+                android.util.Log.d(
+                    TAG,
+                    "English STT inference start: pcmBytes=" + bytes.size
+                )
+                try {
+                    runtime.transcribe(bytes)
+                } catch (t: Throwable) {
+                    android.util.Log.e(
+                        TAG,
+                        "English STT inference/decode failed: " +
+                            (t.message ?: t.javaClass.simpleName),
+                        t
+                    )
+                    throw t
+                } finally {
+                    val elapsed = android.os.SystemClock.elapsedRealtime() - startedAt
+                    android.util.Log.d(
+                        TAG,
+                        "English STT inference finished in " + elapsed + "ms"
+                    )
+                }
             }
 
         audio.collect { frame ->
@@ -69,27 +89,17 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
             }
 
             if (
-                !silent &&
-                accumulatedDurationMs - lastPartialAtMs >= PARTIAL_INTERVAL_MS
-            ) {
-                val partial = infer(pcmBuffer.toByteArray())
-                if (partial.isNotBlank()) {
-                    emit(
-                        TranscriptionChunk(
-                            text = partial,
-                            isFinal = false,
-                            languageCode = LANGUAGE_CODE
-                        )
-                    )
-                }
-                lastPartialAtMs = accumulatedDurationMs
-            }
-
-            if (
                 silenceDurationMs >= SILENCE_THRESHOLD_MS &&
                 pcmBuffer.size() > 0
             ) {
-                val finalText = infer(pcmBuffer.toByteArray())
+                val segmentBytes = pcmBuffer.toByteArray()
+                android.util.Log.d(
+                    TAG,
+                    "English STT sentence boundary: durationMs=" +
+                        accumulatedDurationMs +
+                        " pcmBytes=" + segmentBytes.size
+                )
+                val finalText = infer(segmentBytes)
                 if (finalText.isNotBlank()) {
                     emit(
                         TranscriptionChunk(
@@ -103,13 +113,19 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                 pcmBuffer.reset()
                 accumulatedDurationMs = 0L
                 silenceDurationMs = 0L
-                lastPartialAtMs = 0L
             }
 
             // Keep continuous speech bounded so Call Mode still emits
             // sentence-sized transmissions.
             if (accumulatedDurationMs >= MAX_BUFFER_MS) {
-                val finalText = infer(pcmBuffer.toByteArray())
+                val segmentBytes = pcmBuffer.toByteArray()
+                android.util.Log.d(
+                    TAG,
+                    "English STT max buffer reached: durationMs=" +
+                        accumulatedDurationMs +
+                        " pcmBytes=" + segmentBytes.size
+                )
+                val finalText = infer(segmentBytes)
                 if (finalText.isNotBlank()) {
                     emit(
                         TranscriptionChunk(
@@ -123,12 +139,17 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                 pcmBuffer.reset()
                 accumulatedDurationMs = 0L
                 silenceDurationMs = 0L
-                lastPartialAtMs = 0L
             }
         }
 
         if (pcmBuffer.size() > 0) {
-            val finalText = infer(pcmBuffer.toByteArray())
+            val finalBytes = pcmBuffer.toByteArray()
+            android.util.Log.d(
+                TAG,
+                "English STT finalizing after audio stream close: pcmBytes=" +
+                    finalBytes.size
+            )
+            val finalText = infer(finalBytes)
             if (finalText.isNotBlank()) {
                 emit(
                     TranscriptionChunk(
@@ -356,9 +377,13 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                 )
 
                 try {
-                    val outputTensor = result["logprobs"] as? OnnxTensor
+                    // OrtSession.Result.get(name) returns Optional<OnnxValue>.
+                    // Unwrap it before casting to the concrete tensor type.
+                    val outputValue = result["logprobs"].orElse(null)
+                    val outputTensor = outputValue as? OnnxTensor
                         ?: error(
-                            "English STT logprobs output is not an ONNX tensor"
+                            "English STT logprobs output is not an ONNX tensor: " +
+                                (outputValue?.javaClass?.name ?: "null")
                         )
                     val outputInfo = outputTensor.info as? TensorInfo
                         ?: error(
@@ -391,21 +416,47 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
 
                     if (encodedLength <= 0L) return ""
 
-                    val buffer = outputTensor.floatBuffer.duplicate()
-                    buffer.rewind()
+                    android.util.Log.d(
+                        "EnglishConformerCtc",
+                        "English STT output shape=" +
+                            outputShape.contentToString() +
+                            " encodedLength=" + encodedLength
+                    )
+
+                    val rawValue = outputTensor.value
+                    val batchValues = rawValue as? Array<*>
+                        ?: error(
+                            "English STT logprobs value is not a rank-3 float array"
+                        )
+                    require(batchValues.size == 1) {
+                        "English STT expected one output batch, got " +
+                            batchValues.size
+                    }
+
+                    val timeValues = batchValues[0] as? Array<*>
+                        ?: error(
+                            "English STT logprobs time dimension is not an array"
+                        )
 
                     val tokens = ArrayList<Int>()
                     var previousRawToken = blankIndex
 
                     for (timeIndex in 0 until encodedLength.toInt()) {
-                        val base =
-                            timeIndex * outputVocabSize.toInt()
+                        val row = timeValues[timeIndex] as? FloatArray
+                            ?: error(
+                                "English STT logprobs row $timeIndex is not FloatArray"
+                            )
+
+                        require(row.size >= vocabulary.size) {
+                            "English STT logprobs row is smaller than vocab: " +
+                                row.size + " vs " + vocabulary.size
+                        }
 
                         var bestId = 0
                         var bestValue = Float.NEGATIVE_INFINITY
 
-                        for (tokenId in 0 until vocabulary.size) {
-                            val value = buffer.get(base + tokenId)
+                        for (tokenId in vocabulary.indices) {
+                            val value = row[tokenId]
                             if (value > bestValue) {
                                 bestValue = value
                                 bestId = tokenId
@@ -424,11 +475,23 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                         previousRawToken = bestId
                     }
 
-                    return buildString {
+                    android.util.Log.d(
+                        "EnglishConformerCtc",
+                        "English STT decoded token count=" + tokens.size
+                    )
+
+                    val decoded = buildString {
                         for (tokenId in tokens) {
                             append(vocabulary[tokenId])
                         }
                     }.trim()
+
+                    android.util.Log.d(
+                        "EnglishConformerCtc",
+                        "English STT decoded text: " + decoded
+                    )
+
+                    return decoded
                 } finally {
                     result.close()
                 }
@@ -444,10 +507,10 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
     }
 
     companion object {
+        private const val TAG = "EnglishConformerCtc"
         private const val LANGUAGE_CODE = "en"
         private const val SILENCE_RMS_THRESHOLD = 500.0
         private const val SILENCE_THRESHOLD_MS = 400L
-        private const val PARTIAL_INTERVAL_MS = 1_000L
         private const val MAX_BUFFER_MS = 9_000L
     }
 }
