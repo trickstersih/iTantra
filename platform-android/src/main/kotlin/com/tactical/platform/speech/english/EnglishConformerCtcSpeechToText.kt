@@ -377,9 +377,13 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                 )
 
                 try {
-                    val outputTensor = result["logprobs"] as? OnnxTensor
+                    // OrtSession.Result.get(name) returns Optional<OnnxValue>.
+                    // Unwrap it before casting to the concrete tensor type.
+                    val outputValue = result["logprobs"].orElse(null)
+                    val outputTensor = outputValue as? OnnxTensor
                         ?: error(
-                            "English STT logprobs output is not an ONNX tensor"
+                            "English STT logprobs output is not an ONNX tensor: " +
+                                (outputValue?.javaClass?.name ?: "null")
                         )
                     val outputInfo = outputTensor.info as? TensorInfo
                         ?: error(
@@ -419,14 +423,6 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                             " encodedLength=" + encodedLength
                     )
 
-                    /*
-                     * Read the actual Java tensor value instead of assuming the
-                     * returned ONNX tensor exposes a flat FloatBuffer with the
-                     * expected layout. ONNX Runtime Java represents a rank-3
-                     * float tensor as Array<Any?> -> Array<Any?> -> FloatArray.
-                     * This matches the logical [batch, time, vocab] shape and
-                     * avoids a buffer-layout assumption in the decoder.
-                     */
                     val rawValue = outputTensor.value
                     val batchValues = rawValue as? Array<*>
                         ?: error(
