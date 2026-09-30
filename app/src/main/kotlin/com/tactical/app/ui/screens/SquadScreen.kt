@@ -258,7 +258,11 @@ fun SquadScreen(
                             Spacer(Modifier.height(8.dp))
 
                             if (!transmissionExpanded) {
-                                val latest = uiState.pttTransmissionHistory.last()
+                                val latest = if (uiState.pttContinuousSession) {
+                                    uiState.pttTransmissionHistory.last()
+                                } else {
+                                    uiState.pttTransmissionHistory.first()
+                                }
                                 Text(
                                     latest.text,
                                     color = Color.White,
