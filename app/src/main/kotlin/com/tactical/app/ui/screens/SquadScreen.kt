@@ -17,6 +17,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.SignalCellularAlt
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -41,6 +42,7 @@ import com.tactical.app.ui.MainUiState
 import com.tactical.app.ui.PeerNodeUi
 import com.tactical.ptt.session.SessionState
 import com.tactical.app.ui.theme.*
+import com.tactical.platform.api.ble.BleLinkState
 
 @Composable
 fun SquadScreen(
@@ -51,6 +53,7 @@ fun SquadScreen(
     onPttRelease: () -> Unit,
     onPttCancel: () -> Unit,
     onRemoveFromSquad: (String) -> Unit = {},
+    onRefreshDiscovery: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val connectedPeers = uiState.squadPeers.filter { it.isConnected }
@@ -595,7 +598,31 @@ fun SquadScreen(
         }
 
         item {
-            SectionDividerLabel("${connectedPeers.size} CONNECTED DEVICES")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                SectionDividerLabel(
+                    "${connectedPeers.size} CONNECTED DEVICES",
+                    modifier = Modifier.weight(1f)
+                )
+
+                IconButton(
+                    onClick = onRefreshDiscovery,
+                    enabled = !uiState.isScanning
+                ) {
+                    Icon(
+                        Icons.Default.Refresh,
+                        contentDescription = LocalUiStrings.current.text(UiTextKey.SCAN),
+                        tint = if (uiState.isScanning) {
+                            Color(0xFF5F7890)
+                        } else {
+                            Color(0xFFBFD6EA)
+                        },
+                        modifier = Modifier.size(21.dp)
+                    )
+                }
+            }
         }
 
         if (connectedPeers.isEmpty()) {
@@ -738,14 +765,14 @@ private data class SquadLanguageOption(
 
 private val SQUAD_LANGUAGE_OPTIONS = listOf(
     SquadLanguageOption("hi", "Hindi", "हिन्दी", true),
-    SquadLanguageOption("gu", "Gujarati", "ગુજરાતી", false),
-    SquadLanguageOption("mr", "Marathi", "मराठी", false),
-    SquadLanguageOption("kn", "Kannada", "ಕನ್ನಡ", false),
-    SquadLanguageOption("ml", "Malayalam", "മലയാളം", false),
-    SquadLanguageOption("ta", "Tamil", "தமிழ்", false),
-    SquadLanguageOption("te", "Telugu", "తెలుగు", false),
-    SquadLanguageOption("or", "Odia", "ଓଡ଼ିଆ", false),
-    SquadLanguageOption("bn", "Bengali", "বাংলা", false),
+    SquadLanguageOption("gu", "Gujarati", "ગુજરાતી", true),
+    SquadLanguageOption("mr", "Marathi", "मराठी", true),
+    SquadLanguageOption("kn", "Kannada", "ಕನ್ನಡ", true),
+    SquadLanguageOption("ml", "Malayalam", "മലയാളം", true),
+    SquadLanguageOption("ta", "Tamil", "தமிழ்", true),
+    SquadLanguageOption("te", "Telugu", "తెలుగు", true),
+    SquadLanguageOption("or", "Odia", "ଓଡ଼ିଆ", true),
+    SquadLanguageOption("bn", "Bengali", "বাংলা", true),
     SquadLanguageOption("en", "English", "English", true)
 )
 
@@ -805,9 +832,12 @@ private fun transmissionStatusColor(status: String): Color =
     }
 
 @Composable
-private fun SectionDividerLabel(label: String) {
+private fun SectionDividerLabel(
+    label: String,
+    modifier: Modifier = Modifier
+) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         HorizontalDivider(
@@ -900,11 +930,29 @@ fun PeerCard(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.height(3.dp))
+                    val connectedDetail = when {
+                        peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED &&
+                            peer.bleState == BleLinkState.CONNECTED ->
+                            "Wi-Fi Direct + BLE"
+                        peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED ->
+                            "Wi-Fi Direct"
+                        peer.bleState == BleLinkState.CONNECTED ->
+                            if (peer.distanceText != "Unknown") {
+                                "BLE • " + peer.distanceText
+                            } else {
+                                "BLE"
+                            }
+                        peer.linkText != "DIRECT" -> peer.linkText
+                        else -> peer.distanceText
+                    }
+
                     Text(
                         if (peer.isConnected) {
-                            LocalUiStrings.current.text(UiTextKey.CONNECTED_DOT) + peer.distanceText
-                        } else {
+                            LocalUiStrings.current.text(UiTextKey.CONNECTED_DOT) + connectedDetail
+                        } else if (peer.linkText == "DIRECT") {
                             LocalUiStrings.current.text(UiTextKey.IN_SQUAD_DOT) + peer.distanceText
+                        } else {
+                            LocalUiStrings.current.text(UiTextKey.IN_SQUAD_DOT) + peer.linkText
                         },
                         color = if (peer.isConnected) {
                             RedTacticalStatusGreen

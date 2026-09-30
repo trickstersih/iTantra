@@ -1,9 +1,17 @@
 package com.tactical.platform.api.wifi
 
+import com.tactical.domain.identity.RadioLinkState
 import com.tactical.domain.result.TacticalResult
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
 
 interface WifiDirectManager {
+    /** Starts the single app-owned Wi-Fi Direct lifecycle. */
+    suspend fun start(): TacticalResult<Unit>
+
+    /** Stops Wi-Fi discovery/observation and releases the P2P lifecycle. */
+    suspend fun stop()
+
     /** Advertise this installation as an iTantra Wi-Fi Direct service. */
     suspend fun advertisePresence(
         deviceId: String,
@@ -11,12 +19,30 @@ interface WifiDirectManager {
     ): TacticalResult<Unit>
 
     /**
-     * Finds only Wi-Fi Direct devices that advertise the iTantra service.
-     * Ordinary Wi-Fi Direct peers are deliberately ignored.
+     * Returns the shared peer stream. Implementations must not register a new
+     * BroadcastReceiver for each collector.
      */
     suspend fun discoverPeers(): Flow<List<WifiDirectPeer>>
 
+    /** Current P2P group topology owned by this manager. */
+    fun connectionInfo(): StateFlow<WifiDirectConnectionInfo>
+
+    /** Current Wi-Fi Direct availability/link lifecycle state. */
+    fun state(): StateFlow<RadioLinkState>
+
     suspend fun disconnect(): TacticalResult<Unit>
 
-    suspend fun connect(deviceId: String): TacticalResult<Unit>
+    /**
+     * Initiates a P2P connection to the Android Wi-Fi Direct device address.
+     * The application-level iTantra identity is learned separately.
+     */
+    suspend fun connect(deviceAddress: String): TacticalResult<Unit>
+
+    /**
+     * Connect using the stable iTantra application UUID discovered from the
+     * Wi-Fi Direct service advertisement. Implementations translate it to the
+     * underlying Android P2P device address.
+     */
+    suspend fun connectByAppDeviceId(deviceId: String): TacticalResult<Unit> =
+        TacticalResult.Failure("Wi-Fi Direct app-device lookup is unsupported")
 }

@@ -7,6 +7,7 @@ import android.content.Context
 import android.os.Build
 import com.tactical.platform.speech.SpeechLanguagePreferences
 import com.tactical.platform.speech.RoutingSpeechToText
+import com.tactical.platform.speech.andr2.Andr2SttModelStore
 import com.tactical.platform.speech.mms.MmsTtsEngine
 import com.tactical.platform.speech.mms.MmsTtsLanguage
 import com.tactical.platform.speech.mms.MmsTtsModelStore
@@ -35,6 +36,9 @@ class TacticalApplication : Application() {
     lateinit var routingSpeechToText: RoutingSpeechToText
 
     @Inject
+    lateinit var andr2SttModelStore: Andr2SttModelStore
+
+    @Inject
     lateinit var mmsTtsPlaybackPreferences: com.tactical.platform.speech.mms.MmsTtsPlaybackPreferences
 
     @Inject
@@ -46,6 +50,7 @@ class TacticalApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         cleanupSpeechExtractionCache()
+        andr2SttModelStore.cleanupUnbundledModels()
         ttsModelStore.cleanupUnbundledModels()
         mmsTtsPlaybackCoordinator.setMode(mmsTtsPlaybackPreferences.playbackMode)
         createNotificationChannels()
@@ -107,6 +112,7 @@ class TacticalApplication : Application() {
         filesDir.listFiles()
             ?.filter {
                 it.name.startsWith(".tts_model_staging_") ||
+                    it.name.startsWith(".andr2_stt_staging_") ||
                     it.name.startsWith(".moonshine_stt_staging_") ||
                     it.name.startsWith(".vosk_hi_bundle_staging_")
             }

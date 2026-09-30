@@ -28,6 +28,7 @@ import com.tactical.platform.api.ble.BleBeaconAdvertiser
 import com.tactical.platform.api.ble.BleBeaconScanner
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.wifi.WifiDirectManager
+import com.tactical.platform.api.squad.SquadMembershipStore
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -49,6 +50,12 @@ object MeshModule {
     @LocalCallsign
     fun provideLocalCallsign(identityStore: DeviceIdentityStore): String =
         identityStore.callsign
+
+    @Provides
+    @Singleton
+    fun provideSquadMembershipStore(
+        store: PersistentSquadMembershipStore
+    ): SquadMembershipStore = store
 
     @Provides
     @Singleton
@@ -96,14 +103,14 @@ object MeshModule {
         serializer: PacketSerializer,
         transport: RadioTransport,
         qualityMonitor: LinkQualityMonitor,
-        bleConnectionManager: BleConnectionManager
+        squadMembershipStore: SquadMembershipStore
     ): MeshService = DefaultMeshService(
         localDeviceId = DeviceId(localDeviceIdValue),
         router = router,
         serializer = serializer,
         transport = transport,
         qualityMonitor = qualityMonitor,
-        squadDeviceIdsProvider = bleConnectionManager::squadDeviceIds
+        squadDeviceIdsProvider = squadMembershipStore::squadDeviceIds
     )
 
     @Provides
@@ -112,11 +119,13 @@ object MeshModule {
         @LocalDeviceIdValue localDeviceIdValue: String,
         identityStore: DeviceIdentityStore,
         transport: RadioTransport,
+        serializer: PacketSerializer,
         bleAdvertiser: BleBeaconAdvertiser
     ): BeaconEmitter = PeriodicBeaconEmitter(
         localDeviceId = DeviceId(localDeviceIdValue),
         callsignProvider = identityStore::callsign,
         transport = transport,
+        serializer = serializer,
         bleAdvertiser = bleAdvertiser
     )
 
@@ -125,11 +134,13 @@ object MeshModule {
     fun provideBeaconScanner(
         bleScanner: BleBeaconScanner,
         transport: RadioTransport,
-        serializer: PacketSerializer
+        serializer: PacketSerializer,
+        @LocalDeviceIdValue localDeviceIdValue: String
     ): BeaconScanner = CompositeBeaconScanner(
         bleScanner = bleScanner,
         radioTransport = transport,
-        serializer = serializer
+        serializer = serializer,
+        localDeviceId = localDeviceIdValue
     )
 
     @Provides

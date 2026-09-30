@@ -23,6 +23,7 @@ class BinaryPacketSerializer : PacketSerializer {
             is VoicePacket -> encodeVoicePacket(packet)
             is EmergencyPacket -> encodeEmergencyPacket(packet)
             is BeaconPacket -> encodeBeaconPacket(packet)
+            is SquadControlPacket -> encodeSquadControlPacket(packet)
         }
 
         val type: Byte = when (packet) {
@@ -30,6 +31,7 @@ class BinaryPacketSerializer : PacketSerializer {
             is VoicePacket -> 2
             is EmergencyPacket -> 3
             is BeaconPacket -> 4
+            is SquadControlPacket -> 5
         }
 
         return wrapInEnvelope(type, payload)
@@ -46,6 +48,29 @@ class BinaryPacketSerializer : PacketSerializer {
                 out.writeInt(packet.hopCount)
                 out.writeInt(innerPayload.size)
                 out.write(innerPayload)
+
+                val hasRoutingExtension =
+                    packet.path.isNotEmpty() ||
+                        packet.targetDeviceIds != null ||
+                        packet.deliveredTargetDeviceIds.isNotEmpty()
+
+                if (hasRoutingExtension) {
+                    out.writeInt(packet.path.size)
+                    packet.path.forEach { out.writeString(it.value) }
+
+                    val targets = packet.targetDeviceIds
+                    if (targets == null) {
+                        out.writeInt(-1)
+                    } else {
+                        require(packet.deliveredTargetDeviceIds.all { it in targets }) {
+                            "Delivered target is not present in target set"
+                        }
+                        out.writeInt(targets.size)
+                        targets.forEach { out.writeString(it) }
+                        out.writeInt(packet.deliveredTargetDeviceIds.size)
+                        packet.deliveredTargetDeviceIds.forEach { out.writeString(it) }
+                    }
+                }
             }
             bos.toByteArray()
         }
@@ -98,6 +123,17 @@ class BinaryPacketSerializer : PacketSerializer {
         if (listenPort != null) {
             writeInt(listenPort)
         }
+        writeLong(packet.timestamp)
+    }
+
+    private fun encodeSquadControlPacket(packet: SquadControlPacket): ByteArray = byteStream {
+        writeString(packet.sender.value)
+        writeString(packet.target.value)
+        writeString(packet.requestId)
+        writeByte(packet.action.ordinal)
+        writeString(packet.callsign)
+        writeBoolean(packet.accepted != null)
+        packet.accepted?.let { writeBoolean(it) }
         writeLong(packet.timestamp)
     }
 
@@ -209,6 +245,25 @@ class BinaryPacketSerializer : PacketSerializer {
                 val timestamp = it.readLong()
                 BeaconPacket(sender = sender, callsign = callsign, listenPort = listenPort, timestamp = timestamp)
             }
+            5 -> input.use {
+                val sender = DeviceId(it.readString())
+                val target = DeviceId(it.readString())
+                val requestId = it.readString()
+                val action = SquadControlAction.entries[it.readByte().toInt()]
+                val callsign = it.readString()
+                val hasAccepted = it.readBoolean()
+                val accepted = if (hasAccepted) it.readBoolean() else null
+                val timestamp = it.readLong()
+                SquadControlPacket(
+                    sender = sender,
+                    target = target,
+                    requestId = requestId,
+                    action = action,
+                    callsign = callsign,
+                    accepted = accepted,
+                    timestamp = timestamp
+                )
+            }
             else -> throw IllegalArgumentException("Unknown packet type: ${unwrapped.type}")
         }
     }
@@ -224,14 +279,76 @@ class BinaryPacketSerializer : PacketSerializer {
             val ttl = it.readInt()
             val hopCount = it.readInt()
             val innerLen = it.readInt()
+            require(innerLen >= 0 && innerLen <= it.available()) {
+                "Invalid relay inner length: $innerLen"
+            }
             val innerBytes = ByteArray(innerLen).also { buf -> it.readFully(buf) }
+
+            val stream = it
+            var path = emptyList<DeviceId>()
+            var targetDeviceIds: Set<String>? = null
+            var deliveredTargetDeviceIds = emptySet<String>()
+
+            if (stream.available() > 0) {
+                val pathCount = stream.readInt()
+                require(pathCount in 0..(ProtocolConstants.MAX_HOPS + 1)) {
+                    "Invalid relay path length: $pathCount"
+                }
+                path = List(pathCount) { DeviceId(stream.readString()) }
+
+                // Older topology relays ended after the path extension.
+                // Target metadata is therefore optional after the path.
+                if (stream.available() > 0) {
+                    val targetCount = stream.readInt()
+                    require(targetCount >= -1) {
+                        "Invalid relay target count: $targetCount"
+                    }
+
+                    if (targetCount >= 0) {
+                        require(targetCount <= 128) {
+                            "Invalid relay target count: $targetCount"
+                        }
+
+                        targetDeviceIds = buildSet {
+                            repeat(targetCount) {
+                                add(stream.readString())
+                            }
+                        }
+
+                        require(stream.available() >= 4) {
+                            "Missing delivered-target count"
+                        }
+                        val deliveredCount = stream.readInt()
+                        require(deliveredCount in 0..targetCount) {
+                            "Invalid delivered-target count: $deliveredCount"
+                        }
+
+                        deliveredTargetDeviceIds = buildSet {
+                            repeat(deliveredCount) {
+                                add(stream.readString())
+                            }
+                        }
+
+                        require(deliveredTargetDeviceIds.all { it in targetDeviceIds }) {
+                            "Delivered target is not present in target set"
+                        }
+                    } else {
+                        require(stream.available() == 0) {
+                            "Unexpected relay data after unrestricted-target marker"
+                        }
+                    }
+                }
+            }
 
             MeshRelayPacket(
                 originalSender = originalSender,
                 immediateSender = immediateSender,
                 ttl = ttl,
                 hopCount = hopCount,
-                payload = deserialize(innerBytes)
+                payload = deserialize(innerBytes),
+                path = path,
+                targetDeviceIds = targetDeviceIds,
+                deliveredTargetDeviceIds = deliveredTargetDeviceIds
             )
         }
     }

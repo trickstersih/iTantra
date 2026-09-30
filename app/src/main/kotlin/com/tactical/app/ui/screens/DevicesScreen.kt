@@ -367,7 +367,7 @@ private fun EmptyDevicesState(isScanning: Boolean) {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "Discovery runs automatically every 10 seconds.",
+                text = "Discovery runs automatically in the background.",
                 color = Color(0xFF8EA8C0),
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center
@@ -401,20 +401,35 @@ private fun AvailableDeviceCard(
                     )
                     Spacer(Modifier.height(3.dp))
                     Text(
-                        peer.linkText + " • " + peer.distanceText,
+                        if (peer.linkText == "DIRECT") {
+                            peer.linkText + " • " + peer.distanceText
+                        } else {
+                            peer.linkText
+                        },
                         color = Color(0xFF8EA8C0),
                         fontSize = 11.sp
                     )
                 }
 
+                val connectedTransports = buildList {
+                    if (peer.bleState == BleLinkState.CONNECTED) add("BLE")
+                    if (peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED) {
+                        add("Wi-Fi Direct")
+                    }
+                }
+                val transportStatus = connectedTransports.joinToString(" + ")
+                val statusText = when {
+                    transportStatus.isNotBlank() ->
+                        LocalUiStrings.current.text(UiTextKey.CONNECTED) + " • " + transportStatus
+                    peer.bleState == BleLinkState.CONNECTING ||
+                        peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTING ->
+                        LocalUiStrings.current.text(UiTextKey.CONNECTING)
+                    else -> LocalUiStrings.current.text(UiTextKey.AVAILABLE)
+                }
+
                 Text(
-                    when (peer.bleState) {
-                        BleLinkState.CONNECTED -> LocalUiStrings.current.text(UiTextKey.CONNECTED)
-                        BleLinkState.CONNECTING -> LocalUiStrings.current.text(UiTextKey.CONNECTING)
-                        BleLinkState.FAILED -> LocalUiStrings.current.text(UiTextKey.AVAILABLE)
-                        else -> LocalUiStrings.current.text(UiTextKey.AVAILABLE)
-                    },
-                    color = if (peer.bleState == BleLinkState.CONNECTED) {
+                    statusText,
+                    color = if (peer.isConnected) {
                         RedTacticalStatusGreen
                     } else {
                         RedTacticalStatusYellow

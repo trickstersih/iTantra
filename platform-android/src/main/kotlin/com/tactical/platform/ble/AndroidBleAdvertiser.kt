@@ -31,10 +31,11 @@ class AndroidBleAdvertiser(
 
         val adapter = bluetoothAdapter
 
+        // BLE is an optional bearer. When Bluetooth is intentionally OFF,
+        // silently skip advertising so Wi-Fi-only operation stays quiet and
+        // the mesh beacon loop can continue to use other transports.
         if (adapter == null || !adapter.isEnabled) {
-            throw IllegalStateException(
-                "Bluetooth is OFF or unavailable"
-            )
+            return
         }
 
         val le = advertiser

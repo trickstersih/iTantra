@@ -50,18 +50,28 @@ class DefaultMeshService(
             immediateSender = localDeviceId,
             ttl = ProtocolConstants.DEFAULT_TTL,
             hopCount = 0,
-            payload = packet
+            payload = packet,
+            path = if (packet is com.tactical.domain.packet.BeaconPacket) {
+                listOf(localDeviceId)
+            } else {
+                emptyList()
+            }
         )
-        // Locally originated normal text is sent directly only to the
-        // application's squad. Emergency packets remain a full broadcast.
-        // Relay traffic is handled separately below and is not restricted,
-        // preserving mesh forwarding.
+        // Text packets are application-targeted, but the physical first hop
+        // must be a mesh broadcast so an intermediate relay can receive the
+        // packet even when the final recipient is not directly connected.
+        // The embedded target set is the authoritative delivery gate.
         val targetDeviceIds = when (packet) {
             is com.tactical.domain.packet.TextPacket -> squadDeviceIdsProvider()
+            is com.tactical.domain.packet.SquadControlPacket -> setOf(packet.target.value)
             is com.tactical.domain.packet.EmergencyPacket -> null
             else -> null
         }
-        return broadcastRelay(relayPacket, targetDeviceIds)
+
+        val routedRelayPacket = relayPacket.copy(
+            targetDeviceIds = targetDeviceIds
+        )
+        return broadcastRelay(routedRelayPacket)
     }
 
     override fun receive(): Flow<Packet> = _incomingPackets.asSharedFlow()

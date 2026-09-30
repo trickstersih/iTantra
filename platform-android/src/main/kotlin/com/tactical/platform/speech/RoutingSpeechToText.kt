@@ -3,103 +3,54 @@ package com.tactical.platform.speech
 import com.tactical.domain.audio.AudioFrame
 import com.tactical.domain.speech.TranscriptionChunk
 import com.tactical.platform.api.speech.SpeechToText
+import com.tactical.platform.speech.andr2.Andr2SpeechToText
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Selects the outgoing PTT STT backend from the user's saved language.
+ * Outgoing STT router for the single bundled andr2 multilingual model.
  *
- * This does not affect reception: incoming packets carry their own
- * languageCode on the wire.
- *
- * Only the currently selected backend is retained as a live native model.
- * When the selected language changes, the previously active backend is closed.
+ * The selected language only conditions the decoder prefix; changing language
+ * does not reload the shared ONNX model.
  */
 @Singleton
 class RoutingSpeechToText @Inject constructor(
-    private val moonshineSpeechToText: MoonshineSpeechToText,
-    private val voskHindiSpeechToText: VoskHindiSpeechToText,
+    private val andr2SpeechToText: Andr2SpeechToText,
     private val languagePreferences: SpeechLanguagePreferences
 ) : SpeechToText {
 
-    private val switchMutex = Mutex()
-    private var activeLanguage: String? = null
-
-    fun onSelectedLanguageChanged(languageCode: String) {
-        if (!switchMutex.tryLock()) return
-
-        try {
-            if (activeLanguage == languageCode) return
-
-            when (activeLanguage) {
-                "hi" -> voskHindiSpeechToText.close()
-                "en" -> moonshineSpeechToText.close()
-            }
-
-            // The next transcription call will lazily load the newly selected
-            // backend. Until then, no STT model is intentionally kept loaded.
-            activeLanguage = null
-        } finally {
-            switchMutex.unlock()
-        }
+    fun onSelectedLanguageChanged(@Suppress("UNUSED_PARAMETER") languageCode: String) {
+        // andr2 is one shared multilingual model. The next inference reads
+        // the currently persisted language when it builds the decoder prefix.
+        andr2SpeechToText.onSelectedLanguageChanged()
     }
 
-    /**
-     * Eagerly loads the currently selected STT backend so the first PTT press
-     * can start microphone capture immediately. Only the selected backend is
-     * retained in memory.
-     */
     suspend fun preloadSelectedLanguage() {
         val selectedLanguage = languagePreferences.selectedLanguageCode
-
-        switchMutex.withLock {
-            if (activeLanguage != selectedLanguage) {
-                when (activeLanguage) {
-                    "hi" -> voskHindiSpeechToText.close()
-                    "en" -> moonshineSpeechToText.close()
-                }
-                activeLanguage = selectedLanguage
-            }
+        require(selectedLanguage in SUPPORTED_LANGUAGE_CODES) {
+            "No andr2 STT backend configured for language " + selectedLanguage
         }
-
-        when (selectedLanguage) {
-            "hi" -> voskHindiSpeechToText.preload()
-            "en" -> moonshineSpeechToText.preload()
-            else -> error("No STT backend configured for language " + selectedLanguage)
-        }
+        andr2SpeechToText.preloadSelectedLanguage()
     }
 
     override fun transcribe(
         audio: Flow<AudioFrame>
-    ): Flow<TranscriptionChunk> {
+    ): Flow<TranscriptionChunk> = flow {
         val selectedLanguage = languagePreferences.selectedLanguageCode
-
-        return flow {
-            switchMutex.withLock {
-                if (activeLanguage != selectedLanguage) {
-                    when (activeLanguage) {
-                        "hi" -> voskHindiSpeechToText.close()
-                        "en" -> moonshineSpeechToText.close()
-                    }
-                    activeLanguage = selectedLanguage
-                }
-            }
-
-            emitAll(
-                when (selectedLanguage) {
-                    "hi" -> voskHindiSpeechToText.transcribe(audio)
-                    "en" -> moonshineSpeechToText.transcribe(audio)
-                    else -> error(
-                        "No STT backend configured for language " +
-                            selectedLanguage
-                    )
-                }
-            )
+        require(selectedLanguage in SUPPORTED_LANGUAGE_CODES) {
+            "No andr2 STT backend configured for language " + selectedLanguage
         }
+
+        emitAll(andr2SpeechToText.transcribe(audio))
+    }
+
+    companion object {
+        private val SUPPORTED_LANGUAGE_CODES = setOf(
+            "hi", "gu", "mr", "kn", "ml",
+            "ta", "te", "or", "bn", "en"
+        )
     }
 }

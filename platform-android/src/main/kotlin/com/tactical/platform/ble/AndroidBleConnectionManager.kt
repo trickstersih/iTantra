@@ -23,6 +23,7 @@ import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.ble.BleDiagnostics
 import com.tactical.platform.api.ble.BleLinkState
 import com.tactical.platform.api.ble.SquadRequest
+import com.tactical.platform.api.squad.SquadMembershipStore
 import com.tactical.platform.radio.BleConnectionRegistry
 import com.tactical.platform.radio.BleRadioTransport
 import kotlinx.coroutines.CompletableDeferred
@@ -47,7 +48,8 @@ import java.util.concurrent.ConcurrentHashMap
 class AndroidBleConnectionManager(
     private val context: Context,
     private val registry: BleConnectionRegistry,
-    private val localDeviceId: String
+    private val localDeviceId: String,
+    private val squadMembershipStore: SquadMembershipStore
 ) : BleConnectionManager, BleConnectionRegistry.ConnectionListener {
 
     private val states = ConcurrentHashMap<String, MutableStateFlow<BleLinkState>>()
@@ -189,6 +191,37 @@ class AndroidBleConnectionManager(
             @Suppress("DEPRECATION")
             context.registerReceiver(adapterStateReceiver, adapterFilter)
         }
+    }
+
+    override suspend fun addMeshSquadMember(
+        deviceId: String,
+        callsign: String
+    ): TacticalResult<Unit> {
+        if (deviceId.isBlank() || deviceId == localDeviceId) {
+            return TacticalResult.Failure("Invalid mesh squad member")
+        }
+
+        if (callsign.isNotBlank()) {
+            BlePeerAddressRegistry.updateCallsign(deviceId, callsign)
+        }
+
+        squadMembershipStore.add(deviceId)
+
+        // Keep a discovered physical address when one is already known, but
+        // do not require it. The normal reconnect loop will wait for a future
+        // direct beacon to learn the address and then establish GATT.
+        resolveAddress(deviceId)?.let { address ->
+            rememberAddress(deviceId, address)
+        }
+
+        val resolvedAddress = resolveAddress(deviceId)
+        if (resolvedAddress != null && hasDirectConnection(resolvedAddress)) {
+            setState(resolvedAddress, BleLinkState.CONNECTED)
+        } else {
+            setState(deviceId, BleLinkState.DISCONNECTED)
+        }
+
+        return TacticalResult.Success(Unit)
     }
 
     override suspend fun addToSquad(deviceAddress: String): TacticalResult<Unit> {
@@ -886,21 +919,8 @@ class AndroidBleConnectionManager(
         }.toSet()
     }
 
-    override fun squadDeviceIds(): Set<String> {
-        val current = prefs.getStringSet(SQUAD_IDS_KEY, null)
-        if (current != null) return current.toSet()
-
-        // Migrate the previous app-level paired list once. These IDs are
-        // treated only as squad membership; no Android bond is required.
-        val legacy = prefs.getStringSet(LEGACY_PAIRED_IDS_KEY, emptySet())?.toSet() ?: emptySet()
-        if (legacy.isNotEmpty()) {
-            prefs.edit()
-                .putStringSet(SQUAD_IDS_KEY, legacy)
-                .remove(LEGACY_PAIRED_IDS_KEY)
-                .apply()
-        }
-        return legacy
-    }
+    override fun squadDeviceIds(): Set<String> =
+        squadMembershipStore.squadDeviceIds()
 
     private suspend fun reconnectWithRoleStagger(deviceAddress: String) {
         val resolved = resolveAddress(deviceAddress)
@@ -1057,25 +1077,18 @@ class AndroidBleConnectionManager(
 
     private fun rememberSquadMember(identifier: String, address: String) {
         val appId = BlePeerAddressRegistry.applicationIdFor(address) ?: identifier
-        val ids = squadDeviceIds().toMutableSet()
-        ids.add(appId)
+        squadMembershipStore.add(appId)
         prefs.edit()
-            .putStringSet(SQUAD_IDS_KEY, ids)
-            .remove(LEGACY_PAIRED_IDS_KEY)
             .putString(PREF_ADDRESS_PREFIX + appId, address)
             .apply()
         BlePeerAddressRegistry.remember(appId, address)
     }
 
     private fun forgetSquadMember(appId: String) {
-        val ids = squadDeviceIds().toMutableSet()
-        if (ids.remove(appId)) {
-            prefs.edit()
-                .putStringSet(SQUAD_IDS_KEY, ids)
-                .remove(LEGACY_PAIRED_IDS_KEY)
-                .remove(PREF_ADDRESS_PREFIX + appId)
-                .apply()
-        }
+        squadMembershipStore.remove(appId)
+        prefs.edit()
+            .remove(PREF_ADDRESS_PREFIX + appId)
+            .apply()
     }
 
     private fun stateFlow(address: String): MutableStateFlow<BleLinkState> =
@@ -1117,8 +1130,6 @@ class AndroidBleConnectionManager(
     companion object {
         private const val TAG = "AndroidBleConnection"
         private const val PREFS_NAME = "itantra_ble_links"
-        private const val SQUAD_IDS_KEY = "squad_device_ids"
-        private const val LEGACY_PAIRED_IDS_KEY = "paired_device_ids"
         private const val PREF_ADDRESS_PREFIX = "address_"
         private const val DESIRED_MTU = 247
         private const val MTU_NEGOTIATION_FALLBACK_MS = 2000L

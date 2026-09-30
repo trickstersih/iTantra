@@ -1,25 +1,24 @@
 package com.tactical.platform.radio
 
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.net.wifi.p2p.WifiP2pManager
-import android.net.wifi.p2p.WifiP2pManager.Channel
+import com.tactical.domain.identity.RadioType
 import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.radio.RadioTransport
 import com.tactical.platform.api.radio.RawPacket
+import com.tactical.platform.api.wifi.WifiDirectManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.awaitClose
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.EOFException
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -27,154 +26,401 @@ import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * RadioTransport over Wi-Fi Direct (P2P) sockets — the higher-throughput
- * bearer used for relay traffic and emergency audio (see WifiDirectManager
- * kdoc). Connection *formation* (peer discovery, WifiP2pManager.connect())
- * is AndroidWifiDirectManager's job; this class only takes over once a P2P
- * group exists, opening the actual data socket(s) over it.
+ * Wi-Fi Direct packet transport.
  *
- * A Wi-Fi Direct group has exactly one group owner (GO) and one or more
- * clients. This class doesn't care which role this device ends up in — it
- * listens for WIFI_P2P_CONNECTION_CHANGED_ACTION, checks
- * WifiP2pInfo.isGroupOwner, and either runs a ServerSocket accept loop (GO)
- * or dials the GO's address (client). Wire framing is a 4-byte big-endian
- * length prefix per message, since plain TCP (unlike BLE's per-write
- * chunking) has no message boundaries of its own.
+ * P2P group formation belongs exclusively to WifiDirectManager. This class
+ * observes the manager's shared group-state flow and owns only the TCP data
+ * sockets. Incoming packets are emitted through one hot shared flow, so
+ * multiple consumers never create multiple receivers or server sockets.
  */
 class WifiDirectRadioTransport(
-    private val context: Context,
-    private val wifiP2pManager: WifiP2pManager,
-    private val wifichannel: Channel
+    private val wifiDirectManager: WifiDirectManager,
+    private val localDeviceId: String,
+    private val localCallsignProvider: () -> String,
+    private val scope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
 ) : RadioTransport {
 
-    private val sockets = ConcurrentHashMap<String, Socket>()
-    private val writeLocks = ConcurrentHashMap<String, Any>()
+    override val type: RadioType = RadioType.WIFI_DIRECT
 
-    override fun incoming(): Flow<RawPacket> = callbackFlow {
-        val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-        var serverSocket: ServerSocket? = null
+    private val incomingPackets = MutableSharedFlow<RawPacket>(
+        replay = 0,
+        extraBufferCapacity = 64
+    )
 
-        fun readLoop(peerAddress: String, socket: Socket) {
-            scope.launch {
-                try {
-                    val input = DataInputStream(socket.getInputStream())
-                    while (!socket.isClosed) {
-                        val length = input.readInt()
-                        require(length in 1..MAX_MESSAGE_SIZE) { "implausible frame length $length from $peerAddress" }
-                        val payload = ByteArray(length)
-                        input.readFully(payload)
-                        trySend(RawPacket(data = payload, rssi = UNKNOWN_RSSI, timestamp = System.currentTimeMillis()))
+    private val socketsByPeerId = ConcurrentHashMap<String, Socket>()
+    private val peerIdBySocket = ConcurrentHashMap<Socket, String>()
+    private val writeLocks = ConcurrentHashMap<Socket, Mutex>()
+    private val reconfigureLock = Mutex()
+
+    @Volatile
+    private var serverSocket: ServerSocket? = null
+
+    init {
+        scope.launch {
+            wifiDirectManager.connectionInfo().collectLatest { info ->
+                reconfigureLock.withLock {
+                    closeDataSockets()
+
+                    if (!info.groupFormed) {
+                        return@withLock
                     }
-                } catch (e: IOException) {
-                    // Peer dropped — normal on disconnect. broadcast() simply
-                    // stops reaching this peer once its socket is removed below.
-                } catch (e: IllegalArgumentException) {
-                    // Malformed/corrupted frame — treat like a dropped peer, not a fatal error.
-                } finally {
-                    sockets.remove(peerAddress, socket)
-                    writeLocks.remove(peerAddress)
-                    socket.closeQuietly()
-                }
-            }
-        }
-
-        val connectionReceiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) {
-                if (intent.action != WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION) return
-
-                wifiP2pManager.requestConnectionInfo(wifichannel) { info ->
-                    if (info == null || !info.groupFormed) return@requestConnectionInfo
 
                     if (info.isGroupOwner) {
-                        if (serverSocket != null) return@requestConnectionInfo
-                        scope.launch {
-                            try {
-                                val server = ServerSocket(TRANSPORT_PORT)
-                                serverSocket = server
-                                while (!server.isClosed) {
-                                    val client = server.accept()
-                                    val peerAddress = client.inetAddress.hostAddress ?: continue
-                                    sockets[peerAddress] = client
-                                    writeLocks[peerAddress] = Any()
-                                    readLoop(peerAddress, client)
-                                }
-                            } catch (e: IOException) {
-                                // Server socket closed on transport teardown — expected.
-                            }
-                        }
+                        startServer()
                     } else {
-                        val goAddress = info.groupOwnerAddress?.hostAddress ?: return@requestConnectionInfo
-                        if (sockets.containsKey(goAddress)) return@requestConnectionInfo
-                        scope.launch {
-                            try {
-                                val socket = Socket()
-                                socket.connect(InetSocketAddress(goAddress, TRANSPORT_PORT), CONNECT_TIMEOUT_MS)
-                                sockets[goAddress] = socket
-                                writeLocks[goAddress] = Any()
-                                readLoop(goAddress, socket)
-                            } catch (e: IOException) {
-                                // GO not listening yet, or connect failed. A future
-                                // connection-changed retry (or the next broadcast()
-                                // finding no socket) is how this recovers.
-                            }
+                        val groupOwnerAddress = info.groupOwnerAddress
+                        if (!groupOwnerAddress.isNullOrBlank()) {
+                            connectToGroupOwner(groupOwnerAddress)
                         }
                     }
                 }
             }
         }
-
-        context.registerReceiver(connectionReceiver, IntentFilter(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION))
-
-        awaitClose {
-            context.unregisterReceiver(connectionReceiver)
-            sockets.values.forEach { it.closeQuietly() }
-            sockets.clear()
-            writeLocks.clear()
-            serverSocket?.closeQuietly()
-            scope.cancel()
-        }
     }
 
-    override suspend fun broadcast(raw: RawPacket): TacticalResult<Unit> = withContext(Dispatchers.IO) {
-        val peers = sockets.entries.toList()
-        if (peers.isEmpty()) {
-            return@withContext TacticalResult.Failure("No connected Wi-Fi Direct peers to broadcast to")
-        }
+    override fun incoming(): SharedFlow<RawPacket> =
+        incomingPackets.asSharedFlow()
 
-        var anySucceeded = false
-        val failures = mutableListOf<String>()
+    override fun connectedPeerIds(): Set<String> =
+        socketsByPeerId.keys.toSet()
 
-        for ((peerAddress, socket) in peers) {
-            val lock = writeLocks[peerAddress] ?: continue
-            try {
-                synchronized(lock) {
-                    val output = DataOutputStream(socket.getOutputStream())
-                    output.writeInt(raw.data.size)
-                    output.write(raw.data)
-                    output.flush()
+    override fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> =
+        mapOf(RadioType.WIFI_DIRECT to connectedPeerIds())
+
+    override suspend fun broadcast(raw: RawPacket): TacticalResult<Unit> =
+        withContext(Dispatchers.IO) {
+            val peers = socketsByPeerId.values.distinct()
+            if (peers.isEmpty()) {
+                return@withContext TacticalResult.Failure(
+                    "No connected Wi-Fi Direct peers"
+                )
+            }
+
+            var anySucceeded = false
+
+            // RawPacket.targetDeviceIds is an application-level delivery gate.
+            // Physical forwarding remains a broadcast so an intermediate node
+            // can relay a packet toward a target that is not directly adjacent.
+            for (socket in peers) {
+                if (sendFramedPacket(socket, raw.data)) {
+                    anySucceeded = true
                 }
-                anySucceeded = true
-            } catch (e: IOException) {
-                failures.add("write failed for $peerAddress: ${e.message}")
-                sockets.remove(peerAddress, socket)
-                writeLocks.remove(peerAddress)
-                socket.closeQuietly()
+            }
+
+            if (anySucceeded) {
+                TacticalResult.Success(Unit)
+            } else {
+                TacticalResult.Failure("Wi-Fi Direct transfer failed")
             }
         }
 
-        if (anySucceeded) TacticalResult.Success(Unit)
-        else TacticalResult.Failure("broadcast reached no peers: ${failures.joinToString("; ")}")
+    private fun startServer() {
+        if (serverSocket != null) return
+
+        scope.launch {
+            val server = try {
+                ServerSocket(TRANSPORT_PORT)
+            } catch (e: IOException) {
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi Direct TCP server could not start: ${e.message}"
+                )
+                return@launch
+            }
+
+            serverSocket = server
+
+            try {
+                while (!server.isClosed) {
+                    val socket = server.accept()
+                    socket.tcpNoDelay = true
+                    registerSocket(socket)
+
+                    scope.launch {
+                        try {
+                            sendHello(socket)
+                            readLoop(socket)
+                        } finally {
+                            removeSocket(socket)
+                        }
+                    }
+                }
+            } catch (_: IOException) {
+                // Expected when the P2P group disappears and the server closes.
+            } finally {
+                if (serverSocket === server) {
+                    serverSocket = null
+                }
+                try {
+                    server.close()
+                } catch (_: IOException) {
+                }
+            }
+        }
     }
 
-    private fun Socket.closeQuietly() = try { close() } catch (e: IOException) { /* already gone */ }
-    private fun ServerSocket.closeQuietly() = try { close() } catch (e: IOException) { /* already gone */ }
+    private fun connectToGroupOwner(groupOwnerAddress: String) {
+        scope.launch {
+            repeat(SOCKET_CONNECT_ATTEMPTS) { attempt ->
+                if (wifiDirectManager.connectionInfo().value.groupOwnerAddress != groupOwnerAddress) {
+                    return@launch
+                }
+
+                val socket = Socket()
+                var readLoopCompleted = false
+                try {
+                    socket.tcpNoDelay = true
+                    socket.connect(
+                        InetSocketAddress(groupOwnerAddress, TRANSPORT_PORT),
+                        CONNECT_TIMEOUT_MS
+                    )
+                    registerSocket(socket)
+                    sendHello(socket)
+                    readLoopCompleted = true
+                    readLoop(socket)
+                } catch (e: IOException) {
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi Direct group-owner socket attempt " +
+                            (attempt + 1) + "/" + SOCKET_CONNECT_ATTEMPTS +
+                            " failed: " + (e.message ?: "I/O error")
+                    )
+                } finally {
+                    removeSocket(socket)
+                }
+
+                if (wifiDirectManager.connectionInfo().value.groupOwnerAddress != groupOwnerAddress) {
+                    return@launch
+                }
+
+                if (readLoopCompleted && attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
+                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
+                } else if (attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
+                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
+                }
+            }
+        }
+    }
+    private fun registerSocket(socket: Socket) {
+        writeLocks[socket] = Mutex()
+    }
+
+    private suspend fun readLoop(socket: Socket) {
+        val input = DataInputStream(socket.getInputStream())
+
+        try {
+            while (!socket.isClosed) {
+                val frameLength = input.readInt()
+                require(frameLength in 1..MAX_FRAME_SIZE) {
+                    "invalid Wi-Fi Direct frame length $frameLength"
+                }
+
+                val frame = ByteArray(frameLength)
+                input.readFully(frame)
+
+                when (frame.firstOrNull()?.toInt()) {
+                    FRAME_TYPE_HELLO -> {
+                        val hello = decodeHello(frame.copyOfRange(1, frame.size))
+                            ?: throw IOException("invalid iTantra Wi-Fi hello")
+
+                        val previous = socketsByPeerId.put(hello.deviceId, socket)
+                        peerIdBySocket[socket] = hello.deviceId
+
+                        if (previous != null && previous !== socket) {
+                            peerIdBySocket.remove(previous)
+                            writeLocks.remove(previous)
+                            try {
+                                previous.close()
+                            } catch (_: IOException) {
+                            }
+                        }
+
+                        android.util.Log.d(
+                            TAG,
+                            "Wi-Fi Direct peer ready: ${hello.callsign} / ${hello.deviceId}"
+                        )
+                    }
+
+                    FRAME_TYPE_PACKET -> {
+                        // Never accept application packets from an unverified
+                        // socket. The hello is the transport-level identity
+                        // binding between the TCP endpoint and iTantra DeviceId.
+                        if (!peerIdBySocket.containsKey(socket)) {
+                            throw IOException("Wi-Fi packet before hello")
+                        }
+
+                        val payload = frame.copyOfRange(1, frame.size)
+                        if (payload.isNotEmpty()) {
+                            incomingPackets.tryEmit(
+                                RawPacket(
+                                    data = payload,
+                                    rssi = UNKNOWN_RSSI,
+                                    timestamp = System.currentTimeMillis(),
+                                    transport = RadioType.WIFI_DIRECT
+                                )
+                            )
+                        }
+                    }
+
+                    else -> throw IOException("unknown Wi-Fi Direct frame type")
+                }
+            }
+        } catch (_: EOFException) {
+            // Normal peer disconnect.
+        } catch (_: IOException) {
+            // Malformed frame or broken socket; the socket is removed below.
+        }
+    }
+
+    private fun sendHello(socket: Socket) {
+        val localCallsign = localCallsignProvider()
+        val payload = encodeHello(localDeviceId, localCallsign)
+
+        val frame = ByteArray(payload.size + 1)
+        frame[0] = FRAME_TYPE_HELLO.toByte()
+        payload.copyInto(frame, destinationOffset = 1)
+
+        DataOutputStream(socket.getOutputStream()).apply {
+            writeInt(frame.size)
+            write(frame)
+            flush()
+        }
+    }
+
+    private suspend fun sendFramedPacket(
+        socket: Socket,
+        payload: ByteArray
+    ): Boolean {
+        if (socket.isClosed || socket.isOutputShutdown) return false
+
+        val lock = writeLocks[socket] ?: return false
+
+        return lock.withLock {
+            try {
+                val frame = ByteArray(payload.size + 1)
+                frame[0] = FRAME_TYPE_PACKET.toByte()
+                payload.copyInto(frame, destinationOffset = 1)
+
+                val output = DataOutputStream(socket.getOutputStream())
+                output.writeInt(frame.size)
+                output.write(frame)
+                output.flush()
+                true
+            } catch (e: IOException) {
+                removeSocket(socket)
+                false
+            }
+        }
+    }
+
+    private fun removeSocket(socket: Socket) {
+        val peerId = peerIdBySocket.remove(socket)
+        if (peerId != null) {
+            socketsByPeerId.remove(peerId, socket)
+        }
+
+        writeLocks.remove(socket)
+        try {
+            socket.close()
+        } catch (_: IOException) {
+        }
+    }
+
+    private fun closeDataSockets() {
+        serverSocket?.let {
+            try {
+                it.close()
+            } catch (_: IOException) {
+            }
+        }
+        serverSocket = null
+
+        socketsByPeerId.values.distinct().forEach { socket ->
+            try {
+                socket.close()
+            } catch (_: IOException) {
+            }
+        }
+
+        socketsByPeerId.clear()
+        peerIdBySocket.clear()
+        writeLocks.clear()
+    }
+
+    private data class Hello(
+        val deviceId: String,
+        val callsign: String
+    )
+
+    private fun encodeHello(
+        deviceId: String,
+        callsign: String
+    ): ByteArray {
+        val idBytes = deviceId.toByteArray(Charsets.UTF_8)
+        val callsignBytes = callsign.toByteArray(Charsets.UTF_8)
+
+        require(idBytes.size in 1..MAX_HELLO_FIELD)
+        require(callsignBytes.size in 1..MAX_HELLO_FIELD)
+
+        val result = java.io.ByteArrayOutputStream()
+        DataOutputStream(result).apply {
+            writeByte(PROTOCOL_VERSION)
+            writeByte(idBytes.size)
+            write(idBytes)
+            writeByte(callsignBytes.size)
+            write(callsignBytes)
+            flush()
+        }
+        return result.toByteArray()
+    }
+
+    private fun decodeHello(payload: ByteArray): Hello? {
+        return runCatching {
+            DataInputStream(payload.inputStream()).use { input ->
+                val version = input.readUnsignedByte()
+                if (version != PROTOCOL_VERSION) return null
+
+                val idLength = input.readUnsignedByte()
+                if (idLength !in 1..MAX_HELLO_FIELD) return null
+                val idBytes = ByteArray(idLength)
+                input.readFully(idBytes)
+
+                val callsignLength = input.readUnsignedByte()
+                if (callsignLength !in 1..MAX_HELLO_FIELD) return null
+                val callsignBytes = ByteArray(callsignLength)
+                input.readFully(callsignBytes)
+
+                val deviceId = idBytes.toString(Charsets.UTF_8)
+                val callsign = callsignBytes.toString(Charsets.UTF_8)
+
+                if (runCatching {
+                        java.util.UUID.fromString(deviceId)
+                    }.isFailure
+                ) {
+                    return null
+                }
+
+                Hello(
+                    deviceId = deviceId,
+                    callsign = callsign.ifBlank { deviceId.take(8) }
+                )
+            }
+        }.getOrNull()
+    }
 
     companion object {
-        // Arbitrary unassigned port in the dynamic/private range. The GO
-        // side always binds here; the client side always dials here.
+        private const val TAG = "WifiDirectRadioTransport"
         private const val TRANSPORT_PORT = 8988
         private const val CONNECT_TIMEOUT_MS = 10_000
-        private const val MAX_MESSAGE_SIZE = 1024 * 64
+        private const val SOCKET_CONNECT_ATTEMPTS = 5
+        private const val SOCKET_RETRY_DELAY_MS = 1_000L
+        private const val MAX_FRAME_SIZE = 64 * 1024
+        private const val MAX_HELLO_FIELD = 255
+        private const val PROTOCOL_VERSION = 1
+        private const val FRAME_TYPE_HELLO = 1
+        private const val FRAME_TYPE_PACKET = 2
         private const val UNKNOWN_RSSI = 0
+
     }
 }

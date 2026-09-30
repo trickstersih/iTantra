@@ -1,5 +1,6 @@
 package com.tactical.platform.radio
 
+import com.tactical.domain.identity.RadioType
 import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.radio.RadioTransport
 import com.tactical.platform.api.radio.RawPacket
@@ -31,6 +32,22 @@ class CompositeRadioTransport(
     private val wifiDirectTransport: RadioTransport
 ) : RadioTransport {
 
+    override val type: RadioType? = null
+
+    override fun connectedPeerIds(): Set<String> =
+        bleTransport.connectedPeerIds() + wifiDirectTransport.connectedPeerIds()
+
+    override fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> {
+        val merged = mutableMapOf<RadioType, MutableSet<String>>()
+        bleTransport.connectedPeerIdsByTransport().forEach { (type, ids) ->
+            merged.getOrPut(type) { mutableSetOf() }.addAll(ids)
+        }
+        wifiDirectTransport.connectedPeerIdsByTransport().forEach { (type, ids) ->
+            merged.getOrPut(type) { mutableSetOf() }.addAll(ids)
+        }
+        return merged.mapValues { it.value.toSet() }
+    }
+
     override fun incoming(): Flow<RawPacket> =
         merge(
             bleTransport.incoming().catch { e ->
@@ -42,18 +59,10 @@ class CompositeRadioTransport(
         )
 
     override suspend fun broadcast(raw: RawPacket): TacticalResult<Unit> = coroutineScope {
-        // Squad-targeted delivery currently has stable iTantra IDs only on the
-        // BLE bearer. Wi-Fi Direct uses socket addresses without an iTantra-ID
-        // handshake, so targeted packets stay on BLE. Unrestricted mesh and
-        // emergency broadcasts continue over both bearers.
-        if (raw.targetDeviceIds != null) {
-            return@coroutineScope runCatching {
-                bleTransport.broadcast(raw)
-            }.getOrElse {
-                TacticalResult.Failure("BLE targeted broadcast threw: ${it.message}")
-            }
-        }
-
+        // Targeted packets can now traverse either bearer. BLE retains its
+        // existing physical target filtering, while Wi-Fi forwards the mesh
+        // packet to its connected group peers and lets FloodMeshRouter apply
+        // the authoritative application target gate.
         val bleDeferred = async { runCatching { bleTransport.broadcast(raw) } }
         val wifiDeferred = async { runCatching { wifiDirectTransport.broadcast(raw) } }
 

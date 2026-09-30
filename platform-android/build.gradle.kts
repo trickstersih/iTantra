@@ -43,9 +43,6 @@ android {
 }
 
 dependencies {
-    // Patched Moonshine AAR with its bundled ORT removed.
-    implementation(project(":moonshine-voice-patched"))
-
     // Contracts this module implements
     implementation(project(":core-domain"))
     implementation(project(":core-platform-api"))
@@ -69,7 +66,6 @@ dependencies {
     // types directly. SpeechBackendModule is the only seam.
     implementation(libs.tensorflow.lite)
     implementation(libs.onnxruntime.android)
-    implementation(libs.vosk.android)
 
 //    testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)

@@ -9,7 +9,9 @@ import com.tactical.app.di.UiLanguagePreferences
 import com.tactical.app.di.StoredPairedDevice
 import com.tactical.app.di.StoredReceivedMessage
 import com.tactical.app.di.StoredSentMessage
+import com.tactical.app.service.MeshSquadControlCoordinator
 import com.tactical.domain.identity.DeviceId
+import com.tactical.domain.identity.DeviceNode
 import com.tactical.domain.identity.LinkType
 import com.tactical.domain.packet.EmergencyPacket
 import com.tactical.domain.packet.TextPacket
@@ -37,6 +39,11 @@ import com.tactical.engine.discovery.service.DiscoveryService
 import com.tactical.engine.mesh.service.MeshService
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.ble.BleLinkState
+import com.tactical.platform.api.radio.RadioTransport
+import com.tactical.platform.api.wifi.WifiDirectManager
+import com.tactical.platform.api.squad.SquadMembershipStore
+import com.tactical.domain.identity.RadioLinkState
+import com.tactical.domain.identity.RadioType
 import com.tactical.platform.api.ble.SquadRequest
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
@@ -60,7 +67,8 @@ data class PeerNodeUi(
     val distanceText: String,
     val signalBars: Int,
     val linkText: String,
-    val bleState: BleLinkState = BleLinkState.AVAILABLE
+    val bleState: BleLinkState = BleLinkState.AVAILABLE,
+    val wifiDirectState: RadioLinkState = RadioLinkState.UNAVAILABLE
 )
 
 data class ChatMessageUi(
@@ -144,6 +152,9 @@ class MainViewModel @Inject constructor(
     private val meshService: MeshService,
     private val identityStore: DeviceIdentityStore,
     private val bleConnectionManager: BleConnectionManager,
+    private val wifiDirectManager: WifiDirectManager,
+    private val radioTransport: RadioTransport,
+    private val squadMembershipStore: SquadMembershipStore,
     private val audioRecorder: AudioRecorder,
     private val speechToText: SpeechToText,
     private val hapticEngine: HapticEngine,
@@ -155,7 +166,8 @@ class MainViewModel @Inject constructor(
     private val uiLanguagePreferences: UiLanguagePreferences,
     private val mmsTtsPlaybackPreferences: com.tactical.platform.speech.mms.MmsTtsPlaybackPreferences,
     private val mmsTtsPlaybackCoordinator: com.tactical.platform.speech.mms.MmsTtsPlaybackCoordinator,
-    private val messageNotificationNotifier: com.tactical.app.service.MessageNotificationNotifier
+    private val messageNotificationNotifier: com.tactical.app.service.MessageNotificationNotifier,
+    private val meshSquadControlCoordinator: MeshSquadControlCoordinator
 ) : ViewModel() {
 
     // Must be initialized before _uiState because storedPeerToUi() uses it
@@ -169,7 +181,7 @@ class MainViewModel @Inject constructor(
             selectedLanguage = displayLanguageName(speechLanguagePreferences.selectedLanguageCode),
             uiLanguageCode = uiLanguagePreferences.selectedLanguageCode,
             squadPeers = localAppDataStore.loadPairedDevices()
-                .filter { it.deviceId in bleConnectionManager.squadDeviceIds() }
+                .filter { it.deviceId in squadMembershipStore.squadDeviceIds() }
                 .map(::storedPeerToUi),
             receivedMessages = localAppDataStore.loadReceivedMessages()
                 .asReversed()
@@ -185,8 +197,6 @@ class MainViewModel @Inject constructor(
         )
     )
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
-    private var scanJob: Job? = null
-    private var scanLoopJob: Job? = null
     private var healthJob: Job? = null
     private val observedPeerIds = mutableSetOf<String>()
     private val reconnectJobs = mutableMapOf<String, Job>()
@@ -309,13 +319,13 @@ class MainViewModel @Inject constructor(
             startDiscovery()
         }
 
-        bleConnectionManager.squadDeviceIds().forEach { pairedId ->
+        squadMembershipStore.squadDeviceIds().forEach { pairedId ->
             if (observedPeerIds.add(pairedId)) {
                 observePeerState(pairedId)
             }
         }
         viewModelScope.launch {
-            bleConnectionManager.squadDeviceIds().forEach { pairedId ->
+            squadMembershipStore.squadDeviceIds().forEach { pairedId ->
                 runCatching { bleConnectionManager.reconnectSquadMember(pairedId) }
             }
         }
@@ -348,7 +358,12 @@ class MainViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            bleConnectionManager.pendingSquadRequests().collect { requests ->
+            combine(
+                bleConnectionManager.pendingSquadRequests(),
+                meshSquadControlCoordinator.pendingRequests
+            ) { direct, mesh ->
+                (direct + mesh).distinctBy { it.deviceId }
+            }.collect { requests ->
                 _uiState.update {
                     it.copy(
                         pendingSquadRequest = requests.firstOrNull(),
@@ -356,6 +371,12 @@ class MainViewModel @Inject constructor(
                         squadRequestError = null
                     )
                 }
+            }
+        }
+
+        viewModelScope.launch {
+            meshSquadControlCoordinator.membershipChanged.collect {
+                refreshSquadPeers()
             }
         }
 
@@ -369,6 +390,15 @@ class MainViewModel @Inject constructor(
                     val existing = (state.availablePeers + state.squadPeers)
                         .associateBy { it.deviceAddress }
 
+                    val knownCallsigns = buildMap {
+                        (state.availablePeers + state.squadPeers).forEach { peer ->
+                            put(peer.deviceAddress, peer.callsign)
+                        }
+                        devices.forEach { device ->
+                            put(device.id.value, device.callsign)
+                        }
+                    }
+
                     val peers = devices.map { device ->
                         val id = device.id.value
                         val previous = existing[id]
@@ -377,22 +407,63 @@ class MainViewModel @Inject constructor(
                             previous?.callsign ?: id
                         }
 
-                        if (id in bleConnectionManager.squadDeviceIds()) {
-                            localAppDataStore.savePairedDevice(
-                                StoredPairedDevice(
-                                    deviceId = id,
-                                    callsign = callsign,
-                                    lastSeenEpochMs = device.lastSeen.toEpochMilli(),
-                                    rssi = device.rssi,
-                                    linkText = device.link.name
-                                )
+                        // Persist discovered callsigns for every peer, not
+                        // just squad members. Messages can come from any available
+                        // device, so the sender name must be resolvable even when
+                        // that peer has never been added to the squad.
+                        localAppDataStore.savePairedDevice(
+                            StoredPairedDevice(
+                                deviceId = id,
+                                callsign = callsign,
+                                lastSeenEpochMs = device.lastSeen.toEpochMilli(),
+                                rssi = device.rssi,
+                                linkText = device.link.name
                             )
+                        )
+
+                        val bluetoothState = if (
+                            previous?.bleState != null
+                        ) {
+                            previous.bleState
+                        } else {
+                            BleLinkState.AVAILABLE
+                        }
+                        val wifiState =
+                            device.transportStates[RadioType.WIFI_DIRECT]
+                                ?: previous?.wifiDirectState
+                                ?: RadioLinkState.UNAVAILABLE
+
+                        val hasLiveRadio =
+                            bluetoothState == BleLinkState.CONNECTED ||
+                                wifiState == RadioLinkState.CONNECTED ||
+                                previous?.isConnected == true
+
+                        val routeText = routeLinkText(
+                            device = device,
+                            knownCallsigns = knownCallsigns
+                        )
+                        val transportText = buildList {
+                            if (bluetoothState == BleLinkState.CONNECTED) {
+                                add("BLE")
+                            }
+                            if (wifiState == RadioLinkState.CONNECTED) {
+                                add("Wi-Fi")
+                            }
+                        }.joinToString(" + ")
+
+                        val effectiveLinkText = when {
+                            hasLiveRadio && transportText.isNotBlank() ->
+                                "DIRECT • $transportText"
+                            hasLiveRadio ->
+                                "DIRECT"
+                            else ->
+                                routeText
                         }
 
                         PeerNodeUi(
                             deviceAddress = id,
                             callsign = callsign,
-                            isConnected = previous?.isConnected ?: false,
+                            isConnected = hasLiveRadio,
                             distanceText = if (hasRssi) {
                                 formatDistance(estimator.estimate(device.rssi))
                             } else {
@@ -403,12 +474,9 @@ class MainViewModel @Inject constructor(
                             } else {
                                 previous?.signalBars ?: 0
                             },
-                            linkText = if (hasRssi) {
-                                device.link.name
-                            } else {
-                                previous?.linkText ?: device.link.name
-                            },
-                            bleState = previous?.bleState ?: BleLinkState.AVAILABLE
+                            linkText = effectiveLinkText,
+                            bleState = bluetoothState,
+                            wifiDirectState = wifiState
                         )
                     }
 
@@ -418,14 +486,20 @@ class MainViewModel @Inject constructor(
                         }
                     }
 
-                    val squadIds = bleConnectionManager.squadDeviceIds()
+                    val squadIds = squadMembershipStore.squadDeviceIds()
                     val squadById = state.squadPeers.associateBy { it.deviceAddress }
                     val currentSquad = squadIds.mapNotNull { id ->
                         peers.firstOrNull { it.deviceAddress == id } ?: squadById[id]
                     }
                     state.copy(
                         squadPeers = currentSquad,
-                        availablePeers = peers.filter { it.deviceAddress !in squadIds }
+                        // "Available" means discovered and not yet in the squad.
+                        // A live Wi-Fi Direct TCP connection must not make the
+                        // device disappear from the list; it should remain
+                        // visible with its transport status.
+                        availablePeers = peers.filter {
+                            it.deviceAddress !in squadIds
+                        }
                     )
                 }
             }
@@ -437,12 +511,6 @@ class MainViewModel @Inject constructor(
                     try {
                         delay(1000L)
                         refreshSquadConnectionStates()
-                        // Scanning is intentionally not restarted here.
-                        // Discovery runs once at startup; the user can trigger
-                        // another scan manually from the Home screen.
-                        if (discoveryService is DefaultDiscoveryService && discoveryService.peers().value.isEmpty()) {
-                            runCatching { discoveryService.start() }
-                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (_: Exception) {
@@ -460,30 +528,63 @@ class MainViewModel @Inject constructor(
      * the source of truth even when an inbound and outbound GATT callback race.
      */
     private fun refreshSquadConnectionStates() {
-        val connectedIds = bleConnectionManager.connectedSquadDeviceIds()
+        val connectedByTransport = radioTransport.connectedPeerIdsByTransport()
+        val connectedIds = connectedByTransport.values.flatten().toSet()
+        val connectedBleIds = connectedByTransport[RadioType.BLUETOOTH].orEmpty()
+        val connectedWifiIds = connectedByTransport[RadioType.WIFI_DIRECT].orEmpty()
+
         _uiState.update { state ->
-            fun updatePeer(peer: PeerNodeUi): PeerNodeUi =
-                peer.copy(
-                    isConnected = peer.deviceAddress in connectedIds,
-                    bleState = if (peer.deviceAddress in connectedIds) {
-                        BleLinkState.CONNECTED
-                    } else if (peer.bleState == BleLinkState.CONNECTED) {
-                        BleLinkState.DISCONNECTED
+            fun updatePeer(peer: PeerNodeUi): PeerNodeUi {
+                val bleConnected = peer.deviceAddress in connectedBleIds
+                val wifiConnected = peer.deviceAddress in connectedWifiIds
+                val isConnected = peer.deviceAddress in connectedIds
+
+                return peer.copy(
+                    isConnected = isConnected,
+                    linkText = if (isConnected) {
+                        connectedTransportText(
+                            peer.copy(
+                                bleState = if (bleConnected) {
+                                    BleLinkState.CONNECTED
+                                } else {
+                                    peer.bleState
+                                },
+                                wifiDirectState = if (wifiConnected) {
+                                    RadioLinkState.CONNECTED
+                                } else {
+                                    peer.wifiDirectState
+                                }
+                            )
+                        )
                     } else {
-                        peer.bleState
+                        peer.linkText
+                    },
+                    bleState = when {
+                        bleConnected -> BleLinkState.CONNECTED
+                        peer.bleState == BleLinkState.CONNECTED ->
+                            BleLinkState.DISCONNECTED
+                        else -> peer.bleState
+                    },
+                    wifiDirectState = when {
+                        wifiConnected -> RadioLinkState.CONNECTED
+                        peer.wifiDirectState == RadioLinkState.CONNECTED ->
+                            RadioLinkState.DISCONNECTED
+                        else -> peer.wifiDirectState
                     }
                 )
+            }
+
+            val updatedSquadPeers = state.squadPeers.map(::updatePeer)
+            val updatedAvailablePeers = state.availablePeers
+                .map(::updatePeer)
 
             state.copy(
-                squadPeers = state.squadPeers.map(::updatePeer),
-                availablePeers = state.availablePeers.map(::updatePeer)
+                squadPeers = updatedSquadPeers,
+                availablePeers = updatedAvailablePeers
             )
         }
 
         if (connectedIds.isEmpty() && !_uiState.value.pttEnabled) {
-            // Never leave continuous CALL mode running without a live squad
-            // GATT session. Return to normal PTT so microphone capture and
-            // voice transmission cannot run disconnected.
             viewModelScope.launch {
                 if (_uiState.value.pttContinuousSession) {
                     runCatching { pttController.stopContinuous() }
@@ -495,61 +596,135 @@ class MainViewModel @Inject constructor(
     }
 
     /**
-     * Starts local beacon advertising and performs one discovery scan at startup.
-     * Further scans are user-triggered via the Home screen.
+     * Starts discovery for the application. The DiscoveryService owns the
+     * persistent low-duty-cycle scan loop; the UI does not stop it.
      *
-     * Beacon advertising remains active after the scan ends, so other devices
-     * can still discover this phone without this device continuously scanning.
+     * Background scan cycles intentionally do not toggle isScanning, so the
+     * device list remains visually stable while maintenance scans run.
      */
     fun startDiscovery() {
-        if (scanLoopJob?.isActive == true) return
-
-        scanLoopJob = viewModelScope.launch {
+        viewModelScope.launch {
             runCatching { discoveryService.start() }
-            try {
-                runScanCycle()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                // A failed startup scan must not affect beacon advertising.
-            }
         }
     }
 
-    private suspend fun runScanCycle() {
-        if (scanJob?.isActive == true) return
-
-        val job = viewModelScope.launch {
-            try {
-                (discoveryService as? DefaultDiscoveryService)?.startDiscovery()
-                _uiState.update { it.copy(isScanning = true) }
-                delay(SINGLE_SCAN_WINDOW_MS)
-            } catch (_: Exception) {
-                // A single scan failure should not affect later manual scans.
-            } finally {
-                (discoveryService as? DefaultDiscoveryService)?.stopDiscovery()
-                _uiState.update { it.copy(isScanning = false) }
-            }
-        }
-
-        scanJob = job
-        job.join()
-        scanJob = null
-    }
-
-    /** Immediate scan requested by the user. Persistent discovery remains enabled. */
+    /**
+     * Requests an immediate scan without replacing the background maintenance
+     * loop. The visible indicator is only for an explicit user action.
+     */
     fun forceDiscovery() {
-        if (scanJob?.isActive == true) return
-        viewModelScope.launch { runScanCycle() }
+        val service = discoveryService as? DefaultDiscoveryService ?: return
+
+        service.scanNow()
+        _uiState.update { it.copy(isScanning = true) }
+
+        viewModelScope.launch {
+            delay(MANUAL_SCAN_DISPLAY_MS)
+            _uiState.update { it.copy(isScanning = false) }
+        }
     }
 
     fun addPeerToSquad(deviceAddress: String) {
+        val peer = _uiState.value.availablePeers
+            .firstOrNull { it.deviceAddress == deviceAddress }
+
         viewModelScope.launch {
-            runCatching { bleConnectionManager.addToSquad(deviceAddress) }
+            val result = runCatching {
+                when {
+                    peer != null &&
+                        (peer.linkText.startsWith("VIA ") || peer.linkText == "RELAYED") -> {
+                        // Relayed peers must use the mesh control plane; there is
+                        // no direct Wi-Fi/BLE connection to establish here.
+                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
+                    // A Wi-Fi Direct TCP session may already be established even
+                    // though the Android P2P/DNS-SD discovery cache has changed.
+                    // In that case, do not attempt to resolve the app UUID back
+                    // through discovery; use the live transport immediately.
+                    deviceAddress in radioTransport.connectedPeerIds() -> {
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Adding already-connected peer to squad via existing transport: " +
+                                deviceAddress
+                        )
+                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
+                    peer?.wifiDirectState == RadioLinkState.CONNECTED -> {
+                        // P2P is connected, but the TCP hello may still be racing
+                        // with the button press. Wait briefly for the transport to
+                        // register the peer instead of restarting P2P discovery.
+                        val ready = withTimeoutOrNull(5_000L) {
+                            while (deviceAddress !in radioTransport.connectedPeerIds()) {
+                                delay(100L)
+                            }
+                            true
+                        } == true
+
+                        if (!ready) {
+                            TacticalResult.Failure(
+                                "Wi-Fi Direct is connected, but the data link is not ready"
+                            )
+                        } else {
+                            meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                        }
+                    }
+
+                    peer != null &&
+                        peer.wifiDirectState != RadioLinkState.UNAVAILABLE &&
+                        peer.bleState != BleLinkState.CONNECTED -> {
+                        // We have a Wi-Fi Direct discovery entry but no active
+                        // data socket yet. This is the original connection path.
+                        val connectResult =
+                            wifiDirectManager.connectByAppDeviceId(deviceAddress)
+
+                        if (connectResult is TacticalResult.Failure) {
+                            connectResult
+                        } else {
+                            val ready = withTimeoutOrNull(5_000L) {
+                                while (deviceAddress !in radioTransport.connectedPeerIds()) {
+                                    delay(100L)
+                                }
+                                true
+                            } == true
+
+                            if (!ready) {
+                                TacticalResult.Failure(
+                                    "Wi-Fi Direct connected, but the data link did not become ready"
+                                )
+                            } else {
+                                meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                            }
+                        }
+                    }
+
+                    else -> {
+                        bleConnectionManager.addToSquad(deviceAddress)
+                    }
+                }
+            }.getOrElse {
+                TacticalResult.Failure(
+                    it.message ?: it.javaClass.simpleName
+                )
+            }
+
+            if (result is TacticalResult.Failure) {
+                val error = result.error
+                android.util.Log.w(
+                    "MainViewModel",
+                    "Add to squad failed for " + deviceAddress + ": " + error
+                )
+                _uiState.update {
+                    it.copy(squadRequestError = error)
+                }
+            }
         }
     }
     fun respondToSquadRequest(deviceId: String, approve: Boolean) {
         if (_uiState.value.respondingSquadRequestId != null) return
+
+        val isMeshRequest = meshSquadControlCoordinator.hasPending(deviceId)
 
         // Keep the display data from the request itself. Approval can succeed
         // over GATT even when the requester has not appeared in discovery yet.
@@ -565,7 +740,11 @@ class MainViewModel @Inject constructor(
 
         viewModelScope.launch {
             val result = runCatching {
-                bleConnectionManager.respondToSquadRequest(deviceId, approve)
+                if (isMeshRequest) {
+                    meshSquadControlCoordinator.respondToRequest(deviceId, approve)
+                } else {
+                    bleConnectionManager.respondToSquadRequest(deviceId, approve)
+                }
             }.getOrElse {
                 TacticalResult.Failure(it.message ?: it.javaClass.simpleName)
             }
@@ -603,14 +782,30 @@ class MainViewModel @Inject constructor(
     }
     fun removePeerFromSquad(deviceAddress: String) {
         viewModelScope.launch {
-            bleConnectionManager.removeFromSquad(deviceAddress)
-            localAppDataStore.removePairedDevice(deviceAddress)
-            refreshSquadPeers()
+            val result = runCatching {
+                meshSquadControlCoordinator.removeFromSquad(deviceAddress)
+            }.getOrElse {
+                TacticalResult.Failure(
+                    it.message ?: it.javaClass.simpleName
+                )
+            }
+
+            if (result is TacticalResult.Success) {
+                localAppDataStore.removePairedDevice(deviceAddress)
+                refreshSquadPeers()
+            } else {
+                val error = (result as TacticalResult.Failure).error
+                android.util.Log.w(
+                    "MainViewModel",
+                    "Remove from squad failed for " + deviceAddress + ": " + error
+                )
+                _uiState.update { it.copy(squadRequestError = error) }
+            }
         }
     }
 
     private fun refreshSquadPeers() {
-        val squadIds = bleConnectionManager.squadDeviceIds()
+        val squadIds = squadMembershipStore.squadDeviceIds()
         val storedById = localAppDataStore
             .loadPairedDevices()
             .associateBy { it.deviceId }
@@ -648,7 +843,12 @@ class MainViewModel @Inject constructor(
                         if (peer.deviceAddress == deviceAddress) {
                             peer.copy(
                                 bleState = linkState,
-                                isConnected = linkState == BleLinkState.CONNECTED
+                                isConnected = linkState == BleLinkState.CONNECTED,
+                                linkText = if (linkState == BleLinkState.CONNECTED) {
+                                    "DIRECT"
+                                } else {
+                                    peer.linkText
+                                }
                             )
                         } else {
                             peer
@@ -657,11 +857,16 @@ class MainViewModel @Inject constructor(
                     val updatedPeers = (state.squadPeers + state.availablePeers)
                         .map(::updatePeer)
                         .distinctBy { it.deviceAddress }
-                    val squadIds = bleConnectionManager.squadDeviceIds()
+                    val squadIds = squadMembershipStore.squadDeviceIds()
 
                     state.copy(
                         squadPeers = updatedPeers.filter { it.deviceAddress in squadIds },
-                        availablePeers = updatedPeers.filter { it.deviceAddress !in squadIds }
+                        // Keep discovered peers visible even when a transport
+                        // is already connected. "Available" here means not in
+                        // the squad; the card displays the live transport state.
+                        availablePeers = updatedPeers.filter {
+                            it.deviceAddress !in squadIds
+                        }
                     )
                 }
             }
@@ -715,7 +920,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun setSelectedLanguage(languageCode: String) {
-        if (languageCode !in setOf("hi", "en")) return
+        if (languageCode !in SUPPORTED_SPEECH_LANGUAGE_CODES) return
         if (_uiState.value.languageLoadingCode != null) return
         if (_uiState.value.selectedLanguageCode == languageCode) return
 
@@ -965,6 +1170,66 @@ class MainViewModel @Inject constructor(
         resumeContinuousVoiceIfNeeded()
     }
 
+    /**
+     * Emergency is a true broadcast: every currently discovered direct peer
+     * (available or already in the squad) should have a chance to receive it.
+     * MeshService already broadcasts EmergencyPacket to all connected radios;
+     * this step brings discovered-but-not-yet-connected direct peers online
+     * before that broadcast. Relayed peers are intentionally left alone because
+     * the mesh relay path handles them through the peers already connected.
+     */
+    private suspend fun prepareEmergencyRecipients() {
+        val state = _uiState.value
+        val recipients = (state.availablePeers + state.squadPeers)
+            .distinctBy { it.deviceAddress }
+            .filter { peer ->
+                peer.linkText != "RELAYED" &&
+                    !peer.linkText.startsWith("VIA ")
+            }
+
+        if (recipients.isEmpty()) return
+
+        coroutineScope {
+            recipients
+                .filter { it.deviceAddress !in radioTransport.connectedPeerIds() }
+                .map { peer ->
+                    async {
+                        val deviceId = peer.deviceAddress
+
+                        // Prefer Wi-Fi Direct when this peer was discovered
+                        // through the Wi-Fi P2P layer; BLE is the fallback.
+                        if (peer.wifiDirectState != RadioLinkState.UNAVAILABLE) {
+                            val wifiResult = runCatching {
+                                wifiDirectManager.connectByAppDeviceId(deviceId)
+                            }.getOrNull()
+
+                            if (wifiResult is TacticalResult.Success) {
+                                withTimeoutOrNull(3_000L) {
+                                    while (deviceId !in radioTransport.connectedPeerIds()) {
+                                        delay(100L)
+                                    }
+                                }
+                                if (deviceId in radioTransport.connectedPeerIds()) {
+                                    return@async
+                                }
+                            }
+                        }
+
+                        runCatching {
+                            bleConnectionManager.connect(deviceId)
+                        }
+
+                        withTimeoutOrNull(3_000L) {
+                            while (deviceId !in radioTransport.connectedPeerIds()) {
+                                delay(100L)
+                            }
+                        }
+                    }
+                }
+                .awaitAll()
+        }
+    }
+
     fun sendEmergency() {
         if (_uiState.value.emergencySending) return
 
@@ -998,6 +1263,10 @@ class MainViewModel @Inject constructor(
                 languageCode = _uiState.value.selectedLanguageCode
             )
 
+            // Bring every currently discovered direct recipient online first.
+            // The emergency mesh broadcast itself remains unrestricted and is
+            // then delivered to all connected BLE/Wi-Fi Direct peers.
+            prepareEmergencyRecipients()
             val result = emergencyBroadcaster.broadcastSos(packet)
             val status = when (result) {
                 is TacticalResult.Success -> "Sent"
@@ -1154,7 +1423,7 @@ class MainViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
-            val squadIds = bleConnectionManager.squadDeviceIds()
+            val squadIds = squadMembershipStore.squadDeviceIds()
             if (squadIds.isEmpty()) {
                 updateSentMessageStatus(pending, "No squad members")
                 return@launch
@@ -1165,7 +1434,7 @@ class MainViewModel @Inject constructor(
             // timeout just because a squad member is temporarily disconnected.
             // The connection manager already performs background retries.
             val hasConnectedPeer = squadIds.any { peerId ->
-                bleConnectionManager.state(peerId).first() == BleLinkState.CONNECTED
+                peerId in radioTransport.connectedPeerIds()
             }
 
             val connectionReady = if (hasConnectedPeer) {
@@ -1310,6 +1579,14 @@ class MainViewModel @Inject constructor(
     private fun displayLanguageName(languageCode: String): String =
         when (languageCode) {
             "hi" -> "हिन्दी"
+            "gu" -> "ગુજરાતી"
+            "mr" -> "मराठी"
+            "kn" -> "ಕನ್ನಡ"
+            "ml" -> "മലയാളം"
+            "ta" -> "தமிழ்"
+            "te" -> "తెలుగు"
+            "or" -> "ଓଡ଼ିଆ"
+            "bn" -> "বাংলা"
             "en" -> "English"
             else -> languageCode.uppercase(Locale.US)
         }
@@ -1378,9 +1655,13 @@ class MainViewModel @Inject constructor(
         )
 
     private fun storedMessageToUi(message: StoredReceivedMessage): ChatMessageUi {
+        val senderName = localAppDataStore.callsignForPeer(message.senderId)
+            ?.takeIf { it.isNotBlank() }
+            ?: message.senderName
+
         val emergencyData = if (message.isAlert) {
             EmergencyAlertData(
-                sender = message.senderName,
+                sender = senderName,
                 timestampText = formatTimestamp(message.timestampEpochMs),
                 severity = message.severity ?: Severity.CRITICAL.name,
                 message = message.text,
@@ -1394,7 +1675,7 @@ class MainViewModel @Inject constructor(
         }
 
         return ChatMessageUi(
-            sender = message.senderName,
+            sender = senderName,
             text = message.text,
             timestampText = formatTimestamp(message.timestampEpochMs),
             statusText = if (message.isAlert) "Emergency" else "",
@@ -1412,6 +1693,47 @@ class MainViewModel @Inject constructor(
         return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(epochMs))
     }
 
+    private fun connectedTransportText(
+        peer: PeerNodeUi
+    ): String {
+        val transports = buildList {
+            if (
+                peer.bleState == BleLinkState.CONNECTED ||
+                peer.bleState == BleLinkState.CONNECTING
+            ) {
+                add("BLE")
+            }
+            if (peer.wifiDirectState == RadioLinkState.CONNECTED) {
+                add("Wi-Fi")
+            }
+        }
+
+        return if (transports.isEmpty()) {
+            "DIRECT"
+        } else {
+            "DIRECT • " + transports.joinToString(" + ")
+        }
+    }
+
+    private fun routeLinkText(
+        device: DeviceNode,
+        knownCallsigns: Map<String, String>
+    ): String =
+        when (device.link) {
+            LinkType.DIRECT -> "DIRECT"
+            LinkType.RELAYED -> {
+                val intermediateHops = device.path.drop(1)
+                if (intermediateHops.isEmpty()) {
+                    "RELAYED"
+                } else {
+                    "VIA " + intermediateHops.joinToString(" → ") { hop ->
+                        knownCallsigns[hop.value] ?: hop.value.take(8)
+                    }
+                }
+            }
+            LinkType.STALE -> "STALE"
+        }
+
     private fun formatDistance(distance: Double): String =
         if (distance < 0) "Unknown"
         else if (distance < 1000) "${distance.toInt()} m"
@@ -1425,16 +1747,21 @@ class MainViewModel @Inject constructor(
     }
 
     override fun onCleared() {
-        scanLoopJob?.cancel()
+        // The foreground TacticalMeshService owns the singleton discovery
+        // lifecycle. Do not stop discovery when the Activity/ViewModel goes
+        // away, otherwise background reconnection would silently lose scans.
         healthJob?.cancel()
         audioRecorder.stop()
-        viewModelScope.launch { discoveryService.stop() }
-        scanJob?.cancel()
         reconnectJobs.values.forEach { it.cancel() }
         reconnectJobs.clear()
         super.onCleared()
     }
     companion object {
-        private const val SINGLE_SCAN_WINDOW_MS = 5000L
+        private const val MANUAL_SCAN_DISPLAY_MS = 5000L
+
+        private val SUPPORTED_SPEECH_LANGUAGE_CODES = setOf(
+            "hi", "gu", "mr", "kn", "ml",
+            "ta", "te", "or", "bn", "en"
+        )
     }
 }

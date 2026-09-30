@@ -62,6 +62,12 @@ class TacticalMeshService : Service() {
     @Inject
     lateinit var mmsTtsPlaybackCoordinator: MmsTtsPlaybackCoordinator
 
+    // Materialize the singleton mesh squad-control coordinator from the
+    // foreground service so mesh squad requests are received even when the
+    // Activity/ViewModel is not alive.
+    @Inject
+    lateinit var meshSquadControlCoordinator: MeshSquadControlCoordinator
+
     private val serviceScope =
         CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -78,6 +84,22 @@ class TacticalMeshService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIFICATION_ID, createNotification())
+
+        if (intent?.action == ACTION_REFRESH_WIFI_DIRECT) {
+            serviceScope.launch {
+                runCatching {
+                    (discoveryService as? com.tactical.engine.discovery.service.DefaultDiscoveryService)
+                        ?.refreshWifiDirect()
+                }.onFailure { error ->
+                    android.util.Log.w(
+                        "TacticalMeshService",
+                        "Failed to refresh Wi-Fi Direct after permission grant",
+                        error
+                    )
+                }
+            }
+            return START_STICKY
+        }
 
         // Injecting MeshService causes the mesh engine to be created.
         // DiscoveryService requires an explicit start().
@@ -272,6 +294,8 @@ class TacticalMeshService : Service() {
     }
 
     companion object {
+        const val ACTION_REFRESH_WIFI_DIRECT =
+            "com.tactical.app.action.REFRESH_WIFI_DIRECT"
         private const val NOTIFICATION_ID = 1001
     }
 }

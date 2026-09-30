@@ -11,6 +11,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * ConcurrentHashMap-backed catalog with a 15s TTL eviction for stale nodes.
+ *
+ * Upserts are merged by stable DeviceId. A BLE observation must not erase
+ * a Wi-Fi Direct observation for the same peer, and vice versa.
  */
 class InMemoryDeviceCatalog(
     private val scope: CoroutineScope = CoroutineScope(Dispatchers.Default + SupervisorJob()),
@@ -22,7 +25,6 @@ class InMemoryDeviceCatalog(
     private val _nodesFlow = MutableStateFlow<List<DeviceNode>>(emptyList())
 
     init {
-        // Periodic eviction task
         scope.launch {
             while (isActive) {
                 delay(1000)
@@ -34,28 +36,73 @@ class InMemoryDeviceCatalog(
     override fun all(): StateFlow<List<DeviceNode>> = _nodesFlow.asStateFlow()
 
     override suspend fun upsert(node: DeviceNode) {
-        nodes[node.id] = node
+        nodes.compute(node.id) { _, current ->
+            if (current == null) {
+                node
+            } else {
+                merge(current, node)
+            }
+        }
         updateFlow()
+    }
+
+    private fun merge(
+        current: DeviceNode,
+        incoming: DeviceNode
+    ): DeviceNode {
+        val selected = if (shouldReplace(current, incoming)) incoming else current
+
+        val mergedTransportStates =
+            current.transportStates + incoming.transportStates
+
+        return selected.copy(
+            transportStates = mergedTransportStates
+        )
+    }
+
+    private fun shouldReplace(
+        current: DeviceNode,
+        incoming: DeviceNode
+    ): Boolean {
+        if (incoming.link == LinkType.DIRECT) {
+            return true
+        }
+
+        if (current.link == LinkType.DIRECT) {
+            val age = currentTimeMillis() - current.lastSeen.toEpochMilli()
+            if (age <= ttlMillis / 2L) return false
+            return true
+        }
+
+        if (current.link == LinkType.STALE) return true
+
+        return when {
+            incoming.hopCount < current.hopCount -> true
+            incoming.hopCount > current.hopCount -> false
+            else -> incoming.lastSeen.toEpochMilli() >= current.lastSeen.toEpochMilli()
+        }
     }
 
     private fun evictStaleNodes() {
         val now = currentTimeMillis()
         var changed = false
         val iterator = nodes.entries.iterator()
-        
+
         while (iterator.hasNext()) {
             val entry = iterator.next()
             val lastSeen = entry.value.lastSeen.toEpochMilli()
             if (lastSeen + ttlMillis < now) {
                 iterator.remove()
                 changed = true
-            } else if (lastSeen + (ttlMillis / 2) < now && entry.value.link != LinkType.STALE) {
-                // Mark as STALE if halfway to eviction
+            } else if (
+                lastSeen + (ttlMillis / 2) < now &&
+                entry.value.link != LinkType.STALE
+            ) {
                 nodes[entry.key] = entry.value.copy(link = LinkType.STALE)
                 changed = true
             }
         }
-        
+
         if (changed) {
             updateFlow()
         }

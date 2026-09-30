@@ -3,12 +3,15 @@ package com.tactical.app.ui
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.net.wifi.WifiManager
+import android.net.Uri
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -60,11 +63,15 @@ class MainActivity : ComponentActivity() {
     private val viewModel: MainViewModel by viewModels()
 
     private var startupCheckPending = false
+    private var runtimePermissionRequestInFlight = false
     private var meshServiceStarted = false
     private val wirelessWarning = mutableStateOf<String?>(null)
     private val wirelessStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (intent.action == BluetoothAdapter.ACTION_STATE_CHANGED) {
+            if (
+                intent.action == BluetoothAdapter.ACTION_STATE_CHANGED ||
+                intent.action == WifiManager.WIFI_STATE_CHANGED_ACTION
+            ) {
                 ensureWirelessEnabled()
             }
         }
@@ -73,16 +80,23 @@ class MainActivity : ComponentActivity() {
     private val requestPermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
-        val criticalDenied = grants.any { (permission, granted) ->
-            permission != Manifest.permission.POST_NOTIFICATIONS && !granted
-        }
+        runtimePermissionRequestInFlight = false
 
-        if (!criticalDenied) {
-            ensureWirelessEnabled()
+        val microphoneDenied =
+            grants[Manifest.permission.RECORD_AUDIO] == false
+
+        if (!microphoneDenied) {
             ensureVoiceModeIfPermissionGranted()
         } else {
-            wirelessWarning.value = com.tactical.app.ui.i18n.UiStrings.forCode(viewModel.uiState.value.uiLanguageCode).text(UiTextKey.BLUETOOTH_MIC_PERMISSIONS)
+            wirelessWarning.value =
+                com.tactical.app.ui.i18n.UiStrings
+                    .forCode(viewModel.uiState.value.uiLanguageCode)
+                    .text(UiTextKey.BLUETOOTH_MIC_PERMISSIONS)
         }
+
+        // Bluetooth and Wi-Fi Direct runtime permissions are requested together
+        // from Android's Nearby Devices permission group.
+        ensureWirelessEnabled()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -210,7 +224,8 @@ class MainActivity : ComponentActivity() {
                                     onPttPress = viewModel::pressPtt,
                                     onPttRelease = viewModel::releasePtt,
                                     onPttCancel = viewModel::cancelPtt,
-                                    onRemoveFromSquad = viewModel::removePeerFromSquad
+                                    onRemoveFromSquad = viewModel::removePeerFromSquad,
+                                    onRefreshDiscovery = viewModel::forceDiscovery
                                 )
                                     2 -> MessagesScreen(
                                         state,
@@ -328,7 +343,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        val filter = IntentFilter().apply {
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(
                 wirelessStateReceiver,
@@ -369,6 +387,7 @@ class MainActivity : ComponentActivity() {
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 add(Manifest.permission.POST_NOTIFICATIONS)
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
             } else {
                 add(Manifest.permission.ACCESS_FINE_LOCATION)
             }
@@ -384,9 +403,23 @@ class MainActivity : ComponentActivity() {
         if (missing.isEmpty()) {
             ensureWirelessEnabled()
             ensureVoiceModeIfPermissionGranted()
-        } else {
+        } else if (!runtimePermissionRequestInFlight) {
+            runtimePermissionRequestInFlight = true
             requestPermissions.launch(missing.toTypedArray())
         }
+    }
+
+    private fun hasWifiDirectRuntimePermission(): Boolean {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.NEARBY_WIFI_DEVICES
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+
+        return ContextCompat.checkSelfPermission(
+            this,
+            permission
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
     }
 
     private fun ensureWirelessEnabled() {
@@ -394,13 +427,28 @@ class MainActivity : ComponentActivity() {
 
         val bluetoothOn =
             getSystemService(BluetoothManager::class.java)?.adapter?.isEnabled == true
-        wirelessWarning.value = if (bluetoothOn) {
-            null
-        } else {
-            com.tactical.app.ui.i18n.UiStrings.forCode(viewModel.uiState.value.uiLanguageCode).text(UiTextKey.BLUETOOTH_OFF)
+        val wifiOn =
+            getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+        val wifiPermissionGranted = hasWifiDirectRuntimePermission()
+
+        wirelessWarning.value = when {
+            bluetoothOn || (wifiOn && wifiPermissionGranted) -> null
+            wifiOn && !wifiPermissionGranted -> {
+                "Wi-Fi Direct permission is required for device discovery"
+            }
+            else -> {
+                com.tactical.app.ui.i18n.UiStrings
+                    .forCode(viewModel.uiState.value.uiLanguageCode)
+                    .text(UiTextKey.BLUETOOTH_OFF)
+            }
         }
 
-        if (bluetoothOn) {
+        if (wifiOn && !wifiPermissionGranted) {
+            startupCheckPending = true
+            return
+        }
+
+        if (bluetoothOn || wifiOn) {
             startupCheckPending = false
             if (!meshServiceStarted) {
                 meshServiceStarted = true

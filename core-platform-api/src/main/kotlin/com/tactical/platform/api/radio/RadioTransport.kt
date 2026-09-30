@@ -1,25 +1,38 @@
 package com.tactical.platform.api.radio
 
-import kotlinx.coroutines.flow.Flow
+import com.tactical.domain.identity.RadioType
 import com.tactical.domain.result.TacticalResult
+import kotlinx.coroutines.flow.Flow
 
 /**
- * Bearer-agnostic send/receive over whatever radio link is active (BLE or
- * Wi-Fi Direct) — engine-mesh doesn't need to know which. By the time
- * bytes reach this interface, a link is assumed already established (see
- * ble/ and wifi/ for discovery/connection).
+ * Bearer-agnostic packet transport.
+ *
+ * The mesh layer sees one transport even when multiple physical bearers are
+ * active. A device may therefore be reachable through BLE, Wi-Fi Direct, or
+ * both at the same time.
  */
 interface RadioTransport {
 
-    /**
-     * Cold Flow of every received packet, with RSSI and timestamp
-     * attached, from any connected peer over this transport.
-     */
     fun incoming(): Flow<RawPacket>
 
-    /**
-     * Sends raw bytes out over this transport to all nearby/connected
-     * nodes.
-     */
     suspend fun broadcast(raw: RawPacket): TacticalResult<Unit>
+
+    /**
+     * Stable iTantra IDs for peers with a currently usable physical link on
+     * this bearer. Implementations that cannot yet identify peers return an
+     * empty set.
+     */
+    fun connectedPeerIds(): Set<String> = emptySet()
+
+    /**
+     * Stable logical peers grouped by physical bearer. Composite transports
+     * merge these maps; concrete transports return only their own bearer.
+     */
+    fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> = emptyMap()
+
+    /**
+     * Identifies this transport when a caller needs to report which bearer
+     * delivered an incoming packet.
+     */
+    val type: RadioType?
 }

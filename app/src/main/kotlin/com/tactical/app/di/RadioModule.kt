@@ -45,10 +45,13 @@ object RadioModule {
     @Provides
     @Singleton
     fun provideWifiDirectRadioTransport(
-        @ApplicationContext context: Context,
-        manager: WifiP2pManager,
-        channel: WifiP2pManager.Channel
-    ): WifiDirectRadioTransport = WifiDirectRadioTransport(context, manager, channel)
+        wifiDirectManager: com.tactical.platform.api.wifi.WifiDirectManager,
+        identityStore: DeviceIdentityStore
+    ): WifiDirectRadioTransport = WifiDirectRadioTransport(
+        wifiDirectManager = wifiDirectManager,
+        localDeviceId = identityStore.deviceIdValue,
+        localCallsignProvider = identityStore::callsign
+    )
 
     @Provides
     @Singleton

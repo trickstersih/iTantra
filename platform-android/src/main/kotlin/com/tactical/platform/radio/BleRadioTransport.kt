@@ -11,6 +11,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import android.os.Build
+import com.tactical.domain.identity.RadioType
 import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.ble.BlePeerAddressRegistry
 import com.tactical.platform.ble.SquadControlCodec
@@ -39,6 +40,14 @@ class BleRadioTransport(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
 ) : RadioTransport {
+
+    override val type: RadioType = RadioType.BLUETOOTH
+
+    override fun connectedPeerIds(): Set<String> =
+        connectionRegistry.connectedApplicationIds()
+
+    override fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> =
+        mapOf(RadioType.BLUETOOTH to connectedPeerIds())
 
     private val bluetoothManager: BluetoothManager by lazy {
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
@@ -79,12 +88,9 @@ class BleRadioTransport(
             null
         }
 
-        if (adapter == null || !adapter.isEnabled) {
-            android.util.Log.d(
-                TAG,
-                "BLE GATT server waiting for Bluetooth to turn ON"
-            )
-        }
+        // Bluetooth may legitimately be OFF while Wi-Fi Direct is the active
+        // bearer. The retry loop below still waits for Bluetooth without
+        // spamming logcat on every half-second iteration.
 
         val serverCallback = object : BluetoothGattServerCallback() {
             override fun onCharacteristicWriteRequest(
@@ -105,7 +111,8 @@ class BleRadioTransport(
                                 RawPacket(
                                     data = complete,
                                     rssi = connectionRegistry.lastKnownRssi(device) ?: UNKNOWN_RSSI,
-                                    timestamp = System.currentTimeMillis()
+                                    timestamp = System.currentTimeMillis(),
+                                    transport = RadioType.BLUETOOTH
                                 )
                             )
                         }
@@ -202,7 +209,6 @@ class BleRadioTransport(
             }
 
             if (currentAdapter == null || !currentAdapter.isEnabled) {
-                android.util.Log.d(TAG, "BLE GATT server waiting for Bluetooth to turn ON")
                 return
             }
 
@@ -295,7 +301,8 @@ class BleRadioTransport(
                     RawPacket(
                         data = complete,
                         rssi = connectionRegistry.lastKnownRssi(address) ?: UNKNOWN_RSSI,
-                        timestamp = System.currentTimeMillis()
+                        timestamp = System.currentTimeMillis(),
+                        transport = RadioType.BLUETOOTH
                     )
                 )
             }

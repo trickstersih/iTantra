@@ -51,8 +51,6 @@ hilt = "2.60.1"
 tensorflowLite = "2.16.1"
 tensorflowLiteSupport = "0.4.4"
 onnxruntimeAndroid = "1.23.2"
-moonshineVoice = "0.1.5"
-voskAndroid = "0.3.75"
 robolectric = "4.13"
 
 [libraries]
@@ -113,7 +111,6 @@ hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", v
 tensorflow-lite = { group = "org.tensorflow", name = "tensorflow-lite", version.ref = "tensorflowLite" }
 tensorflow-lite-support = { group = "org.tensorflow", name = "tensorflow-lite-support", version.ref = "tensorflowLiteSupport" }
 onnxruntime-android = { group = "com.microsoft.onnxruntime", name = "onnxruntime-android", version.ref = "onnxruntimeAndroid" }
-vosk-android = { group = "com.alphacephei", name = "vosk-android", version.ref = "voskAndroid" }
 robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
 [plugins]

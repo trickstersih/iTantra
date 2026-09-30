@@ -7,6 +7,7 @@ import com.tactical.platform.api.ble.BleBeaconAdvertiser
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.ble.BleBeaconScanner
 import com.tactical.platform.api.wifi.WifiDirectManager
+import com.tactical.platform.api.squad.SquadMembershipStore
 import com.tactical.platform.ble.AndroidBleAdvertiser
 import com.tactical.platform.ble.AndroidBleConnectionManager
 import com.tactical.platform.ble.AndroidBleScanner
@@ -89,12 +90,14 @@ object PlatformModule {
     fun provideBleConnectionManager(
         @ApplicationContext context: Context,
         registry: com.tactical.platform.radio.BleConnectionRegistry,
-        identityStore: DeviceIdentityStore
+        identityStore: DeviceIdentityStore,
+        squadMembershipStore: SquadMembershipStore
     ): BleConnectionManager =
         AndroidBleConnectionManager(
             context = context,
             registry = registry,
-            localDeviceId = identityStore.deviceIdValue
+            localDeviceId = identityStore.deviceIdValue,
+            squadMembershipStore = squadMembershipStore
         )
 
     @Provides
@@ -102,11 +105,13 @@ object PlatformModule {
     fun provideWifiDirectManager(
         @ApplicationContext context: Context,
         manager: WifiP2pManager,
-        channel: WifiP2pManager.Channel
+        channel: WifiP2pManager.Channel,
+        squadMembershipStore: SquadMembershipStore
     ): WifiDirectManager =
         AndroidWifiDirectManager(
-            context,
-            manager,
-            channel
+            context = context,
+            wifiP2pManager = manager,
+            wifichannel = channel,
+            squadMembershipStore = squadMembershipStore
         )
 }
