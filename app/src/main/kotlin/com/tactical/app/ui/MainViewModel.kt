@@ -631,16 +631,52 @@ class MainViewModel @Inject constructor(
                 when {
                     peer != null &&
                         (peer.linkText.startsWith("VIA ") || peer.linkText == "RELAYED") -> {
+                        // Relayed peers must use the mesh control plane; there is
+                        // no direct Wi-Fi/BLE connection to establish here.
                         meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
                     }
 
-                    peer != null &&
-                        peer.wifiDirectState != RadioLinkState.UNAVAILABLE &&
+                    // A Wi-Fi Direct TCP session may already be established even
+                    // though the Android P2P/DNS-SD discovery cache has changed.
+                    // In that case, do not attempt to resolve the app UUID back
+                    // through discovery; use the live transport immediately.
+                    deviceAddress in radioTransport.connectedPeerIds() -> {
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Adding already-connected peer to squad via existing transport: " +
+                                deviceAddress
+                        )
+                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
+                    peer?.wifiDirectState == RadioLinkState.CONNECTED -> {
+                        // P2P is connected, but the TCP hello may still be racing
+                        // with the button press. Wait briefly for the transport to
+                        // register the peer instead of restarting P2P discovery.
+                        val ready = withTimeoutOrNull(5_000L) {
+                            while (deviceAddress !in radioTransport.connectedPeerIds()) {
+                                delay(100L)
+                            }
+                            true
+                        } == true
+
+                        if (!ready) {
+                            TacticalResult.Failure(
+                                "Wi-Fi Direct is connected, but the data link is not ready"
+                            )
+                        } else {
+                            meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                        }
+                    }
+
+                    peer?.wifiDirectState != RadioLinkState.UNAVAILABLE &&
                         peer.bleState != BleLinkState.CONNECTED -> {
+                        // We have a Wi-Fi Direct discovery entry but no active
+                        // data socket yet. This is the original connection path.
                         val connectResult =
                             wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
-                        if (connectResult is com.tactical.domain.result.TacticalResult.Failure) {
+                        if (connectResult is TacticalResult.Failure) {
                             connectResult
                         } else {
                             val ready = withTimeoutOrNull(5_000L) {
