@@ -3,6 +3,7 @@ package com.tactical.platform.speech.andr2
 import ai.onnxruntime.OnnxTensor
 import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
+import ai.onnxruntime.TensorInfo
 import com.tactical.domain.audio.AudioFrame
 import com.tactical.domain.speech.TranscriptionChunk
 import com.tactical.platform.api.speech.SpeechToText
@@ -16,6 +17,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.nio.FloatBuffer
 import java.nio.LongBuffer
 import kotlin.math.sqrt
@@ -46,7 +48,10 @@ class Andr2SpeechToText(
     private var metadata: Andr2SttMetadata? = null
 
     override fun transcribe(audio: Flow<AudioFrame>): Flow<TranscriptionChunk> = flow {
-        val selectedLanguage = currentLanguageCode()
+        val selectedLanguage = languagePreferences.selectedLanguageCode
+        require(selectedLanguage in REQUIRED_LANGUAGES) {
+            "Unsupported outgoing speech language: $selectedLanguage"
+        }
         val runtime = loadRuntime()
 
         val pcmBuffer = ByteArrayOutputStream()
@@ -355,6 +360,17 @@ class Andr2SpeechToText(
             }
         }
 
+        private fun tensorToFloatArray(value: Any?): FloatArray {
+            val tensor = value as? OnnxTensor
+                ?: error("andr2 decoder logits output is not an ONNX tensor")
+
+            val buffer = tensor.floatBuffer.duplicate()
+            buffer.rewind()
+            val values = FloatArray(buffer.remaining())
+            buffer.get(values)
+            return values
+        }
+
         private fun chooseNext(
             logitsInput: FloatArray,
             suppressIds: IntArray
@@ -472,10 +488,14 @@ class Andr2SpeechToText(
     ) {
         val encoderInput = encoder.inputInfo["input_features"]
             ?: error("andr2 encoder input_features is missing")
+        val encoderTensorInfo = encoderInput.info as? TensorInfo
+            ?: error("andr2 encoder input_features is not a tensor")
+        val encoderShape = encoderTensorInfo.getShape()
         require(
-            encoderInput.info.shape.contentEquals(longArrayOf(1L, 80L, 1000L))
+            encoderShape.contentEquals(longArrayOf(1L, 80L, 1000L))
         ) {
-            "Unexpected andr2 encoder input shape: " + encoderInput.info.shape.contentToString()
+            "Unexpected andr2 encoder input shape: " +
+                encoderShape.contentToString()
         }
 
         require(encoder.outputInfo.size == 2) {
@@ -491,10 +511,14 @@ class Andr2SpeechToText(
 
         val logits = decoder.outputInfo["logits"]
             ?: error("andr2 decoder logits output is missing")
+        val logitsTensorInfo = logits.info as? TensorInfo
+            ?: error("andr2 decoder logits is not a tensor")
+        val logitsShape = logitsTensorInfo.getShape()
         require(
-            logits.info.shape.contentEquals(longArrayOf(1L, 1L, 5181L))
+            logitsShape.contentEquals(longArrayOf(1L, 1L, 5181L))
         ) {
-            "Unexpected andr2 logits shape: " + logits.info.shape.contentToString()
+            "Unexpected andr2 logits shape: " +
+                logitsShape.contentToString()
         }
 
         require(metadata.prefixNewIds.keys.containsAll(REQUIRED_LANGUAGES)) {
