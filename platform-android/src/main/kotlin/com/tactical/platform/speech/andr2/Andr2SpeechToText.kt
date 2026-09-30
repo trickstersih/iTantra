@@ -228,6 +228,7 @@ class Andr2SpeechToText(
             )
 
             var previousResult: OrtSession.Result? = null
+            var cacheOwnedByResult = false
             var logits: FloatArray? = null
             val generated = ArrayList<Int>(64)
 
@@ -243,10 +244,15 @@ class Andr2SpeechToText(
                         crossV
                     )
 
-                    selfK.close()
-                    selfV.close()
-                    previousResult?.close()
+                    if (cacheOwnedByResult) {
+                        previousResult?.close()
+                    } else {
+                        selfK.close()
+                        selfV.close()
+                    }
+
                     previousResult = result
+                    cacheOwnedByResult = true
 
                     selfK = result[1] as? OnnxTensor
                         ?: error("andr2 decoder new_self_k is not an ONNX tensor")
@@ -283,10 +289,15 @@ class Andr2SpeechToText(
                         crossV
                     )
 
-                    selfK.close()
-                    selfV.close()
-                    previousResult?.close()
+                    if (cacheOwnedByResult) {
+                        previousResult?.close()
+                    } else {
+                        selfK.close()
+                        selfV.close()
+                    }
+
                     previousResult = result
+                    cacheOwnedByResult = true
 
                     selfK = result[1] as? OnnxTensor
                         ?: error("andr2 decoder new_self_k is not an ONNX tensor")
@@ -298,9 +309,12 @@ class Andr2SpeechToText(
 
                 return tokenDecoder.decode(generated)
             } finally {
-                selfK.close()
-                selfV.close()
-                previousResult?.close()
+                if (cacheOwnedByResult) {
+                    previousResult?.close()
+                } else {
+                    selfK.close()
+                    selfV.close()
+                }
             }
         }
 
