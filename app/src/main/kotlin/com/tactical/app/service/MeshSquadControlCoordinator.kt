@@ -7,6 +7,7 @@ import com.tactical.domain.packet.SquadControlPacket
 import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.ble.SquadRequest
+import com.tactical.platform.api.squad.SquadMembershipStore
 import com.tactical.engine.mesh.service.MeshService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +34,8 @@ import java.util.concurrent.ConcurrentHashMap
 class MeshSquadControlCoordinator @Inject constructor(
     private val meshService: MeshService,
     private val bleConnectionManager: BleConnectionManager,
-    private val identityStore: DeviceIdentityStore
+    private val identityStore: DeviceIdentityStore,
+    private val squadMembershipStore: SquadMembershipStore
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -61,6 +63,7 @@ class MeshSquadControlCoordinator @Inject constructor(
                 when (control.action) {
                     SquadControlAction.REQUEST -> handleRequest(control)
                     SquadControlAction.RESPONSE -> handleResponse(control)
+                    SquadControlAction.REMOVE -> handleRemove(control)
                 }
             }
         }
@@ -95,6 +98,43 @@ class MeshSquadControlCoordinator @Inject constructor(
 
     fun hasPending(deviceId: String): Boolean =
         pendingByRequestId.values.any { it.deviceId == deviceId }
+
+    /**
+     * Remove a squad member and propagate the membership change over the mesh.
+     *
+     * This uses the mesh control plane because the member may be reachable only
+     * through Wi-Fi Direct or through a relay.
+     */
+    suspend fun removeFromSquad(
+        deviceId: String
+    ): TacticalResult<Unit> {
+        if (deviceId.isBlank() || deviceId == identityStore.deviceIdValue) {
+            return TacticalResult.Failure("Invalid squad target")
+        }
+
+        if (!squadMembershipStore.contains(deviceId)) {
+            return TacticalResult.Success(Unit)
+        }
+
+        val packet = SquadControlPacket(
+            sender = DeviceId(identityStore.deviceIdValue),
+            target = DeviceId(deviceId),
+            requestId = UUID.randomUUID().toString(),
+            action = SquadControlAction.REMOVE,
+            callsign = identityStore.callsign,
+            accepted = null,
+            timestamp = System.currentTimeMillis()
+        )
+
+        val result = meshService.send(packet)
+        if (result is TacticalResult.Failure) {
+            return result
+        }
+
+        squadMembershipStore.remove(deviceId)
+        _membershipChanged.tryEmit(Unit)
+        return TacticalResult.Success(Unit)
+    }
 
     suspend fun respondToRequest(
         deviceId: String,
@@ -154,6 +194,32 @@ class MeshSquadControlCoordinator @Inject constructor(
             )
         )
         publishPending()
+    }
+
+
+    private fun handleRemove(packet: SquadControlPacket) {
+        // Only an existing squad member may revoke the local membership.
+        if (!squadMembershipStore.contains(packet.sender.value)) return
+
+        squadMembershipStore.remove(packet.sender.value)
+
+        pendingByRequestId
+            .filterValues { it.deviceId == packet.sender.value }
+            .keys
+            .forEach { requestId -> pendingByRequestId.remove(requestId) }
+
+        outgoingByRequestId
+            .entries
+            .filter { it.value == packet.sender.value }
+            .forEach { entry -> outgoingByRequestId.remove(entry.key, entry.value) }
+
+        publishPending()
+        _membershipChanged.tryEmit(Unit)
+
+        android.util.Log.d(
+            "MeshSquadControlCoordinator",
+            "Remote squad removal applied for " + packet.sender.value
+        )
     }
 
     private fun handleResponse(packet: SquadControlPacket) {
