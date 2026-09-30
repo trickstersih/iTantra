@@ -35,6 +35,9 @@ class TacticalApplication : Application() {
     lateinit var routingSpeechToText: RoutingSpeechToText
 
     @Inject
+    lateinit var andr2SttModelStore: com.tactical.platform.speech.andr2.Andr2SttModelStore
+
+    @Inject
     lateinit var mmsTtsPlaybackPreferences: com.tactical.platform.speech.mms.MmsTtsPlaybackPreferences
 
     @Inject
@@ -46,6 +49,7 @@ class TacticalApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         cleanupSpeechExtractionCache()
+        andr2SttModelStore.cleanupUnbundledModels()
         ttsModelStore.cleanupUnbundledModels()
         mmsTtsPlaybackCoordinator.setMode(mmsTtsPlaybackPreferences.playbackMode)
         createNotificationChannels()
@@ -96,9 +100,7 @@ class TacticalApplication : Application() {
         cache.listFiles()
             ?.filter {
                 it.name.startsWith("tts_bundle_") ||
-                    it.name.startsWith("tts_model_") ||
-                    it.name.startsWith("moonshine_stt_") ||
-                    it.name.startsWith("vosk_hi_bundle_")
+                    it.name.startsWith("tts_model_")
             }
             ?.forEach { file ->
                 runCatching { file.deleteRecursively() }
@@ -107,8 +109,7 @@ class TacticalApplication : Application() {
         filesDir.listFiles()
             ?.filter {
                 it.name.startsWith(".tts_model_staging_") ||
-                    it.name.startsWith(".moonshine_stt_staging_") ||
-                    it.name.startsWith(".vosk_hi_bundle_staging_")
+                    it.name.startsWith(".andr2_stt_staging_")
             }
             ?.forEach { file ->
                 runCatching { file.deleteRecursively() }
