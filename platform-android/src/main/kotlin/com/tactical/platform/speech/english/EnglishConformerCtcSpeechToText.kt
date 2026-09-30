@@ -131,7 +131,6 @@ class EnglishConformerCtcSpeechToText @Inject constructor(
                 pcmBuffer.reset()
                 accumulatedDurationMs = 0L
                 silenceDurationMs = 0L
-                lastPartialAtMs = 0L
             }
         }
 
