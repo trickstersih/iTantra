@@ -864,7 +864,7 @@ class AndroidWifiDirectManager(
         }
     }
 
-    private fun scheduleAutoReconnectAttempt() {
+    private suspend fun scheduleAutoReconnectAttempt() {
         if (reconnectAttemptJob?.isActive == true) return
 
         val squadIds = squadMembershipStore.squadDeviceIds()
