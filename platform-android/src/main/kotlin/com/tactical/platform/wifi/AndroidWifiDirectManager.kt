@@ -48,7 +48,8 @@ class AndroidWifiDirectManager(
     private val context: Context,
     private val wifiP2pManager: WifiP2pManager,
     private val wifichannel: WifiP2pManager.Channel,
-    private val squadMembershipStore: SquadMembershipStore
+    private val squadMembershipStore: SquadMembershipStore,
+    private val localDeviceId: String
 ) : WifiDirectManager {
 
     private val wifiManager by lazy {
@@ -799,17 +800,28 @@ class AndroidWifiDirectManager(
     }
 
     private suspend fun autoReconnectOnce() {
-        if (_connectionInfo.value.groupFormed) return
+        if (
+            _connectionInfo.value.groupFormed ||
+            _state.value == RadioLinkState.CONNECTING
+        ) {
+            return
+        }
 
         val squadIds = squadMembershipStore.squadDeviceIds()
         if (squadIds.isEmpty()) return
 
+        // Deterministic reconnect ownership: only the device with the
+        // lexicographically smaller stable iTantra ID initiates a reconnect
+        // for a given pair. The other side remains discoverable and accepts it.
+        // This prevents both phones from racing WifiP2pManager.connect().
         val target = _peers.value
             .asSequence()
             .filter { peer ->
                 val id = peer.appDeviceId
                 id != null &&
                     id in squadIds &&
+                    id != localDeviceId &&
+                    localDeviceId.compareTo(id) < 0 &&
                     peer.linkState != RadioLinkState.CONNECTING
             }
             .maxByOrNull { it.lastSeenEpochMs }
