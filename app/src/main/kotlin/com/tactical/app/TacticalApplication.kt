@@ -8,6 +8,7 @@ import android.os.Build
 import com.tactical.platform.speech.SpeechLanguagePreferences
 import com.tactical.platform.speech.RoutingSpeechToText
 import com.tactical.platform.speech.andr2.Andr2SttModelStore
+import com.tactical.platform.speech.english.EnglishSttModelStore
 import com.tactical.platform.speech.mms.MmsTtsEngine
 import com.tactical.platform.speech.mms.MmsTtsLanguage
 import com.tactical.platform.speech.mms.MmsTtsModelStore
@@ -39,6 +40,9 @@ class TacticalApplication : Application() {
     lateinit var andr2SttModelStore: Andr2SttModelStore
 
     @Inject
+    lateinit var englishSttModelStore: EnglishSttModelStore
+
+    @Inject
     lateinit var mmsTtsPlaybackPreferences: com.tactical.platform.speech.mms.MmsTtsPlaybackPreferences
 
     @Inject
@@ -51,6 +55,7 @@ class TacticalApplication : Application() {
         super.onCreate()
         cleanupSpeechExtractionCache()
         andr2SttModelStore.cleanupUnbundledModels()
+        englishSttModelStore.cleanupUnbundledModels()
         ttsModelStore.cleanupUnbundledModels()
         mmsTtsPlaybackCoordinator.setMode(mmsTtsPlaybackPreferences.playbackMode)
         createNotificationChannels()
