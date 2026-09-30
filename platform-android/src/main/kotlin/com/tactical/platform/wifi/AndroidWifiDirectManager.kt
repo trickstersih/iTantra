@@ -61,7 +61,6 @@ class AndroidWifiDirectManager(
     private var serviceDiscoveryStarted = false
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
     private var discoveryRetryJob: Job? = null
-    private var serviceDiscoveryRefreshJob: Job? = null
     private var peerRefreshJob: Job? = null
     private var presenceRetryJob: Job? = null
     private var advertisedDeviceId: String? = null
@@ -229,8 +228,6 @@ class AndroidWifiDirectManager(
         serviceDiscoveryStarted = false
         discoveryRetryJob?.cancel()
         discoveryRetryJob = null
-        serviceDiscoveryRefreshJob?.cancel()
-        serviceDiscoveryRefreshJob = null
         peerRefreshJob?.cancel()
         peerRefreshJob = null
         presenceRetryJob?.cancel()
@@ -648,7 +645,6 @@ class AndroidWifiDirectManager(
                                         serviceDiscoveryStarted = true
                                         _state.value = RadioLinkState.AVAILABLE
                                         startPeerRefreshLoop()
-                                        startServiceDiscoveryRefreshLoop()
                                         android.util.Log.d(
                                             TAG,
                                             "iTantra Wi-Fi service discovery started"
@@ -776,40 +772,6 @@ class AndroidWifiDirectManager(
         }
     }
 
-    private fun startServiceDiscoveryRefreshLoop() {
-        if (serviceDiscoveryRefreshJob?.isActive == true) return
-
-        serviceDiscoveryRefreshJob = managerScope.launch {
-            while (
-                started.get() &&
-                wifiManager.isWifiEnabled &&
-                hasWifiDirectPermission()
-            ) {
-                delay(SERVICE_DISCOVERY_REFRESH_MS)
-
-                if (
-                    !started.get() ||
-                    !wifiManager.isWifiEnabled ||
-                    !hasWifiDirectPermission()
-                ) {
-                    break
-                }
-
-                // Some Android/OEM Wi-Fi P2P stacks stop returning Bonjour
-                // callbacks even though discoverServices() originally
-                // succeeded. Restart the request periodically so discovery
-                // remains self-healing without exposing scanning in the UI.
-                if (serviceDiscoveryStarted) {
-                    removeServiceRequest()
-                }
-
-                startServiceDiscoveryInternal()
-            }
-
-            serviceDiscoveryRefreshJob = null
-        }
-    }
-
     private fun removeServiceRequest() {
         serviceDiscoveryStarted = false
         peerRefreshJob?.cancel()
@@ -829,8 +791,6 @@ class AndroidWifiDirectManager(
 
     private fun resetP2pState() {
         removeServiceRequest()
-        serviceDiscoveryRefreshJob?.cancel()
-        serviceDiscoveryRefreshJob = null
         presenceRetryJob?.cancel()
         presenceRetryJob = null
         presenceRegistered = false
@@ -1072,6 +1032,5 @@ class AndroidWifiDirectManager(
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
         private const val PEER_REFRESH_MS = 5_000L
-        private const val SERVICE_DISCOVERY_REFRESH_MS = 15_000L
     }
 }
