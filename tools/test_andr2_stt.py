@@ -1,51 +1,48 @@
 #!/usr/bin/env python3
 """
-Test the multilingual STT model bundled in:
+Desktop test runner for the multilingual andr2 STT bundle.
 
-    app/src/main/assets/models/andr2.zip
+Model archive:
+  app/src/main/assets/models/andr2.zip
 
-The runner currently targets split Whisper-style ONNX exports because those
-can be exercised directly with ONNX Runtime without changing the Android app.
+This runner intentionally uses ONLY files shipped inside andr2.zip:
+  - encoder_int8.onnx
+  - decoder_fp32.onnx
+  - tokenizer/tokenizer.json
+  - tokenizer/vocab.json
+  - mel_filters_80x201.npy
+  - preprocess.json
+  - vocab_map.json
 
-The archive is auto-inspected to find:
-  - an encoder .onnx file
-  - a decoder .onnx file
-  - an optional tokens/vocabulary file
+It reproduces the preprocessing/decoding contract documented by
+andr2/preprocess.json instead of assuming the previous Whisper export.
 
-Supported test languages in this branch:
+Available local recordings:
   en -> english.wav
   hi -> hindi.wav
   bn -> bengali.wav
 
-Audio requirements:
-  - WAV
-  - mono or stereo (stereo is averaged to mono)
-  - 16 kHz
-  - PCM/float WAV accepted by soundfile
-
 Examples:
-  python tools/test_andr2_stt.py --language en
-  python tools/test_andr2_stt.py --language hi --audio hindi.wav
-  python tools/test_andr2_stt.py --language bn --audio bengali.wav
+  python tools/test_andr2_stt.py --language en --audio .\\english_16k.wav
+  python tools/test_andr2_stt.py --language hi --audio .\\hindi_16k.wav
+  python tools/test_andr2_stt.py --language bn --audio .\\bengali_16k.wav
   python tools/test_andr2_stt.py --all
 
-The script does NOT modify the Android app or replace the existing STT
-backends. It is only a desktop validation tool for andr2.zip.
+Dependencies:
+  python -m pip install onnxruntime numpy soundfile tokenizers
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import zipfile
 from pathlib import Path
-from typing import Iterable
 
 import numpy as np
 import onnxruntime as ort
 import soundfile as sf
-from transformers import WhisperFeatureExtractor, WhisperTokenizer
+from tokenizers import Tokenizer
 
 
 DEFAULT_ZIP = Path("app/src/main/assets/models/andr2.zip")
@@ -56,117 +53,68 @@ DEFAULT_AUDIO = {
 }
 
 SAMPLE_RATE = 16_000
-MAX_NEW_TOKENS = 96
-EOT_FALLBACK = 50_256
-
-# Whisper-family dimensions used to choose the matching HF tokenizer/feature
-# extractor when the custom decoder export exposes static cache dimensions.
-WHISPER_SIZES = {
-    # (layers, d_model): model name
-    (4, 384): "tiny",
-    (6, 512): "base",
-    (12, 768): "small",
-    (24, 1024): "medium",
-    (32, 1280): "large",
+N_FFT = 400
+HOP_LENGTH = 160
+N_MELS = 80
+TARGET_SAMPLES = 160_000
+TARGET_FRAMES = 1_000
+DEFAULT_EOT_ID = 5167
+PREFIX_NEW_IDS = {
+    "hi": [5168, 5170, 5179, 5180],
+    "gu": [5168, 5177, 5179, 5180],
+    "mr": [5168, 5176, 5179, 5180],
+    "kn": [5168, 5175, 5179, 5180],
+    "ml": [5168, 5172, 5179, 5180],
+    "ta": [5168, 5171, 5179, 5180],
+    "te": [5168, 5173, 5179, 5180],
+    "or": [5168, 5178, 5179, 5180],
+    "bn": [5168, 5174, 5179, 5180],
+    "en": [5168, 5169, 5179, 5180],
 }
+SUPPRESS_NEW_IDS = tuple(range(5168, 5181))
+MAX_NEW_TOKENS = 192
+REPEAT_NGRAM = 4
+REPEAT_COUNT = 3
 
 
-def required_input(session: ort.InferenceSession, wanted: str) -> str:
-    names = [x.name for x in session.get_inputs()]
-    if wanted in names:
-        return wanted
+def extract_required_files(zip_path: Path, work_dir: Path) -> dict[str, Path]:
+    required = {
+        "encoder": "andr2/encoder_int8.onnx",
+        "decoder": "andr2/decoder_fp32.onnx",
+        "tokenizer": "andr2/tokenizer/tokenizer.json",
+        "vocab": "andr2/tokenizer/vocab.json",
+        "mel_filters": "andr2/mel_filters_80x201.npy",
+        "preprocess": "andr2/preprocess.json",
+        "vocab_map": "andr2/vocab_map.json",
+    }
 
-    normalized = wanted.replace("_", "").lower()
-    for name in names:
-        if name.replace("_", "").lower() == normalized:
-            return name
+    work_dir.mkdir(parents=True, exist_ok=True)
 
-    raise RuntimeError(f"Missing input {wanted!r}. Inputs: {names}")
-
-
-def iter_archive_files(zip_path: Path) -> Iterable[str]:
     with zipfile.ZipFile(zip_path) as archive:
-        yield from (
-            name.replace("\\\\", "/")
-            for name in archive.namelist()
-            if not name.endswith("/")
-        )
+        names = set(archive.namelist())
+        missing = sorted(set(required.values()) - names)
+        if missing:
+            raise RuntimeError(
+                "andr2.zip is missing required files:\\n  " +
+                "\\n  ".join(missing)
+            )
 
+        extracted: dict[str, Path] = {}
+        for key, archive_name in required.items():
+            target = work_dir / Path(archive_name).name
 
-def choose_model_files(zip_path: Path) -> tuple[str, str, str | None]:
-    names = list(iter_archive_files(zip_path))
-    onnx_files = [name for name in names if name.lower().endswith(".onnx")]
+            if not target.exists():
+                print("Extracting:", archive_name)
+                with archive.open(archive_name) as source, target.open("wb") as out:
+                    while True:
+                        chunk = source.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        out.write(chunk)
 
-    encoder_candidates = [
-        n for n in onnx_files if "encoder" in Path(n).name.lower()
-    ]
-    decoder_candidates = [
-        n for n in onnx_files if "decoder" in Path(n).name.lower()
-    ]
+            extracted[key] = target
 
-    if not encoder_candidates or not decoder_candidates:
-        preview = "\\n".join(names[:120])
-        raise RuntimeError(
-            "andr2.zip does not look like a split Whisper ONNX archive. "
-            "Expected filenames containing 'encoder' and 'decoder'. "
-            f"Archive preview:\\n{preview}"
-        )
-
-    def score(path: str) -> tuple[int, int]:
-        name = Path(path).name.lower()
-        # Prefer int8 exports and then the shorter/less auxiliary-looking name.
-        return (
-            0 if ("int8" in name or "quant" in name) else 1,
-            len(name),
-        )
-
-    encoder = sorted(encoder_candidates, key=score)[0]
-    decoder = sorted(decoder_candidates, key=score)[0]
-
-    token_candidates = [
-        n for n in names
-        if Path(n).name.lower() in {
-            "tokens.txt",
-            "base-tokens.txt",
-            "tiny-tokens.txt",
-            "vocab.json",
-        }
-    ]
-    tokens = token_candidates[0] if token_candidates else None
-
-    print("Archive model files:")
-    print("  encoder:", encoder)
-    print("  decoder:", decoder)
-    print("  tokens :", tokens or "<not found>")
-
-    return encoder, decoder, tokens
-
-
-def extract_entry(
-    zip_path: Path,
-    archive_name: str,
-    output_dir: Path,
-) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    target = output_dir / Path(archive_name).name
-
-    with zipfile.ZipFile(zip_path) as archive, archive.open(archive_name) as source:
-        # Guard against ZIP path traversal while still flattening output names.
-        target = target.resolve()
-        root = output_dir.resolve()
-        if root not in target.parents:
-            raise RuntimeError(f"Unsafe archive entry: {archive_name}")
-
-        if not target.exists():
-            print("Extracting:", archive_name)
-            with target.open("wb") as destination:
-                while True:
-                    chunk = source.read(1024 * 1024)
-                    if not chunk:
-                        break
-                    destination.write(chunk)
-
-    return target
+    return extracted
 
 
 def read_audio(path: Path) -> np.ndarray:
@@ -194,170 +142,353 @@ def read_audio(path: Path) -> np.ndarray:
     if peak > 1.0:
         audio = audio / peak
 
+    # The supplied preprocessing contract expects exactly 10 seconds.
+    # Zero-padding is used when the recording is shorter; longer audio is
+    # truncated for this first model-validation pass.
+    if audio.size < TARGET_SAMPLES:
+        audio = np.pad(audio, (0, TARGET_SAMPLES - audio.size))
+    elif audio.size > TARGET_SAMPLES:
+        audio = audio[:TARGET_SAMPLES]
+
     return audio
 
 
-def static_dim(shape: list[object], index: int) -> int | None:
-    if index >= len(shape):
-        return None
-    value = shape[index]
-    return value if isinstance(value, int) and value > 0 else None
+def periodic_hann(length: int) -> np.ndarray:
+    # numpy.hanning uses a symmetric window. The model explicitly says
+    # hann(periodic), which matches scipy's periodic Hann definition:
+    # 0.5 - 0.5*cos(2*pi*n/N).
+    n = np.arange(length, dtype=np.float32)
+    return 0.5 - 0.5 * np.cos((2.0 * np.pi * n) / length)
 
 
-def infer_whisper_size(decoder: ort.InferenceSession) -> tuple[int, int, str]:
+def compute_mel(audio: np.ndarray, mel_filters: np.ndarray) -> np.ndarray:
     """
-    Infer (n_layers, d_model, HF model size) from self-K/self-V cache shapes.
+    Reproduce preprocess.json:
 
-    Typical exported decoder cache:
-      [n_layers, batch, cache_length, d_model]
+      400 FFT
+      160 hop
+      80 mel bins
+      periodic Hann
+      reflect pad
+      power 2
+      bundled 80x201 mel filters
+      log10(clamp 1e-10)
+      max-8
+      (x+4)/4
+      drop last STFT frame
+
+    Result shape: [1, 80, 1000].
     """
-    candidates = []
-    for item in decoder.get_inputs():
-        name = item.name.lower()
-        if "self" not in name:
-            continue
-        if not any(k in name for k in ("cache", "k", "v")):
-            continue
-
-        shape = list(item.shape)
-        if len(shape) != 4:
-            continue
-
-        layers = static_dim(shape, 0)
-        d_model = static_dim(shape, 3)
-        if layers is not None and d_model is not None:
-            candidates.append((layers, d_model))
-
-    # Fall back to any 4D input if naming is unusual.
-    if not candidates:
-        for item in decoder.get_inputs():
-            shape = list(item.shape)
-            if len(shape) != 4:
-                continue
-            layers = static_dim(shape, 0)
-            d_model = static_dim(shape, 3)
-            if layers is not None and d_model is not None:
-                candidates.append((layers, d_model))
-
-    for layers, d_model in candidates:
-        model_name = WHISPER_SIZES.get((layers, d_model))
-        if model_name:
-            return layers, d_model, model_name
-
-    if candidates:
-        layers, d_model = candidates[0]
-        raise RuntimeError(
-            "Could not map decoder cache dimensions to a known Whisper size: "
-            f"layers={layers}, d_model={d_model}. "
-            "The archive may use a different architecture."
+    if audio.size != TARGET_SAMPLES:
+        raise ValueError(f"Expected {TARGET_SAMPLES} samples, got {audio.size}")
+    if mel_filters.shape != (N_MELS, N_FFT // 2 + 1):
+        raise ValueError(
+            f"Expected mel filters {(N_MELS, N_FFT // 2 + 1)}, "
+            f"got {mel_filters.shape}"
         )
 
-    raise RuntimeError(
-        "Could not infer Whisper decoder layer count/d_model from its inputs."
+    pad = N_FFT // 2
+    padded = np.pad(audio, (pad, pad), mode="reflect")
+
+    window = periodic_hann(N_FFT)
+    frame_count = 1 + (padded.size - N_FFT) // HOP_LENGTH
+
+    # [frames, fft_bins]
+    frames = np.lib.stride_tricks.sliding_window_view(
+        padded,
+        N_FFT,
+    )[::HOP_LENGTH]
+
+    if frames.shape[0] != frame_count:
+        raise RuntimeError(
+            f"Unexpected frame count: {frames.shape[0]} != {frame_count}"
+        )
+
+    frames = frames * window
+    spectrum = np.fft.rfft(frames, n=N_FFT, axis=-1)
+    power = np.square(np.abs(spectrum)).astype(np.float32)
+
+    mel = power @ mel_filters.T
+    mel = np.maximum(mel, 1e-10)
+    mel = np.log10(mel)
+
+    mel_max = float(np.max(mel))
+    mel = np.maximum(mel, mel_max - 8.0)
+    mel = (mel + 4.0) / 4.0
+
+    # Drop the final STFT frame exactly as preprocess.json specifies.
+    mel = mel[:-1]
+
+    if mel.shape != (TARGET_FRAMES, N_MELS):
+        raise RuntimeError(
+            f"Unexpected mel shape after preprocessing: {mel.shape}; "
+            f"expected {(TARGET_FRAMES, N_MELS)}"
+        )
+
+    return np.ascontiguousarray(mel.T[None, :, :], dtype=np.float32)
+
+
+def inspect_runtime_inputs(
+    encoder: ort.InferenceSession,
+    decoder: ort.InferenceSession,
+) -> None:
+    print()
+    print("=== ONNX INTERFACES ===")
+    print("Encoder inputs:")
+    for item in encoder.get_inputs():
+        print(" ", item.name, item.type, item.shape)
+
+    print("Encoder outputs:")
+    for item in encoder.get_outputs():
+        print(" ", item.name, item.type, item.shape)
+
+    print("Decoder inputs:")
+    for item in decoder.get_inputs():
+        print(" ", item.name, item.type, item.shape)
+
+    print("Decoder outputs:")
+    for item in decoder.get_outputs():
+        print(" ", item.name, item.type, item.shape)
+
+
+def validate_metadata(
+    preprocess_path: Path,
+    vocab_map_path: Path,
+) -> tuple[dict[str, list[int]], int, list[int]]:
+    preprocess = json.loads(preprocess_path.read_text(encoding="utf-8"))
+    vocab_map = json.loads(vocab_map_path.read_text(encoding="utf-8"))
+
+    sample_rate = int(preprocess["sample_rate"])
+    frames = int(preprocess["frames"])
+    prefix_map = {
+        str(k): [int(x) for x in v]
+        for k, v in preprocess["prefix_new_ids"].items()
+    }
+    eot_id = int(preprocess["eot_new_id"])
+    suppress_ids = [
+        int(x) for x in preprocess["suppress_new_ids"]
+    ]
+    new_to_old = [int(x) for x in vocab_map["new_to_old"]]
+
+    if sample_rate != SAMPLE_RATE:
+        raise RuntimeError(
+            f"andr2 expects {sample_rate} Hz according to preprocess.json, "
+            f"not {SAMPLE_RATE} Hz."
+        )
+    if frames != TARGET_FRAMES:
+        raise RuntimeError(
+            f"andr2 expects {frames} mel frames, not {TARGET_FRAMES}."
+        )
+
+    print()
+    print("=== MODEL METADATA ===")
+    print("Sample rate:", sample_rate)
+    print("Frames:", frames)
+    print("EOT new ID:", eot_id)
+    print("Exported vocabulary size:", len(new_to_old))
+    print("Suppressed new IDs:", suppress_ids)
+
+    return prefix_map, eot_id, new_to_old
+
+
+def suppress_special(
+    logits: np.ndarray,
+    suppress_ids: list[int],
+) -> None:
+    for token_id in suppress_ids:
+        if 0 <= token_id < logits.size:
+            logits[token_id] = -np.inf
+
+
+def has_repeated_4gram_x3(tokens: list[int]) -> bool:
+    if len(tokens) < REPEAT_NGRAM * REPEAT_COUNT:
+        return False
+
+    tail = tokens[-REPEAT_NGRAM * REPEAT_COUNT :]
+    gram = tail[:REPEAT_NGRAM]
+
+    return (
+        tail[REPEAT_NGRAM : 2 * REPEAT_NGRAM] == gram
+        and tail[2 * REPEAT_NGRAM :] == gram
     )
 
 
-def log_softmax(logits: np.ndarray) -> np.ndarray:
-    logits = np.asarray(logits, dtype=np.float64)
-    shifted = logits - np.max(logits)
-    return shifted - np.log(np.sum(np.exp(shifted)))
-
-
-def suppress_special_tokens(
-    log_probs: np.ndarray,
-    tokenizer: WhisperTokenizer,
-    allowed_tokens: set[int],
+def update_cache_shapes(
+    self_k: np.ndarray,
+    self_v: np.ndarray,
 ) -> None:
-    for token_id in tokenizer.all_special_ids:
-        if token_id not in allowed_tokens and 0 <= token_id < log_probs.size:
-            log_probs[token_id] = -np.inf
+    if self_k.shape != self_v.shape:
+        raise RuntimeError(
+            f"Decoder cache shapes differ: {self_k.shape} vs {self_v.shape}"
+        )
 
 
-def decode_greedy(
+def run_encoder(
+    encoder: ort.InferenceSession,
+    features: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    input_names = [x.name for x in encoder.get_inputs()]
+    if input_names != ["input_features"]:
+        mel_name = next(
+            (x.name for x in encoder.get_inputs() if x.name == "input_features"),
+            None,
+        )
+        if mel_name is None:
+            raise RuntimeError(
+                f"Expected encoder input_features. Inputs: {input_names}"
+            )
+    else:
+        mel_name = "input_features"
+
+    outputs = encoder.run(None, {mel_name: features})
+
+    if len(outputs) != 2:
+        raise RuntimeError(
+            f"Expected 2 encoder outputs, got {len(outputs)}"
+        )
+
+    cross_k = np.asarray(outputs[0], dtype=np.float32)
+    cross_v = np.asarray(outputs[1], dtype=np.float32)
+
+    expected = (4, 1, 6, 500, 64)
+    if cross_k.shape != expected or cross_v.shape != expected:
+        raise RuntimeError(
+            "Unexpected encoder output shapes. "
+            f"cross_k={cross_k.shape}, cross_v={cross_v.shape}, "
+            f"expected={expected}"
+        )
+
+    return cross_k, cross_v
+
+
+def run_decoder(
     decoder: ort.InferenceSession,
     cross_k: np.ndarray,
     cross_v: np.ndarray,
     prefix_tokens: list[int],
-    eos_token_id: int,
-    tokenizer: WhisperTokenizer,
-    n_layers: int,
-    d_model: int,
-    cache_length: int,
+    eot_id: int,
+    suppress_ids: list[int],
 ) -> list[int]:
-    token_name = required_input(decoder, "tokens")
-    self_k_name = required_input(decoder, "in_n_layer_self_k_cache")
-    self_v_name = required_input(decoder, "in_n_layer_self_v_cache")
-    cross_k_name = required_input(decoder, "n_layer_cross_k")
-    cross_v_name = required_input(decoder, "n_layer_cross_v")
-    offset_name = required_input(decoder, "offset")
+    input_names = {x.name for x in decoder.get_inputs()}
+    required = {
+        "input_id",
+        "position",
+        "self_k",
+        "self_v",
+        "cross_k",
+        "cross_v",
+    }
+    missing = required - input_names
+    if missing:
+        raise RuntimeError(
+            "Decoder is missing required inputs: " +
+            ", ".join(sorted(missing))
+        )
 
     self_k = np.zeros(
-        (n_layers, 1, cache_length, d_model),
+        (4, 1, 6, 0, 64),
         dtype=np.float32,
     )
     self_v = np.zeros(
-        (n_layers, 1, cache_length, d_model),
+        (4, 1, 6, 0, 64),
         dtype=np.float32,
     )
 
-    first_outputs = decoder.run(
-        None,
-        {
-            token_name: np.asarray([prefix_tokens], dtype=np.int64),
-            self_k_name: self_k,
-            self_v_name: self_v,
-            cross_k_name: cross_k,
-            cross_v_name: cross_v,
-            offset_name: np.asarray([0], dtype=np.int64),
-        },
-    )
+    logits: np.ndarray | None = None
 
-    log_probs = log_softmax(first_outputs[0][0, -1])
-    suppress_special_tokens(
-        log_probs,
-        tokenizer,
-        allowed_tokens={eos_token_id},
-    )
-    next_token = int(np.argmax(log_probs))
+    # The model contract explicitly says:
+    # "feed prefix tokens one by one (position 0..3)".
+    for position, token_id in enumerate(prefix_tokens):
+        outputs = decoder.run(
+            None,
+            {
+                "input_id": np.asarray([token_id], dtype=np.int64).reshape(1, 1),
+                "position": np.asarray([position], dtype=np.int64),
+                "self_k": self_k,
+                "self_v": self_v,
+                "cross_k": cross_k,
+                "cross_v": cross_v,
+            },
+        )
 
-    generated = [next_token]
-    self_k = np.asarray(first_outputs[1], dtype=np.float32)
-    self_v = np.asarray(first_outputs[2], dtype=np.float32)
+        if len(outputs) != 3:
+            raise RuntimeError(
+                f"Expected decoder to return logits/new_self_k/new_self_v; got {len(outputs)}"
+            )
 
-    if next_token == eos_token_id:
-        return generated
+        logits = np.asarray(outputs[0], dtype=np.float32)
+        self_k = np.asarray(outputs[1], dtype=np.float32)
+        self_v = np.asarray(outputs[2], dtype=np.float32)
+        update_cache_shapes(self_k, self_v)
 
-    for _ in range(1, MAX_NEW_TOKENS):
-        current_offset = len(prefix_tokens) + len(generated) - 1
+    if logits is None:
+        raise RuntimeError("Decoder produced no logits.")
+
+    generated: list[int] = []
+
+    for step in range(MAX_NEW_TOKENS):
+        next_logits = logits.reshape(-1).copy()
+
+        if next_logits.size != 5181:
+            raise RuntimeError(
+                f"Expected decoder vocabulary size 5181, got {next_logits.size}"
+            )
+
+        suppress_special(next_logits, suppress_ids)
+
+        next_id = int(np.argmax(next_logits))
+        generated.append(next_id)
+
+        if next_id == eot_id:
+            generated.pop()
+            break
+
+        if has_repeated_4gram_x3(generated):
+            # preprocess.json says: "then drop 8"
+            del generated[-8:]
+            break
+
+        position = len(prefix_tokens) + len(generated) - 1
 
         outputs = decoder.run(
             None,
             {
-                token_name: np.asarray([[next_token]], dtype=np.int64),
-                self_k_name: self_k,
-                self_v_name: self_v,
-                cross_k_name: cross_k,
-                cross_v_name: cross_v,
-                offset_name: np.asarray([current_offset], dtype=np.int64),
+                "input_id": np.asarray([next_id], dtype=np.int64).reshape(1, 1),
+                "position": np.asarray([position], dtype=np.int64),
+                "self_k": self_k,
+                "self_v": self_v,
+                "cross_k": cross_k,
+                "cross_v": cross_v,
             },
         )
 
-        log_probs = log_softmax(outputs[0][0, -1])
-        suppress_special_tokens(
-            log_probs,
-            tokenizer,
-            allowed_tokens={eos_token_id},
-        )
-        next_token = int(np.argmax(log_probs))
-        generated.append(next_token)
-
+        logits = np.asarray(outputs[0], dtype=np.float32)
         self_k = np.asarray(outputs[1], dtype=np.float32)
         self_v = np.asarray(outputs[2], dtype=np.float32)
-
-        if next_token == eos_token_id:
-            break
+        update_cache_shapes(self_k, self_v)
 
     return generated
+
+
+def decode_new_tokens(
+    generated_new_ids: list[int],
+    new_to_old: list[int],
+    tokenizer: Tokenizer,
+) -> str:
+    old_ids: list[int] = []
+
+    for new_id in generated_new_ids:
+        if new_id < 0 or new_id >= len(new_to_old):
+            raise RuntimeError(
+                f"Generated token ID {new_id} is outside vocab map "
+                f"of size {len(new_to_old)}"
+            )
+        old_ids.append(new_to_old[new_id])
+
+    # The special prefix tokens are not included here; only generated speech
+    # tokens are detokenized.
+    text = tokenizer.decode(old_ids, skip_special_tokens=True)
+    return text.strip()
 
 
 def test_one(
@@ -368,114 +499,74 @@ def test_one(
 ) -> None:
     print()
     print("=" * 72)
-    print(f"TEST: {language.upper()}  |  {audio_path}")
+    print(f"TEST: {language.upper()} | {audio_path}")
     print("=" * 72)
 
-    audio = read_audio(audio_path)
-    print("Audio duration: %.2f s" % (audio.size / SAMPLE_RATE))
+    if language not in PREFIX_NEW_IDS:
+        raise ValueError(f"Unsupported language: {language}")
 
-    encoder_name, decoder_name, _ = choose_model_files(zip_path)
+    audio = read_audio(audio_path)
+    print("Audio duration used: %.2f s" % (audio.size / SAMPLE_RATE))
 
     work_dir = work_root / language
-    encoder_path = extract_entry(zip_path, encoder_name, work_dir)
-    decoder_path = extract_entry(zip_path, decoder_name, work_dir)
+    files = extract_required_files(zip_path, work_dir)
+
+    prefix_map, eot_id, new_to_old = validate_metadata(
+        files["preprocess"],
+        files["vocab_map"],
+    )
+
+    prefix_tokens = prefix_map.get(language)
+    if prefix_tokens is None:
+        raise RuntimeError(
+            f"No prefix_new_ids entry for language {language!r}"
+        )
+
+    tokenizer = Tokenizer.from_file(str(files["tokenizer"]))
+
+    mel_filters = np.load(files["mel_filters"]).astype(np.float32)
+    features = compute_mel(audio, mel_filters)
 
     encoder = ort.InferenceSession(
-        str(encoder_path),
+        str(files["encoder"]),
         providers=["CPUExecutionProvider"],
     )
     decoder = ort.InferenceSession(
-        str(decoder_path),
+        str(files["decoder"]),
         providers=["CPUExecutionProvider"],
     )
 
-    layers, d_model, model_size = infer_whisper_size(decoder)
-    print("Detected Whisper size:", model_size)
-    print("Decoder layers:", layers)
-    print("Decoder d_model:", d_model)
+    inspect_runtime_inputs(encoder, decoder)
 
-    # The cache length is visible in the self-K cache input. Fall back to the
-    # standard custom-export length when the dimension is symbolic.
-    cache_length = 448
-    for item in decoder.get_inputs():
-        name = item.name.lower()
-        if "self" in name and "k" in name:
-            value = static_dim(list(item.shape), 2)
-            if value:
-                cache_length = value
-                break
-
-    extractor = WhisperFeatureExtractor.from_pretrained(
-        f"openai/whisper-{model_size}"
-    )
-    tokenizer = WhisperTokenizer.from_pretrained(
-        f"openai/whisper-{model_size}"
-    )
-
-    features = extractor(
-        audio,
-        sampling_rate=SAMPLE_RATE,
-        return_tensors="np",
-    )["input_features"]
-    features = np.asarray(features, dtype=np.float32)
-
-    print("Mel shape:", features.shape)
-    print("Encoder inputs:", [x.name for x in encoder.get_inputs()])
-    print("Decoder inputs:", [x.name for x in decoder.get_inputs()])
-
-    mel_name = required_input(encoder, "mel")
-
+    print()
+    print("Feature shape:", features.shape)
+    print("Language:", language)
+    print("Prefix:", prefix_tokens)
     print("Running encoder...")
-    encoder_outputs = encoder.run(
-        None,
-        {mel_name: features},
-    )
 
-    if len(encoder_outputs) < 2:
-        raise RuntimeError(
-            "Expected the custom Whisper encoder to return cross-attention "
-            f"keys and values, but got {len(encoder_outputs)} outputs."
-        )
-
-    cross_k = np.asarray(encoder_outputs[0], dtype=np.float32)
-    cross_v = np.asarray(encoder_outputs[1], dtype=np.float32)
+    cross_k, cross_v = run_encoder(encoder, features)
 
     print("Cross-K shape:", cross_k.shape)
     print("Cross-V shape:", cross_v.shape)
+    print("Running decoder...")
 
-    tokenizer.set_prefix_tokens(
-        language=language,
-        task="transcribe",
-        predict_timestamps=False,
-    )
-    prefix_tokens = list(tokenizer.prefix_tokens)
-    eos_token_id = int(tokenizer.eos_token_id or EOT_FALLBACK)
-
-    print("Language:", language)
-    print("Prefix token IDs:", prefix_tokens)
-    print("EOS token:", eos_token_id)
-    print("Running greedy decoder...")
-
-    generated = decode_greedy(
-        decoder=decoder,
-        cross_k=cross_k,
-        cross_v=cross_v,
-        prefix_tokens=prefix_tokens,
-        eos_token_id=eos_token_id,
-        tokenizer=tokenizer,
-        n_layers=layers,
-        d_model=d_model,
-        cache_length=cache_length,
+    generated = run_decoder(
+        decoder,
+        cross_k,
+        cross_v,
+        prefix_tokens,
+        eot_id,
+        suppress_ids=list(SUPPRESS_NEW_IDS),
     )
 
-    all_tokens = prefix_tokens + generated
-    transcript = tokenizer.decode(
-        all_tokens,
-        skip_special_tokens=True,
-        normalize=False,
-    ).strip()
+    transcript = decode_new_tokens(
+        generated,
+        new_to_old,
+        tokenizer,
+    )
 
     print()
+    print("Generated tokens:", len(generated))
     print("TRANSCRIPTION:")
     print(transcript or "<empty>")
     print("TRANSCRIPTION UNICODE:")
@@ -484,7 +575,6 @@ def test_one(
         if transcript
         else "<empty>"
     )
-    print("Generated tokens:", len(generated))
     print("SUCCESS")
 
 
@@ -495,27 +585,28 @@ def main() -> int:
         dest="zip_path",
         type=Path,
         default=DEFAULT_ZIP,
-        help=f"Model ZIP (default: {DEFAULT_ZIP})",
+        help=f"andr2 model ZIP (default: {DEFAULT_ZIP})",
     )
     parser.add_argument(
         "--language",
         choices=("en", "hi", "bn"),
-        help="Single language test.",
+        help="Run one test.",
     )
     parser.add_argument(
         "--audio",
         type=Path,
-        help="WAV for a single-language test.",
+        help="WAV file for a single-language test.",
     )
     parser.add_argument(
         "--all",
         action="store_true",
-        help="Run all three available recordings: English, Hindi, Bengali.",
+        help="Run English, Hindi, and Bengali tests.",
     )
     parser.add_argument(
         "--work-dir",
         type=Path,
         default=Path("build/stt/andr2"),
+        help="Extraction/work directory.",
     )
     args = parser.parse_args()
 
@@ -523,13 +614,16 @@ def main() -> int:
         parser.error("Use either --language or --all, not both.")
 
     if not args.zip_path.is_file():
-        raise FileNotFoundError(f"Model ZIP not found: {args.zip_path}")
+        raise FileNotFoundError(
+            f"Model ZIP not found: {args.zip_path}"
+        )
 
     if args.language:
         audio_path = args.audio or DEFAULT_AUDIO[args.language]
         if not audio_path.is_file():
-            raise FileNotFoundError(f"Audio file not found: {audio_path}")
-
+            raise FileNotFoundError(
+                f"Audio file not found: {audio_path}"
+            )
         test_one(
             args.zip_path,
             audio_path,
@@ -538,7 +632,6 @@ def main() -> int:
         )
         return 0
 
-    # Default to all three test recordings so a bare invocation is useful.
     for language, audio_path in DEFAULT_AUDIO.items():
         if not audio_path.is_file():
             raise FileNotFoundError(
