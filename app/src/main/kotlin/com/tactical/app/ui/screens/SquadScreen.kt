@@ -929,9 +929,25 @@ fun PeerCard(
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(Modifier.height(3.dp))
+                    val connectedDetail = when {
+                        peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED &&
+                            peer.bleState == BleLinkState.CONNECTED ->
+                            "Wi-Fi Direct + BLE"
+                        peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED ->
+                            "Wi-Fi Direct"
+                        peer.bleState == BleLinkState.CONNECTED ->
+                            if (peer.distanceText != "Unknown") {
+                                "BLE • " + peer.distanceText
+                            } else {
+                                "BLE"
+                            }
+                        peer.linkText != "DIRECT" -> peer.linkText
+                        else -> peer.distanceText
+                    }
+
                     Text(
                         if (peer.isConnected) {
-                            LocalUiStrings.current.text(UiTextKey.CONNECTED_DOT) + peer.distanceText
+                            LocalUiStrings.current.text(UiTextKey.CONNECTED_DOT) + connectedDetail
                         } else if (peer.linkText == "DIRECT") {
                             LocalUiStrings.current.text(UiTextKey.IN_SQUAD_DOT) + peer.distanceText
                         } else {
