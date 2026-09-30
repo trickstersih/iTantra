@@ -61,6 +61,7 @@ class AndroidWifiDirectManager(
     private var serviceDiscoveryStarted = false
     private var serviceRequest: WifiP2pDnsSdServiceRequest? = null
     private var discoveryRetryJob: Job? = null
+    private var peerRefreshJob: Job? = null
     private var presenceRetryJob: Job? = null
     private var advertisedDeviceId: String? = null
     private var advertisedCallsign: String? = null
@@ -213,6 +214,8 @@ class AndroidWifiDirectManager(
         serviceDiscoveryStarted = false
         discoveryRetryJob?.cancel()
         discoveryRetryJob = null
+        peerRefreshJob?.cancel()
+        peerRefreshJob = null
         presenceRetryJob?.cancel()
         presenceRetryJob = null
         presenceRegistered = false
@@ -595,6 +598,7 @@ class AndroidWifiDirectManager(
                                         discoveryRetryJob = null
                                         serviceDiscoveryStarted = true
                                         _state.value = RadioLinkState.AVAILABLE
+                                        startPeerRefreshLoop()
                                         android.util.Log.d(
                                             TAG,
                                             "iTantra Wi-Fi service discovery started"
@@ -653,6 +657,50 @@ class AndroidWifiDirectManager(
         }
     }
 
+    private fun startPeerRefreshLoop() {
+        if (peerRefreshJob?.isActive == true) return
+
+        peerRefreshJob = managerScope.launch {
+            while (
+                started.get() &&
+                serviceDiscoveryStarted &&
+                wifiManager.isWifiEnabled &&
+                hasWifiDirectPermission()
+            ) {
+                try {
+                    wifiP2pManager.requestPeers(wifichannel) { peerList ->
+                        val seenAddresses = peerList.deviceList
+                            .map { it.deviceAddress }
+                            .toSet()
+
+                        if (seenAddresses.isEmpty()) return@requestPeers
+
+                        val now = System.currentTimeMillis()
+                        _peers.value = _peers.value.map { peer ->
+                            if (peer.deviceAddress in seenAddresses) {
+                                peer.copy(lastSeenEpochMs = now)
+                            } else {
+                                peer
+                            }
+                        }
+                    }
+                } catch (_: SecurityException) {
+                    break
+                } catch (e: Exception) {
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi P2P peer refresh failed: " +
+                            (e.message ?: e.javaClass.simpleName)
+                    )
+                }
+
+                delay(PEER_REFRESH_MS)
+            }
+
+            peerRefreshJob = null
+        }
+    }
+
     private fun scheduleServiceDiscoveryRetry() {
         if (discoveryRetryJob?.isActive == true) return
         if (!started.get() || !wifiManager.isWifiEnabled || !hasWifiDirectPermission()) {
@@ -680,6 +728,8 @@ class AndroidWifiDirectManager(
 
     private fun removeServiceRequest() {
         serviceDiscoveryStarted = false
+        peerRefreshJob?.cancel()
+        peerRefreshJob = null
         serviceRequest?.let { request ->
             runCatching {
                 wifiP2pManager.removeServiceRequest(
@@ -934,5 +984,6 @@ class AndroidWifiDirectManager(
         private const val CONNECT_TIMEOUT_MS = 15_000L
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
+        private const val PEER_REFRESH_MS = 5_000L
     }
 }
