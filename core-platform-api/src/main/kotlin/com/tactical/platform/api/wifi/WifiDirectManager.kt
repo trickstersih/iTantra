@@ -37,4 +37,12 @@ interface WifiDirectManager {
      * The application-level iTantra identity is learned separately.
      */
     suspend fun connect(deviceAddress: String): TacticalResult<Unit>
+
+    /**
+     * Connect using the stable iTantra application UUID discovered from the
+     * Wi-Fi Direct service advertisement. Implementations translate it to the
+     * underlying Android P2P device address.
+     */
+    suspend fun connectByAppDeviceId(deviceId: String): TacticalResult<Unit> =
+        TacticalResult.Failure("Wi-Fi Direct app-device lookup is unsupported")
 }
