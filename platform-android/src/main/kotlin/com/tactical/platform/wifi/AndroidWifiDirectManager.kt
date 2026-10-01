@@ -75,6 +75,7 @@ class AndroidWifiDirectManager(
     private var presenceRegistered = false
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val connectMutex = kotlinx.coroutines.sync.Mutex()
+    private var connectTargetDeviceAddress: String? = null
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -244,6 +245,7 @@ class AndroidWifiDirectManager(
         presenceRetryJob = null
         autoReconnectJob?.cancel()
         autoReconnectJob = null
+        connectTargetDeviceAddress = null
         presenceRegistered = false
 
         serviceRequest?.let { request ->
@@ -800,20 +802,19 @@ class AndroidWifiDirectManager(
     }
 
     private suspend fun autoReconnectOnce() {
-        if (
-            _connectionInfo.value.groupFormed ||
-            _state.value == RadioLinkState.CONNECTING
-        ) {
-            return
-        }
-
         val squadIds = squadMembershipStore.squadDeviceIds()
         if (squadIds.isEmpty()) return
 
-        // Deterministic reconnect ownership: only the device with the
-        // lexicographically smaller stable iTantra ID initiates a reconnect
-        // for a given pair. The other side remains discoverable and accepts it.
-        // This prevents both phones from racing WifiP2pManager.connect().
+        val connection = _connectionInfo.value
+
+        // A formed group already has a usable Wi-Fi Direct data plane.
+        // Only a group owner should invite another squad member into that
+        // existing group. A group client must not start a second negotiation
+        // that could destabilize the group.
+        if (connection.groupFormed && !connection.isGroupOwner) {
+            return
+        }
+
         val target = _peers.value
             .asSequence()
             .filter { peer ->
@@ -821,8 +822,13 @@ class AndroidWifiDirectManager(
                 id != null &&
                     id in squadIds &&
                     id != localDeviceId &&
-                    localDeviceId.compareTo(id) < 0 &&
-                    peer.linkState != RadioLinkState.CONNECTING
+                    peer.linkState != RadioLinkState.CONNECTING &&
+                    (
+                        !connection.groupFormed ||
+                            connection.groupMemberDeviceAddresses.none {
+                                it.equals(peer.deviceAddress, ignoreCase = true)
+                            }
+                    )
             }
             .maxByOrNull { it.lastSeenEpochMs }
             ?: return
@@ -831,7 +837,12 @@ class AndroidWifiDirectManager(
             TAG,
             "Wi-Fi Direct auto-reconnect candidate: " +
                 (target.callsign ?: target.deviceName) +
-                " / " + target.deviceAddress
+                " / " + target.deviceAddress +
+                if (connection.groupFormed) {
+                    " (invite into existing group)"
+                } else {
+                    " (new group negotiation)"
+                }
         )
 
         val result = runCatching {
@@ -958,6 +969,7 @@ class AndroidWifiDirectManager(
             wifiP2pManager.requestConnectionInfo(wifichannel) { info ->
                 if (info == null || !info.groupFormed) {
                     val wasGroupFormed = _connectionInfo.value.groupFormed
+                    connectTargetDeviceAddress = null
                     _connectionInfo.value = WifiDirectConnectionInfo()
 
                     if (_state.value != RadioLinkState.CONNECTING) {
@@ -982,12 +994,69 @@ class AndroidWifiDirectManager(
                     return@requestConnectionInfo
                 }
 
-                _connectionInfo.value = WifiDirectConnectionInfo(
+                val baseInfo = WifiDirectConnectionInfo(
                     groupFormed = true,
                     isGroupOwner = info.isGroupOwner,
                     groupOwnerAddress = info.groupOwnerAddress?.hostAddress
                 )
-                _state.value = RadioLinkState.CONNECTED
+
+                _connectionInfo.value = baseInfo
+
+                // requestConnectionInfo() tells us the role/endpoint. Use
+                // requestGroupInfo() for actual P2P device membership so an
+                // existing group can accept additional peers safely.
+                try {
+                    wifiP2pManager.requestGroupInfo(wifichannel) { group ->
+                        val members = if (group == null) {
+                            emptySet()
+                        } else {
+                            buildSet {
+                                group.owner?.deviceAddress?.let { add(it) }
+                                group.clientList.forEach { client ->
+                                    add(client.deviceAddress)
+                                }
+                            }
+                        }
+
+                        val target = connectTargetDeviceAddress
+                        val effectiveMembers = if (
+                            target != null &&
+                            members.none { it.equals(target, ignoreCase = true) }
+                        ) {
+                            // Some OEM stacks can lag group membership while the
+                            // connection broadcast has already arrived. Retain
+                            // the active target until the next group refresh.
+                            members + target
+                        } else {
+                            members
+                        }
+
+                        _connectionInfo.value = baseInfo.copy(
+                            groupMemberDeviceAddresses = effectiveMembers
+                        )
+
+                        effectiveMembers.forEach { address ->
+                            markPeerState(address, RadioLinkState.CONNECTED)
+                        }
+
+                        _state.value = RadioLinkState.CONNECTED
+
+                        android.util.Log.d(
+                            TAG,
+                            "Wi-Fi Direct group formed: isGO=" + info.isGroupOwner +
+                                " members=" + effectiveMembers.joinToString(",")
+                        )
+                    }
+                } catch (_: SecurityException) {
+                    _state.value = RadioLinkState.CONNECTED
+                } catch (e: Exception) {
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi Direct group info refresh failed: " +
+                            (e.message ?: e.javaClass.simpleName)
+                    )
+                    _state.value = RadioLinkState.CONNECTED
+                }
             }
         } catch (_: SecurityException) {
             _state.value = RadioLinkState.FAILED
@@ -1075,6 +1144,18 @@ class AndroidWifiDirectManager(
             return startResult
         }
 
+        val wasAlreadyInGroup = _connectionInfo.value.groupFormed
+        if (
+            wasAlreadyInGroup &&
+            _connectionInfo.value.groupMemberDeviceAddresses.any {
+                it.equals(cleanedAddress, ignoreCase = true)
+            }
+        ) {
+            markPeerState(cleanedAddress, RadioLinkState.CONNECTED)
+            return TacticalResult.Success(Unit)
+        }
+
+        connectTargetDeviceAddress = cleanedAddress
         _state.value = RadioLinkState.CONNECTING
         _peers.value = _peers.value.map {
             if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
@@ -1084,53 +1165,94 @@ class AndroidWifiDirectManager(
             }
         }
 
-        val accepted = suspendCancellableCoroutine<Boolean> { continuation ->
-            val config = WifiP2pConfig().apply {
-                this.deviceAddress = cleanedAddress
+        try {
+            val accepted = suspendCancellableCoroutine<Boolean> { continuation ->
+                // Keep the proven main-branch P2P configuration. Do not add
+                // WPS/PBC, persistent-mode builder options, group-owner intent,
+                // or network-name fields.
+                val config = WifiP2pConfig().apply {
+                    this.deviceAddress = cleanedAddress
+                }
+
+                try {
+                    wifiP2pManager.connect(
+                        wifichannel,
+                        config,
+                        object : WifiP2pManager.ActionListener {
+                            override fun onSuccess() {
+                                android.util.Log.d(
+                                    TAG,
+                                    "Wi-Fi Direct connect request accepted by Android for " +
+                                        cleanedAddress
+                                )
+                                if (continuation.isActive) continuation.resume(true)
+                            }
+
+                            override fun onFailure(reason: Int) {
+                                android.util.Log.w(
+                                    TAG,
+                                    "Wi-Fi Direct connect request rejected by Android for " +
+                                        cleanedAddress + ": " + reason
+                                )
+                                if (continuation.isActive) continuation.resume(false)
+                            }
+                        }
+                    )
+                } catch (_: SecurityException) {
+                    if (continuation.isActive) continuation.resume(false)
+                }
             }
 
-            try {
-                wifiP2pManager.connect(
-                    wifichannel,
-                    config,
-                    object : WifiP2pManager.ActionListener {
-                        override fun onSuccess() {
-                            if (continuation.isActive) continuation.resume(true)
-                        }
-
-                        override fun onFailure(reason: Int) {
-                            if (continuation.isActive) continuation.resume(false)
-                        }
-                    }
+            if (!accepted) {
+                _state.value = RadioLinkState.FAILED
+                markPeerState(cleanedAddress, RadioLinkState.FAILED)
+                return TacticalResult.Failure(
+                    "connect(" + cleanedAddress + ") was rejected by Android"
                 )
-            } catch (_: SecurityException) {
-                if (continuation.isActive) continuation.resume(false)
             }
-        }
 
-        if (!accepted) {
-            _state.value = RadioLinkState.FAILED
-            markPeerState(cleanedAddress, RadioLinkState.FAILED)
-            return TacticalResult.Failure(
-                "connect(" + cleanedAddress + ") was rejected by Android"
-            )
-        }
-
-        val established =
-            _connectionInfo.value.groupFormed ||
+            val established = if (!wasAlreadyInGroup) {
+                // Fresh P2P negotiation: connect() must result in an actual
+                // formed group, not merely an accepted framework request.
+                _connectionInfo.value.groupFormed ||
+                    withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+                        _connectionInfo.first { it.groupFormed }
+                        true
+                    } == true
+            } else {
+                // Existing group: Android sends an invitation to the peer.
+                // Waiting only for groupFormed would return immediately because
+                // the group already exists, so wait for the target to join it.
                 withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
-                    _connectionInfo.first { it.groupFormed }
+                    _connectionInfo.first { info ->
+                        info.groupFormed &&
+                            info.groupMemberDeviceAddresses.any {
+                                it.equals(cleanedAddress, ignoreCase = true)
+                            }
+                    }
                     true
                 } == true
+            }
 
-        if (!established) {
-            _state.value = RadioLinkState.FAILED
-            markPeerState(cleanedAddress, RadioLinkState.FAILED)
-            return TacticalResult.Failure("Wi-Fi Direct connection timed out")
+            if (!established) {
+                _state.value = RadioLinkState.FAILED
+                markPeerState(cleanedAddress, RadioLinkState.FAILED)
+                return TacticalResult.Failure(
+                    if (wasAlreadyInGroup) {
+                        "Wi-Fi Direct peer did not join the existing group"
+                    } else {
+                        "Wi-Fi Direct connection timed out"
+                    }
+                )
+            }
+
+            markPeerState(cleanedAddress, RadioLinkState.CONNECTED)
+            return TacticalResult.Success(Unit)
+        } finally {
+            if (connectTargetDeviceAddress.equals(cleanedAddress, ignoreCase = true)) {
+                connectTargetDeviceAddress = null
+            }
         }
-
-        markPeerState(cleanedAddress, RadioLinkState.CONNECTED)
-        return TacticalResult.Success(Unit)
     }
 
     private fun markPeerState(
