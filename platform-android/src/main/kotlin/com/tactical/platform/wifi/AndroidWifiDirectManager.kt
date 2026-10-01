@@ -89,7 +89,7 @@ class AndroidWifiDirectManager(
      * request was handed to the framework.
      */
     private val wifiP2pListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
-        object : WifiP2pManager.WifiP2pListener() {
+        object : WifiP2pManager.WifiP2pListener {
             override fun onGroupCreating() {
                 android.util.Log.d(TAG, "Wi-Fi P2P group creation started")
                 if (_connectionInfo.value.groupFormed) return
