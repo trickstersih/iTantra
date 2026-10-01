@@ -11,8 +11,8 @@ data class WifiDirectConnectionInfo(
     val isGroupOwner: Boolean = false,
     val groupOwnerAddress: String? = null,
     /**
-     * Wi-Fi Direct device addresses currently in the same P2P group as the
-     * local device, excluding the local device itself.
+     * Wi-Fi Direct device addresses currently reported by the local P2P group.
+     * Android may include the local device in this collection.
      */
     val groupMemberDeviceAddresses: Set<String> = emptySet()
 )
