@@ -8,7 +8,10 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.location.LocationManager
+import android.net.MacAddress
 import android.net.wifi.p2p.WifiP2pConfig
+import android.net.wifi.p2p.WifiP2pGroup
+import android.net.wifi.p2p.WifiP2pInfo
 import android.net.wifi.p2p.WifiP2pManager
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceInfo
 import android.net.wifi.p2p.nsd.WifiP2pDnsSdServiceRequest
@@ -76,6 +79,101 @@ class AndroidWifiDirectManager(
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val connectMutex = kotlinx.coroutines.sync.Mutex()
     private var connectTargetDeviceAddress: String? = null
+    private var wifiP2pListenerRegistered = false
+
+    /**
+     * Android 15+ exposes the actual P2P state machine through WifiP2pListener.
+     * Keep the legacy broadcasts for older releases, but use these callbacks
+     * as the authoritative signal on modern devices. This is especially
+     * important because connect()'s ActionListener only confirms that the
+     * request was handed to the framework.
+     */
+    private val wifiP2pListener = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+        object : WifiP2pManager.WifiP2pListener() {
+            override fun onGroupCreating() {
+                android.util.Log.d(TAG, "Wi-Fi P2P group creation started")
+                if (_connectionInfo.value.groupFormed) return
+                _state.value = RadioLinkState.CONNECTING
+            }
+
+            override fun onGroupCreated(
+                p2pInfo: WifiP2pInfo,
+                p2pGroup: WifiP2pGroup
+            ) {
+                android.util.Log.d(
+                    TAG,
+                    "Wi-Fi P2P group created via listener: " +
+                        "isGO=" + p2pInfo.isGroupOwner +
+                        " owner=" + (p2pGroup.owner?.deviceAddress ?: "?") +
+                        " clients=" + p2pGroup.clientList.joinToString(",") {
+                            it.deviceAddress
+                        }
+                )
+                refreshConnectionInfo()
+            }
+
+            override fun onGroupCreationFailed(reason: Int) {
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi P2P group creation failed via listener: " + reason
+                )
+                if (!_connectionInfo.value.groupFormed) {
+                    connectTargetDeviceAddress = null
+                    _state.value = RadioLinkState.FAILED
+                }
+            }
+
+            override fun onGroupNegotiationRejectedByUser() {
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi P2P group negotiation rejected by user"
+                )
+                if (!_connectionInfo.value.groupFormed) {
+                    connectTargetDeviceAddress = null
+                    _state.value = RadioLinkState.FAILED
+                }
+            }
+
+            override fun onPeerClientJoined(
+                p2pInfo: WifiP2pInfo,
+                p2pGroup: WifiP2pGroup
+            ) {
+                android.util.Log.d(
+                    TAG,
+                    "Wi-Fi P2P peer client joined group: " +
+                        (p2pGroup.clientList.lastOrNull()?.deviceAddress ?: "?")
+                )
+                refreshConnectionInfo()
+            }
+
+            override fun onPeerClientDisconnected(
+                p2pInfo: WifiP2pInfo,
+                p2pGroup: WifiP2pGroup
+            ) {
+                android.util.Log.d(
+                    TAG,
+                    "Wi-Fi P2P peer client left group"
+                )
+                refreshConnectionInfo()
+            }
+
+            override fun onListenStateChanged(state: Int) {
+                android.util.Log.d(
+                    TAG,
+                    "Wi-Fi P2P listen state=" + state
+                )
+            }
+
+            override fun onDiscoveryStateChanged(state: Int) {
+                android.util.Log.d(
+                    TAG,
+                    "Wi-Fi P2P discovery state=" + state
+                )
+            }
+        }
+    } else {
+        null
+    }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -126,7 +224,24 @@ class AndroidWifiDirectManager(
                 }
 
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi P2P connection broadcast received"
+                    )
                     refreshConnectionInfo()
+                }
+
+                WifiP2pManager.ACTION_WIFI_P2P_REQUEST_RESPONSE_CHANGED -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        val response = intent.getIntExtra(
+                            WifiP2pManager.EXTRA_REQUEST_RESPONSE,
+                            -1
+                        )
+                        android.util.Log.d(
+                            TAG,
+                            "Wi-Fi P2P request-response broadcast: " + response
+                        )
+                    }
                 }
 
                 LocationManager.MODE_CHANGED_ACTION -> {
@@ -210,6 +325,7 @@ class AndroidWifiDirectManager(
 
         return try {
             registerReceiverOnce()
+            registerModernP2pListener()
             ensureAutoReconnectLoop()
 
             if (!wifiManager.isWifiEnabled) {
@@ -262,6 +378,8 @@ class AndroidWifiDirectManager(
         if (hasWifiDirectPermission()) {
             runCatching { wifiP2pManager.clearLocalServices(wifichannel, null) }
         }
+
+        unregisterModernP2pListener()
 
         if (receiverRegistered) {
             runCatching { context.unregisterReceiver(receiver) }
@@ -1155,12 +1273,22 @@ class AndroidWifiDirectManager(
 
         try {
             val accepted = suspendCancellableCoroutine<Boolean> { continuation ->
-                // Keep the proven main-branch P2P configuration. Do not add
-                // WPS/PBC, persistent-mode builder options, group-owner intent,
-                // or network-name fields.
-                val config = WifiP2pConfig().apply {
-                    this.deviceAddress = cleanedAddress
+                // The device-address-only form is the documented path when
+                // SSID/passphrase are unknown. On Android 16+ explicitly use
+                // legacy WPA2-Personal P2P for maximum interoperability with
+                // older/OEM peers. Do not set an SSID/passphrase or persistent
+                // group fields; those previously caused invalid-config failures.
+                val configBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                    WifiP2pConfig.Builder()
+                        .setDeviceAddress(MacAddress.fromString(cleanedAddress))
+                        .setPccModeConnectionType(
+                            WifiP2pConfig.PCC_MODE_CONNECTION_TYPE_LEGACY_ONLY
+                        )
+                } else {
+                    WifiP2pConfig.Builder()
+                        .setDeviceAddress(MacAddress.fromString(cleanedAddress))
                 }
+                val config = configBuilder.build()
 
                 try {
                     wifiP2pManager.connect(
@@ -1256,12 +1384,52 @@ class AndroidWifiDirectManager(
         }
     }
 
+    private fun registerModernP2pListener() {
+        if (wifiP2pListenerRegistered || Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            return
+        }
+
+        val listener = wifiP2pListener ?: return
+        runCatching {
+            wifiP2pManager.registerWifiP2pListener(
+                context.mainExecutor,
+                listener
+            )
+            wifiP2pListenerRegistered = true
+            android.util.Log.d(
+                TAG,
+                "Wi-Fi P2P modern listener registered"
+            )
+        }.onFailure { error ->
+            android.util.Log.w(
+                TAG,
+                "Wi-Fi P2P modern listener registration failed: " +
+                    (error.message ?: error.javaClass.simpleName)
+            )
+        }
+    }
+
+    private fun unregisterModernP2pListener() {
+        if (!wifiP2pListenerRegistered || Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) {
+            return
+        }
+
+        val listener = wifiP2pListener ?: return
+        runCatching {
+            wifiP2pManager.unregisterWifiP2pListener(listener)
+        }
+        wifiP2pListenerRegistered = false
+    }
+
     private fun registerReceiverOnce() {
         if (receiverRegistered) return
 
         val filter = IntentFilter().apply {
             addAction(WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION)
             addAction(WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                addAction(WifiP2pManager.ACTION_WIFI_P2P_REQUEST_RESPONSE_CHANGED)
+            }
             addAction(WifiP2pManager.WIFI_P2P_DISCOVERY_CHANGED_ACTION)
             addAction(WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION)
             addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
