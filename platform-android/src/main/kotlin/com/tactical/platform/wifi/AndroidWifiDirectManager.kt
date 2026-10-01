@@ -1018,24 +1018,11 @@ class AndroidWifiDirectManager(
                             }
                         }
 
-                        val target = connectTargetDeviceAddress
-                        val effectiveMembers = if (
-                            target != null &&
-                            members.none { it.equals(target, ignoreCase = true) }
-                        ) {
-                            // Some OEM stacks can lag group membership while the
-                            // connection broadcast has already arrived. Retain
-                            // the active target until the next group refresh.
-                            members + target
-                        } else {
-                            members
-                        }
-
                         _connectionInfo.value = baseInfo.copy(
-                            groupMemberDeviceAddresses = effectiveMembers
+                            groupMemberDeviceAddresses = members
                         )
 
-                        effectiveMembers.forEach { address ->
+                        members.forEach { address ->
                             markPeerState(address, RadioLinkState.CONNECTED)
                         }
 
@@ -1044,7 +1031,7 @@ class AndroidWifiDirectManager(
                         android.util.Log.d(
                             TAG,
                             "Wi-Fi Direct group formed: isGO=" + info.isGroupOwner +
-                                " members=" + effectiveMembers.joinToString(",")
+                                " members=" + members.joinToString(",")
                         )
                     }
                 } catch (_: SecurityException) {
@@ -1080,6 +1067,7 @@ class AndroidWifiDirectManager(
                     wifichannel,
                     object : WifiP2pManager.ActionListener {
                         override fun onSuccess() {
+                            connectTargetDeviceAddress = null
                             _connectionInfo.value = WifiDirectConnectionInfo()
                             _state.value = if (wifiManager.isWifiEnabled) {
                                 RadioLinkState.AVAILABLE
