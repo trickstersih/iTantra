@@ -56,15 +56,34 @@ class WifiDirectRadioTransport(
     @Volatile
     private var serverSocket: ServerSocket? = null
 
+    @Volatile
+    private var activeGroupEndpoint: GroupEndpoint? = null
+
     init {
         scope.launch {
             wifiDirectManager.connectionInfo().collectLatest { info ->
                 reconfigureLock.withLock {
+                    val endpoint = GroupEndpoint(
+                        groupFormed = info.groupFormed,
+                        isGroupOwner = info.isGroupOwner,
+                        groupOwnerAddress = info.groupOwnerAddress
+                    )
+
+                    // Group membership can change while the same P2P group
+                    // remains alive. Do not tear down working TCP sockets in
+                    // response to those membership-only updates.
+                    if (endpoint == activeGroupEndpoint) {
+                        return@withLock
+                    }
+
                     closeDataSockets()
 
                     if (!info.groupFormed) {
+                        activeGroupEndpoint = null
                         return@withLock
                     }
+
+                    activeGroupEndpoint = endpoint
 
                     if (info.isGroupOwner) {
                         startServer()
@@ -408,6 +427,12 @@ class WifiDirectRadioTransport(
             }
         }.getOrNull()
     }
+
+    private data class GroupEndpoint(
+        val groupFormed: Boolean,
+        val isGroupOwner: Boolean,
+        val groupOwnerAddress: String?
+    )
 
     companion object {
         private const val TAG = "WifiDirectRadioTransport"
