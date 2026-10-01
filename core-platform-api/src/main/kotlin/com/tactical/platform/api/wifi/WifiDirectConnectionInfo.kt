@@ -9,5 +9,10 @@ package com.tactical.platform.api.wifi
 data class WifiDirectConnectionInfo(
     val groupFormed: Boolean = false,
     val isGroupOwner: Boolean = false,
-    val groupOwnerAddress: String? = null
+    val groupOwnerAddress: String? = null,
+    /**
+     * Wi-Fi Direct device addresses currently in the same P2P group as the
+     * local device, excluding the local device itself.
+     */
+    val groupMemberDeviceAddresses: Set<String> = emptySet()
 )
