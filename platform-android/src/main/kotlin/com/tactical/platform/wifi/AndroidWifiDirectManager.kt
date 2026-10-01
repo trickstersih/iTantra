@@ -8,7 +8,6 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.location.LocationManager
-import android.net.MacAddress
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pGroup
 import android.net.wifi.p2p.WifiP2pInfo
@@ -80,6 +79,7 @@ class AndroidWifiDirectManager(
     private val connectMutex = kotlinx.coroutines.sync.Mutex()
     private var connectTargetDeviceAddress: String? = null
     private var wifiP2pListenerRegistered = false
+    private var connectionAttemptInProgress = false
 
     /**
      * Android 15+ exposes the actual P2P state machine through WifiP2pListener.
@@ -287,7 +287,8 @@ class AndroidWifiDirectManager(
                     ) {
                         _state.value = RadioLinkState.AVAILABLE
                     } else if (!discovering &&
-                        !_connectionInfo.value.groupFormed
+                        !_connectionInfo.value.groupFormed &&
+                        !connectionAttemptInProgress
                     ) {
                         removeServiceRequest()
                         scheduleServiceDiscoveryRetry()
@@ -362,6 +363,7 @@ class AndroidWifiDirectManager(
         autoReconnectJob?.cancel()
         autoReconnectJob = null
         connectTargetDeviceAddress = null
+        connectionAttemptInProgress = false
         presenceRegistered = false
 
         serviceRequest?.let { request ->
@@ -920,6 +922,8 @@ class AndroidWifiDirectManager(
     }
 
     private suspend fun autoReconnectOnce() {
+        if (connectionAttemptInProgress) return
+
         val squadIds = squadMembershipStore.squadDeviceIds()
         if (squadIds.isEmpty()) return
 
@@ -1098,7 +1102,11 @@ class AndroidWifiDirectManager(
                         }
                     }
 
-                    if (wasGroupFormed && wifiManager.isWifiEnabled) {
+                    if (
+                        wasGroupFormed &&
+                        wifiManager.isWifiEnabled &&
+                        !connectionAttemptInProgress
+                    ) {
                         // Some OEM stacks drop the P2P discovery engine together
                         // with the group without sending a discovery-changed
                         // broadcast. Rebuild our discovery bookkeeping explicitly.
@@ -1262,6 +1270,7 @@ class AndroidWifiDirectManager(
         }
 
         connectTargetDeviceAddress = cleanedAddress
+        connectionAttemptInProgress = true
         _state.value = RadioLinkState.CONNECTING
         _peers.value = _peers.value.map {
             if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
@@ -1273,22 +1282,13 @@ class AndroidWifiDirectManager(
 
         try {
             val accepted = suspendCancellableCoroutine<Boolean> { continuation ->
-                // The device-address-only form is the documented path when
-                // SSID/passphrase are unknown. On Android 16+ explicitly use
-                // legacy WPA2-Personal P2P for maximum interoperability with
-                // older/OEM peers. Do not set an SSID/passphrase or persistent
-                // group fields; those previously caused invalid-config failures.
-                val configBuilder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
-                    WifiP2pConfig.Builder()
-                        .setDeviceAddress(MacAddress.fromString(cleanedAddress))
-                        .setPccModeConnectionType(
-                            WifiP2pConfig.PCC_MODE_CONNECTION_TYPE_LEGACY_ONLY
-                        )
-                } else {
-                    WifiP2pConfig.Builder()
-                        .setDeviceAddress(MacAddress.fromString(cleanedAddress))
+                // Use the exact ordinary peer-to-peer connection path from
+                // the Android reference implementation. Do not add PCC mode,
+                // WPS/PBC, persistent mode, SSID, passphrase, or group-owner
+                // settings until the baseline two-phone negotiation is proven.
+                val config = WifiP2pConfig().apply {
+                    this.deviceAddress = cleanedAddress
                 }
-                val config = configBuilder.build()
 
                 try {
                     wifiP2pManager.connect(
@@ -1367,6 +1367,21 @@ class AndroidWifiDirectManager(
         } finally {
             if (connectTargetDeviceAddress.equals(cleanedAddress, ignoreCase = true)) {
                 connectTargetDeviceAddress = null
+            }
+            connectionAttemptInProgress = false
+
+            // Resume normal discovery only after the negotiation has completely
+            // ended, whether it succeeded or failed.
+            if (
+                started.get() &&
+                wifiManager.isWifiEnabled &&
+                hasWifiDirectPermission() &&
+                !_connectionInfo.value.groupFormed
+            ) {
+                managerScope.launch {
+                    delay(300L)
+                    startServiceDiscoveryInternal()
+                }
             }
         }
     }
