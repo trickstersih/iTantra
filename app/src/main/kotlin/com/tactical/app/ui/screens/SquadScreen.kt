@@ -69,6 +69,7 @@ fun SquadScreen(
     var pttHeld by remember { mutableStateOf(false) }
     var removeArmedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var languagePickerVisible by rememberSaveable { mutableStateOf(false) }
+    var wifiGroupInfoVisible by rememberSaveable { mutableStateOf(false) }
     var pendingLanguageCode by rememberSaveable {
         mutableStateOf(uiState.selectedLanguageCode)
     }
@@ -108,13 +109,66 @@ fun SquadScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        LocalUiStrings.current.text(UiTextKey.SQUAD),
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 1.sp
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            LocalUiStrings.current.text(UiTextKey.SQUAD),
+                            color = Color.White,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = 1.sp
+                        )
+
+                        if (uiState.wifiDirectGroupFormed) {
+                            Spacer(Modifier.width(8.dp))
+
+                            Surface(
+                                color = SquadBlueSurfaceRaised,
+                                shape = RoundedCornerShape(7.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (uiState.wifiDirectIsGroupOwner) {
+                                        SquadBlueGlow
+                                    } else {
+                                        SquadBlueBorder
+                                    }
+                                )
+                            ) {
+                                Text(
+                                    if (uiState.wifiDirectIsGroupOwner) {
+                                        "WI-FI GROUP HEAD"
+                                    } else {
+                                        "WI-FI GROUP MEMBER"
+                                    },
+                                    color = if (uiState.wifiDirectIsGroupOwner) {
+                                        Color.White
+                                    } else {
+                                        Color(0xFFBFD6EA)
+                                    },
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.5.sp,
+                                    modifier = Modifier.padding(
+                                        horizontal = 7.dp,
+                                        vertical = 4.dp
+                                    )
+                                )
+                            }
+
+                            IconButton(
+                                onClick = { wifiGroupInfoVisible = true },
+                                modifier = Modifier.size(30.dp)
+                            ) {
+                                Text(
+                                    "ⓘ",
+                                    color = Color(0xFFBFD6EA),
+                                    fontSize = 19.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                    }
                 }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -642,6 +696,11 @@ fun SquadScreen(
             ) { peer ->
                 PeerCard(
                     peer = peer,
+                    isWifiGroupHead = uiState.wifiDirectGroupFormed &&
+                        peer.deviceAddress.equals(
+                            uiState.wifiDirectGroupOwnerDeviceAddress,
+                            ignoreCase = true
+                        ),
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
                     onLongPress = { removeArmedDeviceId = peer.deviceAddress },
                     onRemove = {
@@ -675,6 +734,11 @@ fun SquadScreen(
             ) { peer ->
                 PeerCard(
                     peer = peer,
+                    isWifiGroupHead = uiState.wifiDirectGroupFormed &&
+                        peer.deviceAddress.equals(
+                            uiState.wifiDirectGroupOwnerDeviceAddress,
+                            ignoreCase = true
+                        ),
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
                     onLongPress = { removeArmedDeviceId = peer.deviceAddress },
                     onRemove = {
@@ -687,6 +751,56 @@ fun SquadScreen(
         }
 
     }
+    if (wifiGroupInfoVisible) {
+        AlertDialog(
+            onDismissRequest = { wifiGroupInfoVisible = false },
+            title = {
+                Text("HOW WI-FI GROUPS WORK")
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        "Wi-Fi Direct creates a group with one Wi-Fi group head " +
+                            "(the Android group owner) and other phones as members."
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Phones in the same group can communicate over Wi-Fi Direct. " +
+                            "When a phone joins an existing group, it uses that group's " +
+                            "Wi-Fi connection instead of creating a separate group."
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Two separate Wi-Fi groups do not automatically communicate " +
+                            "with each other. In iTantra, devices in separate groups " +
+                            "can still communicate through Bluetooth (BLE)."
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "A phone can belong to only one Wi-Fi Direct group at a time. " +
+                            "To move to another Wi-Fi group, its current group must be " +
+                            "left or disconnected first. iTantra does not automatically " +
+                            "break an existing group just to move a phone to another one."
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "The Wi-Fi group head is only the Wi-Fi Direct owner. " +
+                            "It is not the squad leader and does not control the squad."
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { wifiGroupInfoVisible = false }
+                ) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
     if (languagePickerVisible) {
         Dialog(
             onDismissRequest = { languagePickerVisible = false },
@@ -898,6 +1012,7 @@ private fun EmptySquadSection(message: String) {
 @Composable
 fun PeerCard(
     peer: PeerNodeUi,
+    isWifiGroupHead: Boolean = false,
     removeArmed: Boolean = false,
     onLongPress: () -> Unit = {},
     onRemove: () -> Unit = {},
@@ -946,12 +1061,42 @@ fun PeerCard(
                 Spacer(Modifier.width(12.dp))
 
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        peer.callsign,
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            peer.callsign,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        if (isWifiGroupHead) {
+                            Spacer(Modifier.width(7.dp))
+                            Surface(
+                                color = SquadBluePrimary.copy(alpha = 0.28f),
+                                shape = RoundedCornerShape(6.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    SquadBlueGlow.copy(alpha = 0.65f)
+                                )
+                            ) {
+                                Text(
+                                    "GROUP HEAD",
+                                    color = Color.White,
+                                    fontSize = 7.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.45.sp,
+                                    modifier = Modifier.padding(
+                                        horizontal = 6.dp,
+                                        vertical = 3.dp
+                                    )
+                                )
+                            }
+                        }
+                    }
+
                     Spacer(Modifier.height(3.dp))
                     val connectedDetail = when {
                         peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED &&
