@@ -89,6 +89,13 @@ class AndroidWifiDirectManager(
     /** Credentials advertised by an existing iTantra group owner. */
     private val groupCredentialsByDeviceAddress = mutableMapOf<String, GroupCredentials>()
 
+    /**
+     * Last known iTantra application ID for each Wi-Fi Direct device address.
+     * This survives a Wi-Fi reconnect so the Squad UI can identify the group
+     * head before a fresh DNS-SD record arrives.
+     */
+    private val appDeviceIdByWifiDeviceAddress = mutableMapOf<String, String>()
+
     /** Local group's current SSID/passphrase, known once group info is available. */
     private var localGroupCredentials: GroupCredentials? = null
 
@@ -857,6 +864,12 @@ class AndroidWifiDirectManager(
                         )
                     }
 
+                    synchronized(appDeviceIdByWifiDeviceAddress) {
+                        appDeviceIdByWifiDeviceAddress[
+                            device.deviceAddress.lowercase()
+                        ] = id
+                    }
+
                     val peer = WifiDirectPeer(
                         deviceAddress = device.deviceAddress,
                         deviceName = device.deviceName,
@@ -1279,9 +1292,22 @@ class AndroidWifiDirectManager(
                         val ownerDeviceAddress =
                             group?.owner?.deviceAddress
                         val ownerAppDeviceId = ownerDeviceAddress?.let { address ->
-                            _peers.value.firstOrNull {
+                            synchronized(appDeviceIdByWifiDeviceAddress) {
+                                appDeviceIdByWifiDeviceAddress[address.lowercase()]
+                            } ?: _peers.value.firstOrNull {
                                 it.deviceAddress.equals(address, ignoreCase = true)
                             }?.appDeviceId
+                        }
+
+                        if (
+                            ownerDeviceAddress != null &&
+                            ownerAppDeviceId != null
+                        ) {
+                            synchronized(appDeviceIdByWifiDeviceAddress) {
+                                appDeviceIdByWifiDeviceAddress[
+                                    ownerDeviceAddress.lowercase()
+                                ] = ownerAppDeviceId
+                            }
                         }
 
                         _connectionInfo.value = baseInfo.copy(
