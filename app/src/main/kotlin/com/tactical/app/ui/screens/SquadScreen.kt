@@ -40,6 +40,7 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.tactical.app.ui.MainUiState
 import com.tactical.app.ui.PeerNodeUi
@@ -820,94 +821,98 @@ fun SquadScreen(
     }
 
     if (languagePickerVisible) {
-        Dialog(
+        AlertDialog(
             onDismissRequest = { languagePickerVisible = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
-            ) {
-                val dialogWidth = minOf(maxWidth * 0.94f, 420.dp)
-                val dialogMaxHeight = maxHeight * 0.86f
-
-                Surface(
-                    modifier = Modifier
-                        .width(dialogWidth)
-                        .heightIn(max = dialogMaxHeight),
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color(0xFFF7FAFE)
+            containerColor = SquadBlueSurfaceRaised,
+            titleContentColor = Color.White,
+            textContentColor = Color.White,
+            title = {
+                Text(
+                    LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
+                    color = Color.White,
+                    fontSize = uiSpForDialog(uiState.uiLanguageCode, 20f),
+                    fontWeight = FontWeight.ExtraBold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 18.dp, vertical = 16.dp)
-                    ) {
-                        Text(
-                            LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
-                            color = Color(0xFF10243A),
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-
-                        Spacer(Modifier.height(14.dp))
-
-                        Text(
-                            LocalUiStrings.current.text(UiTextKey.INDIAN_LANGUAGES),
-                            color = Color(0xFF54708C),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        SQUAD_LANGUAGE_OPTIONS
-                            .filter { it.code != "en" }
-                            .forEach { option ->
-                                SquadLanguageRow(
-                                    option = option,
-                                    selected = pendingLanguageCode == option.code,
-                                    onSelect = { pendingLanguageCode = option.code }
+                    SQUAD_LANGUAGE_OPTIONS.forEach { option ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(
+                                    enabled = option.available,
+                                    onClick = {
+                                        pendingLanguageCode = option.code
+                                    }
+                                )
+                                .padding(vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    option.nativeName,
+                                    color = if (option.available) {
+                                        Color.White
+                                    } else {
+                                        Color(0xFFA4B2BF)
+                                    },
+                                    fontSize = uiSpForDialog(
+                                        uiState.uiLanguageCode,
+                                        14f
+                                    ),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    option.name,
+                                    color = if (option.available) {
+                                        Color(0xFFBFD6EA)
+                                    } else {
+                                        Color(0xFF8EAAC2)
+                                    },
+                                    fontSize = uiSpForDialog(
+                                        uiState.uiLanguageCode,
+                                        10f
+                                    )
                                 )
                             }
 
-                        Spacer(Modifier.height(8.dp))
-
-                        Text(
-                            LocalUiStrings.current.text(UiTextKey.OTHER),
-                            color = Color(0xFF54708C),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        SquadLanguageRow(
-                            option = SQUAD_LANGUAGE_OPTIONS.first { it.code == "en" },
-                            selected = pendingLanguageCode == "en",
-                            onSelect = { pendingLanguageCode = "en" }
-                        )
-
-                        Spacer(Modifier.height(12.dp))
-
-                        Button(
-                            onClick = {
-                                languagePickerVisible = false
-                                onLanguageSelected(pendingLanguageCode)
-                            },
-                            enabled = SQUAD_LANGUAGE_OPTIONS.any {
-                                it.code == pendingLanguageCode && it.available
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(
-                                LocalUiStrings.current.text(UiTextKey.CONFIRM),
-                                fontWeight = FontWeight.ExtraBold
+                            RadioButton(
+                                selected = pendingLanguageCode == option.code,
+                                enabled = option.available,
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = SquadBluePrimary,
+                                    unselectedColor = Color(0xFF8EAAC2),
+                                    disabledSelectedColor = SquadBluePrimary.copy(alpha = 0.5f),
+                                    disabledUnselectedColor = Color(0xFF526A80)
+                                ),
+                                onClick = {
+                                    if (option.available) {
+                                        pendingLanguageCode = option.code
+                                    }
+                                }
                             )
                         }
                     }
                 }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        languagePickerVisible = false
+                        onLanguageSelected(pendingLanguageCode)
+                    }
+                ) {
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.CONFIRM),
+                        color = SquadBlueGlow,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
-        }
+        )
     }
 }
 
@@ -930,6 +935,13 @@ private val SQUAD_LANGUAGE_OPTIONS = listOf(
     SquadLanguageOption("bn", "Bengali", "বাংলা", true),
     SquadLanguageOption("en", "English", "English", true)
 )
+
+@Composable
+
+@Composable
+private fun uiSpForDialog(languageCode: String, value: Float): TextUnit =
+    ((value + if (languageCode == "hi") 1f else 0f) *
+        1f.coerceIn(0.78f, 1f)).sp
 
 @Composable
 private fun SquadLanguageRow(
