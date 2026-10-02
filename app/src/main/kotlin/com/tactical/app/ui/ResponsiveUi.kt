@@ -35,27 +35,29 @@ data class ResponsiveUi(
     val emergencyRingInner: Dp,
     val emergencyCore: Dp,
     val cardPadding: Dp,
-    val compactIcon: Dp
+    val compactIcon: Dp,
+    val languageCode: String = "en"
 ) {
     fun dp(value: Dp): Dp = value * scale
 
-    fun sp(value: Float): TextUnit = (value * scale).sp
+    fun sp(value: Float): TextUnit = ((value + if (languageCode == "hi") 1f else 0f) * scale).sp
 }
 
 @Composable
 fun ResponsiveScreen(
     modifier: Modifier = Modifier,
+    languageCode: String = "en",
     content: @Composable (ResponsiveUi) -> Unit
 ) {
     BoxWithConstraints(modifier = modifier) {
-        val dimensions = remember(maxWidth) {
-            responsiveUiForWidth(maxWidth)
+        val dimensions = remember(maxWidth, languageCode) {
+            responsiveUiForWidth(maxWidth, languageCode)
         }
         content(dimensions)
     }
 }
 
-private fun responsiveUiForWidth(width: Dp): ResponsiveUi {
+private fun responsiveUiForWidth(width: Dp, languageCode: String): ResponsiveUi {
     val scale = (width.value / 400f).coerceIn(0.78f, 1f)
 
     fun d(value: Float): Dp = (value * scale).dp
@@ -76,6 +78,7 @@ private fun responsiveUiForWidth(width: Dp): ResponsiveUi {
         emergencyRingInner = minOf(d(148f), width * 0.42f),
         emergencyCore = minOf(d(124f), width * 0.35f),
         cardPadding = d(14f),
-        compactIcon = d(21f)
+        compactIcon = d(21f),
+        languageCode = languageCode
     )
 }
