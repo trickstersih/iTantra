@@ -109,9 +109,9 @@ fun DevicesScreen(
         Text(
             text = LocalUiStrings.current.text(UiTextKey.AVAILABLE_DEVICES),
             color = Color.White,
-            fontSize = 22.sp,
+            fontSize = ui.sp(22f),
             fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 1.sp
+            letterSpacing = ui.sp(1f)
         )
 
         Spacer(Modifier.height(ui.smallSpacing))
@@ -142,7 +142,7 @@ fun DevicesScreen(
             Text(
                 text = if (uiState.isScanning) LocalUiStrings.current.text(UiTextKey.SCANNING) else LocalUiStrings.current.text(UiTextKey.SCAN),
                 fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 0.8.sp
+                letterSpacing = ui.sp(0.8f)
             )
         }
 
@@ -195,8 +195,8 @@ private fun EmergencySosButton(
         Text(
             text = LocalUiStrings.current.text(UiTextKey.SEND_ALERT),
             color = Color.White.copy(alpha = 0.88f),
-            fontSize = 10.sp,
-            lineHeight = 12.sp,
+            fontSize = ui.sp(10f),
+            lineHeight = ui.sp(12f),
             fontWeight = FontWeight.SemiBold,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
@@ -317,9 +317,9 @@ private fun EmergencySosButton(
                         Text(
                             text = LocalUiStrings.current.text(UiTextKey.SOS),
                             color = Color.White,
-                            fontSize = 16.sp,
+                            fontSize = ui.sp(16f),
                             fontWeight = FontWeight.Black,
-                            letterSpacing = 1.sp
+                            letterSpacing = ui.sp(1f)
                         )
 
                         Spacer(Modifier.height(1.dp))
@@ -331,8 +331,8 @@ private fun EmergencySosButton(
                                 LocalUiStrings.current.text(UiTextKey.HOLD_TWO_SECONDS)
                             },
                             color = Color.White.copy(alpha = 0.95f),
-                            fontSize = 8.sp,
-                            lineHeight = 9.sp,
+                            fontSize = ui.sp(8f),
+                            lineHeight = ui.sp(9f),
                             fontWeight = FontWeight.Medium
                         )
                     }
@@ -383,7 +383,7 @@ private fun EmptyDevicesState(
             Text(
                 text = "Discovery runs automatically in the background.",
                 color = Color(0xFF8EA8C0),
-                fontSize = 12.sp,
+                fontSize = ui.sp(12f),
                 textAlign = TextAlign.Center
             )
         }
@@ -412,7 +412,7 @@ private fun AvailableDeviceCard(
                         peer.callsign,
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
+                        fontSize = ui.sp(14f)
                     )
                     Spacer(Modifier.height(ui.dp(3.dp)))
                     Text(
@@ -422,7 +422,7 @@ private fun AvailableDeviceCard(
                             peer.linkText
                         },
                         color = Color(0xFF8EA8C0),
-                        fontSize = 11.sp
+                        fontSize = ui.sp(11f)
                     )
                 }
 
@@ -449,7 +449,7 @@ private fun AvailableDeviceCard(
                     } else {
                         RedTacticalStatusYellow
                     },
-                    fontSize = 10.sp,
+                    fontSize = ui.sp(10f),
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -475,7 +475,7 @@ private fun AvailableDeviceCard(
                 Text(
                     LocalUiStrings.current.text(UiTextKey.ADD_TO_SQUAD),
                     fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 0.5.sp
+                    letterSpacing = ui.sp(0.5f)
                 )
             }
         }
