@@ -148,7 +148,7 @@ fun SettingsScreen(
 
         Spacer(Modifier.height(ui.sectionSpacing))
 
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(verticalArrangement = Arrangement.spacedBy(ui.smallSpacing)) {
             listOf("en" to "English", "hi" to "हिन्दी").forEach { (code, name) ->
                 val selected = uiLanguageCode == code
                 Card(
@@ -217,7 +217,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(ui.sectionSpacing))
 
         Column(
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(ui.smallSpacing)
         ) {
             val playbackOptions = listOf(
                 Triple(
