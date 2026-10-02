@@ -141,6 +141,7 @@ data class MainUiState(
     val emergencyError: String? = null,
     val pendingSquadRequest: SquadRequest? = null,
     val pendingSquadRequestCount: Int = 0,
+    val showWifiMultipleRequestWarning: Boolean = false,
     val respondingSquadRequestId: String? = null,
     val squadRequestError: String? = null,
     val ttsPlaybackMode: com.tactical.platform.speech.mms.MmsTtsPlaybackMode =
@@ -215,6 +216,7 @@ class MainViewModel @Inject constructor(
     private var lastHandledPttSessionId: String? = null
     private val continuousTransmissionMessages = mutableMapOf<String, ChatMessageUi>()
     private var resumeContinuousAfterEmergency = false
+    private var wifiMultipleRequestWarningDismissed = false
 
     private val emergencyTrigger =
         com.tactical.emergency.trigger.HoldPanicTrigger(viewModelScope)
@@ -365,12 +367,44 @@ class MainViewModel @Inject constructor(
             ) { direct, mesh ->
                 (direct + mesh).distinctBy { it.deviceId }
             }.collect { requests ->
+                val groupFormed = wifiDirectManager.connectionInfo().value.groupFormed
+
+                if (requests.size <= 1) {
+                    wifiMultipleRequestWarningDismissed = false
+                }
+
                 _uiState.update {
                     it.copy(
                         pendingSquadRequest = requests.firstOrNull(),
                         pendingSquadRequestCount = requests.size,
+                        showWifiMultipleRequestWarning =
+                            requests.size > 1 &&
+                                groupFormed &&
+                                !wifiMultipleRequestWarningDismissed,
                         squadRequestError = null
                     )
+                }
+            }
+        }
+
+        // Re-evaluate the warning when a Wi-Fi Direct group forms/disappears
+        // after pending requests have already arrived.
+        viewModelScope.launch {
+            wifiDirectManager.connectionInfo().collect { info ->
+                val requests = _uiState.value.pendingSquadRequestCount
+                if (requests <= 1) {
+                    wifiMultipleRequestWarningDismissed = false
+                    _uiState.update {
+                        it.copy(showWifiMultipleRequestWarning = false)
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(
+                            showWifiMultipleRequestWarning =
+                                info.groupFormed &&
+                                    !wifiMultipleRequestWarningDismissed
+                        )
+                    }
                 }
             }
         }
@@ -736,6 +770,13 @@ class MainViewModel @Inject constructor(
             }
         }
     }
+    fun dismissWifiMultipleRequestWarning() {
+        wifiMultipleRequestWarningDismissed = true
+        _uiState.update {
+            it.copy(showWifiMultipleRequestWarning = false)
+        }
+    }
+
     fun respondToSquadRequest(deviceId: String, approve: Boolean) {
         if (_uiState.value.respondingSquadRequestId != null) return
 
