@@ -360,7 +360,7 @@ fun SettingsScreen(
                         ) {
                             Text(
                                 LocalUiStrings.current.text(UiTextKey.CONFIRM),
-                                color = Color(0xFF1D5B8F),
+                                color = SquadBlueGlow,
                                 fontWeight = FontWeight.Bold
                             )
                         }
