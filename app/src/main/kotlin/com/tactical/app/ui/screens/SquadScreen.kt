@@ -820,95 +820,96 @@ fun SquadScreen(
     }
 
     if (languagePickerVisible) {
-        AlertDialog(
-            onDismissRequest = { languagePickerVisible = false },
-            containerColor = SquadBlueSurfaceRaised,
-            titleContentColor = Color.White,
-            textContentColor = Color.White,
-            title = {
-                Text(
-                    LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
-                    color = Color.White,
-                    fontSize = ui.sp(20f),
-                    fontWeight = FontWeight.ExtraBold
-                )
-            },
-            text = {
-                Column(
-                    modifier = Modifier.verticalScroll(rememberScrollState())
-                ) {
-                    SQUAD_LANGUAGE_OPTIONS.forEach { option ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable(
-                                    enabled = option.available,
-                                    onClick = {
-                                        pendingLanguageCode = option.code
-                                    }
-                                )
-                                .padding(vertical = ui.dp(7.dp)),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    option.nativeName,
-                                    color = if (option.available) {
-                                        Color.White
-                                    } else {
-                                        Color(0xFFA4B2BF)
-                                    },
-                                    fontSize = ui.sp(14f),
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    option.name,
-                                    color = if (option.available) {
-                                        Color(0xFFBFD6EA)
-                                    } else {
-                                        Color(0xFF8EAAC2)
-                                    },
-                                    fontSize = uiSpForDialog(
-                                        uiState.uiLanguageCode,
-                                        10f
+        ResponsiveScreen(
+            languageCode = uiState.uiLanguageCode
+        ) { dialogUi ->
+            AlertDialog(
+                onDismissRequest = { languagePickerVisible = false },
+                containerColor = SquadBlueSurfaceRaised,
+                titleContentColor = Color.White,
+                textContentColor = Color.White,
+                title = {
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
+                        color = Color.White,
+                        fontSize = dialogUi.sp(20f),
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    ) {
+                        SQUAD_LANGUAGE_OPTIONS.forEach { option ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(
+                                        enabled = option.available,
+                                        onClick = {
+                                            pendingLanguageCode = option.code
+                                        }
                                     )
+                                    .padding(vertical = dialogUi.dp(7.dp)),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        option.nativeName,
+                                        color = if (option.available) {
+                                            Color.White
+                                        } else {
+                                            Color(0xFFA4B2BF)
+                                        },
+                                        fontSize = dialogUi.sp(14f),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        option.name,
+                                        color = if (option.available) {
+                                            Color(0xFFBFD6EA)
+                                        } else {
+                                            Color(0xFF8EAAC2)
+                                        },
+                                        fontSize = dialogUi.sp(10f)
+                                    )
+                                }
+
+                                RadioButton(
+                                    selected = pendingLanguageCode == option.code,
+                                    enabled = option.available,
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = SquadBluePrimary,
+                                        unselectedColor = Color(0xFF8EAAC2),
+                                        disabledSelectedColor = SquadBluePrimary.copy(alpha = 0.5f),
+                                        disabledUnselectedColor = Color(0xFF526A80)
+                                    ),
+                                    onClick = {
+                                        if (option.available) {
+                                            pendingLanguageCode = option.code
+                                        }
+                                    }
                                 )
                             }
-
-                            RadioButton(
-                                selected = pendingLanguageCode == option.code,
-                                enabled = option.available,
-                                colors = RadioButtonDefaults.colors(
-                                    selectedColor = SquadBluePrimary,
-                                    unselectedColor = Color(0xFF8EAAC2),
-                                    disabledSelectedColor = SquadBluePrimary.copy(alpha = 0.5f),
-                                    disabledUnselectedColor = Color(0xFF526A80)
-                                ),
-                                onClick = {
-                                    if (option.available) {
-                                        pendingLanguageCode = option.code
-                                    }
-                                }
-                            )
                         }
                     }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        languagePickerVisible = false
-                        onLanguageSelected(pendingLanguageCode)
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            languagePickerVisible = false
+                            onLanguageSelected(pendingLanguageCode)
+                        }
+                    ) {
+                        Text(
+                            LocalUiStrings.current.text(UiTextKey.CONFIRM),
+                            color = SquadBlueGlow,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
-                ) {
-                    Text(
-                        LocalUiStrings.current.text(UiTextKey.CONFIRM),
-                        color = SquadBlueGlow,
-                        fontWeight = FontWeight.Bold
-                    )
                 }
-            }
-        )
+            )
+        }
     }
 }
 
@@ -933,8 +934,6 @@ private val SQUAD_LANGUAGE_OPTIONS = listOf(
 )
 
 @Composable
-
-@Composable
 private fun SquadLanguageRow(
     option: SquadLanguageOption,
     selected: Boolean,
@@ -944,7 +943,7 @@ private fun SquadLanguageRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = option.available, onClick = onSelect)
-            .padding(vertical = 7.dp),
+            .padding(vertical = ui.dp(7.dp)),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
