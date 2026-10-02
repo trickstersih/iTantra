@@ -146,9 +146,9 @@ fun SquadScreen(
                             ) {
                                 Text(
                                     if (uiState.wifiDirectIsGroupOwner) {
-                                        "WI-FI HEAD"
+                                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_HEAD)
                                     } else {
-                                        "WI-FI MEMBER"
+                                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_MEMBER)
                                     },
                                     color = if (uiState.wifiDirectIsGroupOwner) {
                                         Color.White
@@ -777,39 +777,30 @@ fun SquadScreen(
         AlertDialog(
             onDismissRequest = { wifiGroupInfoVisible = false },
             title = {
-                Text("HOW WI-FI GROUPS WORK")
+                Text(LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_TITLE))
             },
             text = {
                 Column(
                     modifier = Modifier.verticalScroll(rememberScrollState())
                 ) {
                     Text(
-                        "Wi-Fi Direct creates a group with one Wi-Fi group head " +
-                            "(the Android group owner) and other phones as members."
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_SAME_GROUP)
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Phones in the same group can communicate over Wi-Fi Direct. " +
-                            "When a phone joins an existing group, it uses that group's " +
-                            "Wi-Fi connection instead of creating a separate group."
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_JOIN)
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "Two separate Wi-Fi groups do not automatically communicate " +
-                            "with each other. In iTantra, devices in separate groups " +
-                            "can still communicate through Bluetooth (BLE)."
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_SEPARATE_GROUPS)
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "A phone can belong to only one Wi-Fi Direct group at a time. " +
-                            "To move to another Wi-Fi group, its current group must be " +
-                            "left or disconnected first. iTantra does not automatically " +
-                            "break an existing group just to move a phone to another one."
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_ONE_GROUP)
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "The Wi-Fi group head is only the Wi-Fi Direct owner. " +
-                            "It is not the squad leader and does not control the squad."
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_HEAD_ROLE)
                     )
                 }
             },
@@ -1099,11 +1090,10 @@ fun PeerCard(
                             color = Color.White,
                             fontSize = ui.sp(14f),
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.weight(1f)
                         )
 
                         if (isWifiGroupHead) {
-                            Spacer(Modifier.width(7.dp))
+                            Spacer(Modifier.width(ui.dp(6.dp)))
                             Surface(
                                 color = SquadBluePrimary.copy(alpha = 0.28f),
                                 shape = RoundedCornerShape(6.dp),
@@ -1113,7 +1103,7 @@ fun PeerCard(
                                 )
                             ) {
                                 Text(
-                                    "GROUP HEAD",
+                                    LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_HEAD_BADGE),
                                     color = Color.White,
                                     fontSize = ui.sp(7f),
                                     fontWeight = FontWeight.ExtraBold,
@@ -1146,7 +1136,7 @@ fun PeerCard(
 
                     Text(
                         if (peer.isConnected) {
-                            LocalUiStrings.current.text(UiTextKey.CONNECTED_DOT) + connectedDetail
+                            "Connected • " + connectedDetail
                         } else if (peer.linkText == "DIRECT") {
                             LocalUiStrings.current.text(UiTextKey.IN_SQUAD_DOT) + peer.distanceText
                         } else {
