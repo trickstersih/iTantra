@@ -96,7 +96,8 @@ fun SquadScreen(
     }
 
     ResponsiveScreen(
-        modifier = modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize(),
+        languageCode = uiState.uiLanguageCode
     ) { ui ->
         LazyColumn(
             modifier = Modifier
