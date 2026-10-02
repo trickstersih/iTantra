@@ -379,7 +379,7 @@ fun SettingsScreen(
                         onClick = { uiLanguagePickerVisible = false }
                     ) {
                         Text(
-                            LocalUiStrings.current.text(UiTextKey.CLOSE),
+                            LocalUiStrings.current.text(UiTextKey.CONFIRM),
                             color = Color(0xFF1D5B8F),
                             fontWeight = FontWeight.Bold
                         )
