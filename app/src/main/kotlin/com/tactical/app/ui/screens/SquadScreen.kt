@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
@@ -130,7 +131,7 @@ fun SquadScreen(
                         )
 
                         if (uiState.wifiDirectGroupFormed) {
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(ui.dp(5.dp)))
 
                             Surface(
                                 color = SquadBlueSurfaceRaised,
@@ -161,21 +162,25 @@ fun SquadScreen(
                                     fontWeight = FontWeight.ExtraBold,
                                     letterSpacing = ui.sp(0.5f),
                                     modifier = Modifier.padding(
-                                        horizontal = ui.dp(6.dp),
-                                        vertical = ui.dp(3.dp)
+                                        horizontal = ui.dp(5.dp),
+                                        vertical = ui.dp(2.dp)
                                     )
                                 )
                             }
 
-                            IconButton(
-                                onClick = { wifiGroupInfoVisible = true },
-                                modifier = Modifier.size(ui.dp(30.dp))
+                            Box(
+                                modifier = Modifier
+                                    .size(ui.dp(30.dp))
+                                    .clickable { wifiGroupInfoVisible = true },
+                                contentAlignment = Alignment.Center
                             ) {
-                                Text(
-                                    "ⓘ",
-                                    color = Color(0xFFBFD6EA),
-                                    fontSize = ui.sp(19f),
-                                    fontWeight = FontWeight.ExtraBold
+                                Icon(
+                                    Icons.Default.Info,
+                                    contentDescription = LocalUiStrings.current.text(
+                                        UiTextKey.WIFI_GROUP_INFO_TITLE
+                                    ),
+                                    tint = Color(0xFFBFD6EA),
+                                    modifier = Modifier.size(ui.dp(20.dp))
                                 )
                             }
                         }
@@ -213,8 +218,8 @@ fun SquadScreen(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = ui.sp(0.8f),
                             modifier = Modifier.padding(
-                                horizontal = 12.dp,
-                                vertical = 7.dp
+                                horizontal = ui.dp(10.dp),
+                                vertical = ui.dp(6.dp)
                             )
                         )
                     }
