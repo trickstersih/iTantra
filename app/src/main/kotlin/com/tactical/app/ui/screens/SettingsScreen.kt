@@ -322,12 +322,9 @@ fun SettingsScreen(
             color = RedTacticalTextSecondary,
             fontSize = ui.sp(11f)
         )
-        }
-    }
 
-    if (uiLanguagePickerVisible) {
-        AlertDialog(
-            onDismissRequest = { uiLanguagePickerVisible = false },
+
+        if (uiLanguagePickerVisible) {onDismissRequest = { uiLanguagePickerVisible = false },
             title = {
                 Text(
                     LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
@@ -379,5 +376,7 @@ fun SettingsScreen(
                 }
             }
         )
+    }
+}        }
     }
 }
