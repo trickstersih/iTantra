@@ -860,7 +860,7 @@ fun SquadScreen(
                         Text(
                             LocalUiStrings.current.text(UiTextKey.INDIAN_LANGUAGES),
                             color = Color(0xFF54708C),
-                            fontSize = ui.sp(11f),
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
 
@@ -879,7 +879,7 @@ fun SquadScreen(
                         Text(
                             LocalUiStrings.current.text(UiTextKey.OTHER),
                             color = Color(0xFF54708C),
-                            fontSize = ui.sp(11f),
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
 
