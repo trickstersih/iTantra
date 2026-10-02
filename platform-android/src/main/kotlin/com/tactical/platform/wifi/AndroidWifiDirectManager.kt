@@ -1261,6 +1261,7 @@ class AndroidWifiDirectManager(
                         }
 
                         _connectionInfo.value = baseInfo.copy(
+                            groupOwnerDeviceAddress = group?.owner?.deviceAddress,
                             groupMemberDeviceAddresses = members
                         )
 
