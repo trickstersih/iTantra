@@ -42,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tactical.app.ui.MainUiState
 import com.tactical.app.ui.PeerNodeUi
+import com.tactical.app.ui.ResponsiveScreen
+import com.tactical.app.ui.ResponsiveUi
 import com.tactical.ptt.session.SessionState
 import com.tactical.app.ui.theme.*
 import com.tactical.platform.api.ble.BleLinkState
@@ -93,15 +95,21 @@ fun SquadScreen(
         }
     }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SquadBlueBackground)
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-            .navigationBarsPadding(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(bottom = 18.dp)
-    ) {
+    ResponsiveScreen(
+        modifier = modifier.fillMaxSize()
+    ) { ui ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(SquadBlueBackground)
+                .padding(
+                    horizontal = ui.horizontalPadding,
+                    vertical = ui.dp(12.dp)
+                )
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(ui.smallSpacing),
+            contentPadding = PaddingValues(bottom = ui.dp(18.dp))
+        ) {
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -137,28 +145,30 @@ fun SquadScreen(
                             ) {
                                 Text(
                                     if (uiState.wifiDirectIsGroupOwner) {
-                                        "WI-FI GROUP HEAD"
+                                        "WI-FI HEAD"
                                     } else {
-                                        "WI-FI GROUP MEMBER"
+                                        "WI-FI MEMBER"
                                     },
                                     color = if (uiState.wifiDirectIsGroupOwner) {
                                         Color.White
                                     } else {
                                         Color(0xFFBFD6EA)
                                     },
-                                    fontSize = 8.sp,
+                                    fontSize = 7.sp,
+                                    maxLines = 1,
+                                    softWrap = false,
                                     fontWeight = FontWeight.ExtraBold,
                                     letterSpacing = 0.5.sp,
                                     modifier = Modifier.padding(
-                                        horizontal = 7.dp,
-                                        vertical = 4.dp
+                                        horizontal = ui.dp(6.dp),
+                                        vertical = ui.dp(3.dp)
                                     )
                                 )
                             }
 
                             IconButton(
                                 onClick = { wifiGroupInfoVisible = true },
-                                modifier = Modifier.size(30.dp)
+                                modifier = Modifier.size(ui.dp(30.dp))
                             ) {
                                 Text(
                                     "ⓘ",
@@ -255,7 +265,7 @@ fun SquadScreen(
                                     letterSpacing = 0.8.sp
                                 )
                                 if (!uiState.pttEnabled) {
-                                    Spacer(Modifier.height(3.dp))
+                                    Spacer(Modifier.height(ui.dp(3.dp)))
                                     Text(
                                         if (uiState.pttContinuousSession) {
                                             LocalUiStrings.current.text(UiTextKey.LISTENING_CONTINUOUSLY)
@@ -284,7 +294,7 @@ fun SquadScreen(
                                 uiState.pttSessionState == SessionState.RECORDING &&
                                 !uiState.pttLastTranscription.isNullOrBlank()
                         ) {
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(ui.smallSpacing))
                             Text(
                                 uiState.pttLastTranscription.orEmpty(),
                                 color = Color.White,
@@ -486,12 +496,12 @@ fun SquadScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
-                        modifier = Modifier.size(222.dp),
+                        modifier = Modifier.size(ui.pttOuter),
                         contentAlignment = Alignment.Center
                     ) {
                         Box(
                             Modifier
-                                .size(216.dp)
+                                .size(ui.pttRingInner)
                                 .border(
                                     1.5.dp,
                                     pttGlowColor.copy(alpha = 0.25f),
@@ -500,7 +510,7 @@ fun SquadScreen(
                         )
                         Box(
                             Modifier
-                                .size(202.dp)
+                                .size(ui.pttRingOuter)
                                 .border(
                                     2.dp,
                                     pttGlowColor.copy(alpha = 0.45f),
@@ -509,7 +519,7 @@ fun SquadScreen(
                         )
                         Box(
                             modifier = Modifier
-                                .size(186.dp)
+                                .size(ui.pttCore)
                                 .shadow(
                                     elevation = 28.dp,
                                     shape = CircleShape,
@@ -591,7 +601,7 @@ fun SquadScreen(
                                     Icons.Default.Mic,
                                     contentDescription = null,
                                     tint = Color.White,
-                                    modifier = Modifier.size(44.dp)
+                                    modifier = Modifier.size(ui.dp(44.dp))
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 Text(
@@ -679,7 +689,7 @@ fun SquadScreen(
                         } else {
                             Color(0xFFBFD6EA)
                         },
-                        modifier = Modifier.size(21.dp)
+                        modifier = Modifier.size(ui.compactIcon)
                     )
                 }
             }
@@ -695,10 +705,11 @@ fun SquadScreen(
                 key = { "connected_" + it.deviceAddress }
             ) { peer ->
                 PeerCard(
+                    ui = ui,
                     peer = peer,
                     isWifiGroupHead = uiState.wifiDirectGroupFormed &&
                         peer.deviceAddress.equals(
-                            uiState.wifiDirectGroupOwnerDeviceAddress,
+                            uiState.wifiDirectGroupOwnerAppDeviceId,
                             ignoreCase = true
                         ),
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
@@ -749,8 +760,8 @@ fun SquadScreen(
                 )
             }
         }
-
     }
+
     if (wifiGroupInfoVisible) {
         AlertDialog(
             onDismissRequest = { wifiGroupInfoVisible = false },
@@ -809,7 +820,7 @@ fun SquadScreen(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
+                    .padding(horizontal = ui.dp(12.dp))
             ) {
                 val dialogWidth = minOf(maxWidth * 0.94f, 420.dp)
                 val dialogMaxHeight = maxHeight * 0.86f
@@ -825,7 +836,10 @@ fun SquadScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 18.dp, vertical = 16.dp)
+                            .padding(
+                            horizontal = ui.dp(18.dp),
+                            vertical = ui.dp(16.dp)
+                        )
                     ) {
                         Text(
                             LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
@@ -1011,6 +1025,7 @@ private fun EmptySquadSection(message: String) {
 
 @Composable
 fun PeerCard(
+    ui: ResponsiveUi,
     peer: PeerNodeUi,
     isWifiGroupHead: Boolean = false,
     removeArmed: Boolean = false,
@@ -1031,13 +1046,16 @@ fun PeerCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 14.dp),
+                    .padding(
+                        horizontal = ui.dp(4.dp),
+                        vertical = ui.dp(14.dp)
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(ui.dp(38.dp))
                         .clip(CircleShape)
                         .background(SquadBlueSurfaceRaised)
                         .border(
@@ -1054,11 +1072,11 @@ fun PeerCard(
                         Icons.Default.Person,
                         contentDescription = peer.callsign,
                         tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(ui.dp(20.dp))
                     )
                 }
 
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(ui.dp(12.dp)))
 
                 Column(Modifier.weight(1f)) {
                     Row(
@@ -1089,8 +1107,8 @@ fun PeerCard(
                                     fontWeight = FontWeight.ExtraBold,
                                     letterSpacing = 0.45.sp,
                                     modifier = Modifier.padding(
-                                        horizontal = 6.dp,
-                                        vertical = 3.dp
+                                        horizontal = ui.dp(6.dp),
+                                        vertical = ui.dp(3.dp)
                                     )
                                 )
                             }
