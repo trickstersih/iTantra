@@ -978,7 +978,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun setUiLanguage(languageCode: String) {
-        if (languageCode != "en" && languageCode != "hi") return
+        if (languageCode !in setOf("en", "hi", "gu", "mr", "kn", "ml", "ta", "te", "or", "bn")) return
         uiLanguagePreferences.setSelectedLanguageCode(languageCode)
         _uiState.update { it.copy(uiLanguageCode = languageCode) }
     }
