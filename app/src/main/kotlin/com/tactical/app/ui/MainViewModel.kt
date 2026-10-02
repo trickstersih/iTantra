@@ -142,6 +142,10 @@ data class MainUiState(
     val pendingSquadRequest: SquadRequest? = null,
     val pendingSquadRequestCount: Int = 0,
     val showWifiMultipleRequestWarning: Boolean = false,
+    // Wi-Fi Direct group role/topology exposed to the Squad screen.
+    val wifiDirectGroupFormed: Boolean = false,
+    val wifiDirectIsGroupOwner: Boolean = false,
+    val wifiDirectGroupOwnerDeviceAddress: String? = null,
     val respondingSquadRequestId: String? = null,
     val squadRequestError: String? = null,
     val ttsPlaybackMode: com.tactical.platform.speech.mms.MmsTtsPlaybackMode =
@@ -392,19 +396,21 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             wifiDirectManager.connectionInfo().collect { info ->
                 val requests = _uiState.value.pendingSquadRequestCount
+
                 if (requests <= 1) {
                     wifiMultipleRequestWarningDismissed = false
-                    _uiState.update {
-                        it.copy(showWifiMultipleRequestWarning = false)
-                    }
-                } else {
-                    _uiState.update {
-                        it.copy(
-                            showWifiMultipleRequestWarning =
+                }
+
+                _uiState.update {
+                    it.copy(
+                        wifiDirectGroupFormed = info.groupFormed,
+                        wifiDirectIsGroupOwner = info.isGroupOwner,
+                        wifiDirectGroupOwnerDeviceAddress = info.groupOwnerDeviceAddress,
+                        showWifiMultipleRequestWarning =
+                            requests > 1 &&
                                 info.groupFormed &&
-                                    !wifiMultipleRequestWarningDismissed
-                        )
-                    }
+                                !wifiMultipleRequestWarningDismissed
+                    )
                 }
             }
         }
