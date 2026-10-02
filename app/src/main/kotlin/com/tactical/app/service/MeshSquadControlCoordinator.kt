@@ -47,6 +47,7 @@ class MeshSquadControlCoordinator @Inject constructor(
 
     private val pendingByRequestId = ConcurrentHashMap<String, PendingMeshRequest>()
     private val outgoingByRequestId = ConcurrentHashMap<String, String>()
+    private val outgoingRequestIdsByDeviceId = ConcurrentHashMap<String, MutableSet<String>>()
     private val _pendingRequests = MutableStateFlow<List<SquadRequest>>(emptyList())
     private val _membershipChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
 
@@ -69,6 +70,19 @@ class MeshSquadControlCoordinator @Inject constructor(
         }
     }
 
+    private fun clearOutgoingRequest(requestId: String, deviceId: String? = outgoingByRequestId.remove(requestId)) {
+        val target = deviceId ?: return
+        outgoingRequestIdsByDeviceId[target]?.let { ids ->
+            ids.remove(requestId)
+            if (ids.isEmpty()) {
+                outgoingRequestIdsByDeviceId.remove(target, ids)
+            }
+        }
+    }
+
+    private fun hasOutgoingRequestTo(deviceId: String): Boolean =
+        outgoingRequestIdsByDeviceId[deviceId]?.isNotEmpty() == true
+
     suspend fun requestAddToSquad(
         deviceId: String
     ): TacticalResult<Unit> {
@@ -76,8 +90,19 @@ class MeshSquadControlCoordinator @Inject constructor(
             return TacticalResult.Failure("Invalid squad target")
         }
 
+        if (squadMembershipStore.contains(deviceId)) {
+            return TacticalResult.Success(Unit)
+        }
+
+        if (outgoingRequestIdsByDeviceId[deviceId]?.isNotEmpty() == true) {
+            return TacticalResult.Success(Unit)
+        }
+
         val requestId = UUID.randomUUID().toString()
         outgoingByRequestId[requestId] = deviceId
+        outgoingRequestIdsByDeviceId
+            .computeIfAbsent(deviceId) { ConcurrentHashMap.newKeySet() }
+            .add(requestId)
 
         val packet = SquadControlPacket(
             sender = DeviceId(identityStore.deviceIdValue),
@@ -91,7 +116,7 @@ class MeshSquadControlCoordinator @Inject constructor(
 
         val result = meshService.send(packet)
         if (result is TacticalResult.Failure) {
-            outgoingByRequestId.remove(requestId)
+            clearOutgoingRequest(requestId, deviceId)
         }
         return result
     }
@@ -185,6 +210,62 @@ class MeshSquadControlCoordinator @Inject constructor(
         if (packet.sender.value == identityStore.deviceIdValue) return
         if (packet.target.value != identityStore.deviceIdValue) return
 
+        // Simultaneous A -> B and B -> A requests are mutual intent. Once one
+        // request reaches the other side, collapse the two requests into one
+        // approval instead of presenting another squad-request flow.
+        if (hasOutgoingRequestTo(packet.sender.value)) {
+            outgoingRequestIdsByDeviceId[packet.sender.value]
+                ?.toList()
+                ?.forEach { requestId -> clearOutgoingRequest(requestId, packet.sender.value) }
+
+            scope.launch {
+                val response = SquadControlPacket(
+                    sender = DeviceId(identityStore.deviceIdValue),
+                    target = DeviceId(packet.sender.value),
+                    requestId = packet.requestId,
+                    action = SquadControlAction.RESPONSE,
+                    callsign = identityStore.callsign,
+                    accepted = true,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                val result = meshService.send(response)
+                if (result is TacticalResult.Success) {
+                    val membership = bleConnectionManager.addMeshSquadMember(
+                        deviceId = packet.sender.value,
+                        callsign = packet.callsign
+                    )
+                    if (membership is TacticalResult.Success) {
+                        _membershipChanged.tryEmit(Unit)
+                        android.util.Log.d(
+                            "MeshSquadControlCoordinator",
+                            "Resolved simultaneous squad requests automatically for " +
+                                packet.sender.value
+                        )
+                    }
+                }
+            }
+            return
+        }
+
+        if (squadMembershipStore.contains(packet.sender.value)) {
+            // Already a member; do not generate a duplicate approval dialog.
+            scope.launch {
+                meshService.send(
+                    SquadControlPacket(
+                        sender = DeviceId(identityStore.deviceIdValue),
+                        target = DeviceId(packet.sender.value),
+                        requestId = packet.requestId,
+                        action = SquadControlAction.RESPONSE,
+                        callsign = identityStore.callsign,
+                        accepted = true,
+                        timestamp = System.currentTimeMillis()
+                    )
+                )
+            }
+            return
+        }
+
         pendingByRequestId.putIfAbsent(
             packet.requestId,
             PendingMeshRequest(
@@ -211,7 +292,7 @@ class MeshSquadControlCoordinator @Inject constructor(
         outgoingByRequestId
             .entries
             .filter { it.value == packet.sender.value }
-            .forEach { entry -> outgoingByRequestId.remove(entry.key, entry.value) }
+            .forEach { entry -> clearOutgoingRequest(entry.key, entry.value) }
 
         publishPending()
         _membershipChanged.tryEmit(Unit)
@@ -223,8 +304,9 @@ class MeshSquadControlCoordinator @Inject constructor(
     }
 
     private fun handleResponse(packet: SquadControlPacket) {
-        val expectedTarget = outgoingByRequestId.remove(packet.requestId) ?: return
+        val expectedTarget = outgoingByRequestId[packet.requestId] ?: return
         if (expectedTarget != packet.sender.value) return
+        clearOutgoingRequest(packet.requestId, expectedTarget)
 
         if (packet.accepted == true) {
             scope.launch {
