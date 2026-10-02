@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import com.tactical.app.ui.theme.RedTacticalTextSecondary
 import com.tactical.app.ui.i18n.LocalUiStrings
 import com.tactical.app.ui.i18n.UiTextKey
+import com.tactical.app.ui.ResponsiveScreen
 import com.tactical.app.ui.theme.SquadBlueBackground
 import com.tactical.app.ui.theme.SquadBlueBorder
 import com.tactical.app.ui.theme.SquadBlueGlow
@@ -61,13 +62,16 @@ fun SettingsScreen(
         mutableStateOf<String?>(null)
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .background(SquadBlueBackground)
-            .padding(20.dp)
-    ) {
+    ResponsiveScreen(
+        modifier = modifier.fillMaxSize()
+    ) { ui ->
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .background(SquadBlueBackground)
+                .padding(ui.horizontalPadding)
+        ) {
         Text(
             LocalUiStrings.current.text(UiTextKey.USERNAME_CALLSIGN),
             color = Color.White,
@@ -76,7 +80,7 @@ fun SettingsScreen(
             letterSpacing = 1.sp
         )
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(ui.dp(6.dp)))
 
         Text(
             LocalUiStrings.current.text(UiTextKey.NAME_SHOWN),
@@ -84,7 +88,7 @@ fun SettingsScreen(
             fontSize = 12.sp
         )
 
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(ui.sectionSpacing))
 
         OutlinedTextField(
             value = usernameInput,
@@ -117,7 +121,7 @@ fun SettingsScreen(
             )
         )
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(ui.dp(6.dp)))
 
         Button(
             onClick = {
@@ -130,7 +134,7 @@ fun SettingsScreen(
             Text(LocalUiStrings.current.text(UiTextKey.SAVE_USERNAME), fontWeight = FontWeight.Bold)
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(ui.dp(24.dp)))
 
         Text(
             LocalUiStrings.current.text(UiTextKey.UI_LANGUAGE),
@@ -140,9 +144,9 @@ fun SettingsScreen(
             letterSpacing = 1.sp
         )
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(ui.dp(6.dp)))
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(ui.sectionSpacing))
 
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             listOf("en" to "English", "hi" to "हिन्दी").forEach { (code, name) ->
@@ -164,7 +168,10 @@ fun SettingsScreen(
                     Row(
                         Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                             .padding(
+                            horizontal = ui.dp(12.dp),
+                            vertical = ui.dp(10.dp)
+                        ),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
@@ -177,7 +184,7 @@ fun SettingsScreen(
                                 if (!selected) onUiLanguageSelected(code)
                             }
                         )
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(ui.smallSpacing))
                         Text(
                             name,
                             color = Color.White,
@@ -189,7 +196,7 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(ui.dp(24.dp)))
 
         Text(
             LocalUiStrings.current.text(UiTextKey.INCOMING_VOICE_PLAYBACK),
@@ -199,7 +206,7 @@ fun SettingsScreen(
             letterSpacing = 1.sp
         )
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(ui.dp(6.dp)))
 
         Text(
             LocalUiStrings.current.text(UiTextKey.INCOMING_VOICE_PLAYBACK_DESC),
@@ -207,7 +214,7 @@ fun SettingsScreen(
             fontSize = 12.sp
         )
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(ui.sectionSpacing))
 
         Column(
             verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -249,7 +256,10 @@ fun SettingsScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                             .padding(
+                            horizontal = ui.dp(12.dp),
+                            vertical = ui.dp(10.dp)
+                        ),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
@@ -268,7 +278,7 @@ fun SettingsScreen(
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            Spacer(Modifier.height(2.dp))
+                            Spacer(Modifier.height(ui.dp(2.dp)))
                             Text(
                                 description,
                                 color = RedTacticalTextSecondary,
@@ -280,12 +290,13 @@ fun SettingsScreen(
             }
         }
 
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(ui.dp(6.dp)))
 
         Text(
             LocalUiStrings.current.text(UiTextKey.OVERLAPPING_NOTE),
             color = RedTacticalTextSecondary,
             fontSize = 11.sp
         )
+        }
     }
 }
