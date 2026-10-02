@@ -7,6 +7,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.NetworkInfo
+import android.net.MacAddress
 import android.net.wifi.WifiManager
 import android.location.LocationManager
 import android.net.wifi.p2p.WifiP2pConfig
@@ -86,6 +87,11 @@ class AndroidWifiDirectManager(
     private var frameworkConnectionInProgress = false
     /** Monotonic terminal-failure signal for the currently waiting connect() call. */
     private val connectFailureSequence = AtomicLong(0L)
+    /** Credentials advertised by an existing iTantra group owner. */
+    private val groupCredentialsByDeviceAddress = mutableMapOf<String, GroupCredentials>()
+
+    /** Local group's current SSID/passphrase, known once group info is available. */
+    private var localGroupCredentials: GroupCredentials? = null
 
     /**
      * Android 15+ exposes the actual P2P state machine through WifiP2pListener.
@@ -567,11 +573,16 @@ class AndroidWifiDirectManager(
 
         return try {
             suspendCancellableCoroutine { continuation ->
-                val record = mapOf(
+                val recordMap = mutableMapOf(
                     "app" to "itantra",
                     "id" to deviceId,
                     "callsign" to callsign.take(32)
                 )
+                localGroupCredentials?.let { credentials ->
+                    recordMap["group_ssid"] = credentials.networkName
+                    recordMap["group_passphrase"] = credentials.passphrase
+                }
+                val record = recordMap.toMap()
                 val serviceInfo = WifiP2pDnsSdServiceInfo.newInstance(
                     "_itantra",
                     "_presence._tcp",
@@ -647,6 +658,32 @@ class AndroidWifiDirectManager(
                 "iTantra Wi-Fi service registration failed: " +
                     (e.message ?: e.javaClass.simpleName)
             )
+        }
+    }
+
+    private fun refreshPresenceWithGroupCredentials(
+        deviceId: String,
+        callsign: String
+    ) {
+        if (!started.get() ||
+            !wifiManager.isWifiEnabled ||
+            !hasWifiDirectPermission()
+        ) {
+            return
+        }
+
+        presenceRegistered = false
+        managerScope.launch {
+            delay(300L)
+            val result = registerPresenceServiceAwait(deviceId, callsign)
+            if (result is TacticalResult.Failure) {
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi Direct group credential advertisement refresh failed: " +
+                        result.error
+                )
+                schedulePresenceRetry()
+            }
         }
     }
 
@@ -801,6 +838,24 @@ class AndroidWifiDirectManager(
 
                     if (runCatching { UUID.fromString(id) }.isFailure) {
                         return@DnsSdTxtRecordListener
+                    }
+
+                    val groupSsid = record["group_ssid"]
+                    val groupPassphrase = record["group_passphrase"]
+                    if (!groupSsid.isNullOrBlank() && !groupPassphrase.isNullOrBlank()) {
+                        synchronized(groupCredentialsByDeviceAddress) {
+                            groupCredentialsByDeviceAddress[
+                                device.deviceAddress.lowercase()
+                            ] = GroupCredentials(
+                                networkName = groupSsid,
+                                passphrase = groupPassphrase
+                            )
+                        }
+                        android.util.Log.d(
+                            TAG,
+                            "Learned existing iTantra group credentials from " +
+                                device.deviceAddress
+                        )
                     }
 
                     val peer = WifiDirectPeer(
@@ -1210,6 +1265,22 @@ class AndroidWifiDirectManager(
                             groupMemberDeviceAddresses = members
                         )
 
+                        if (info.isGroupOwner && group != null) {
+                            val networkName = group.networkName
+                            val passphrase = group.passphrase
+                            if (!networkName.isNullOrBlank() && !passphrase.isNullOrBlank()) {
+                                localGroupCredentials = GroupCredentials(
+                                    networkName = networkName,
+                                    passphrase = passphrase
+                                )
+                                advertisedDeviceId?.let { id ->
+                                    advertisedCallsign?.let { callsign ->
+                                        refreshPresenceWithGroupCredentials(id, callsign)
+                                    }
+                                }
+                            }
+                        }
+
                         members.forEach { address ->
                             markPeerState(address, RadioLinkState.CONNECTED)
                         }
@@ -1355,8 +1426,29 @@ class AndroidWifiDirectManager(
                 // the Android reference implementation. Do not add PCC mode,
                 // WPS/PBC, persistent mode, SSID, passphrase, or group-owner
                 // settings until the baseline two-phone negotiation is proven.
-                val config = WifiP2pConfig().apply {
-                    this.deviceAddress = cleanedAddress
+                val advertisedGroupCredentials =
+                    synchronized(groupCredentialsByDeviceAddress) {
+                        groupCredentialsByDeviceAddress[cleanedAddress.lowercase()]
+                    }
+
+                val config = if (
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+                    advertisedGroupCredentials != null
+                ) {
+                    android.util.Log.d(
+                        TAG,
+                        "Joining existing iTantra group for " +
+                            cleanedAddress + " using advertised group credentials"
+                    )
+                    WifiP2pConfig.Builder()
+                        .setDeviceAddress(MacAddress.fromString(cleanedAddress))
+                        .setNetworkName(advertisedGroupCredentials.networkName)
+                        .setPassphrase(advertisedGroupCredentials.passphrase)
+                        .build()
+                } else {
+                    WifiP2pConfig().apply {
+                        this.deviceAddress = cleanedAddress
+                    }
                 }
 
                 try {
@@ -1573,6 +1665,11 @@ class AndroidWifiDirectManager(
         return context.checkSelfPermission(permission) ==
             PackageManager.PERMISSION_GRANTED
     }
+
+    private data class GroupCredentials(
+        val networkName: String,
+        val passphrase: String
+    )
 
     companion object {
         private const val TAG = "AndroidWifiDirect"
