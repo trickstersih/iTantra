@@ -7,7 +7,6 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.NetworkInfo
-import android.net.MacAddress
 import android.net.wifi.WifiManager
 import android.location.LocationManager
 import android.net.wifi.p2p.WifiP2pConfig
@@ -1265,7 +1264,7 @@ class AndroidWifiDirectManager(
                             groupMemberDeviceAddresses = members
                         )
 
-                        if (info.isGroupOwner && group != null) {
+                        if (group != null) {
                             val networkName = group.networkName
                             val passphrase = group.passphrase
                             if (!networkName.isNullOrBlank() && !passphrase.isNullOrBlank()) {
@@ -1402,6 +1401,18 @@ class AndroidWifiDirectManager(
             return TacticalResult.Success(Unit)
         }
 
+        if (wasAlreadyInGroup) {
+            android.util.Log.w(
+                TAG,
+                "Refusing Wi-Fi Direct connection to " +
+                    cleanedAddress +
+                    " because this phone is already in another P2P group"
+            )
+            return TacticalResult.Failure(
+                "Already connected to a Wi-Fi Direct group; the new device must join that group"
+            )
+        }
+
         connectTargetDeviceAddress = cleanedAddress
         connectionAttemptInProgress = true
         frameworkConnectionInProgress = true
@@ -1441,7 +1452,6 @@ class AndroidWifiDirectManager(
                             cleanedAddress + " using advertised group credentials"
                     )
                     WifiP2pConfig.Builder()
-                        .setDeviceAddress(MacAddress.fromString(cleanedAddress))
                         .setNetworkName(advertisedGroupCredentials.networkName)
                         .setPassphrase(advertisedGroupCredentials.passphrase)
                         .build()
