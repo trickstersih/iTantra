@@ -808,7 +808,7 @@ fun SquadScreen(
                 TextButton(
                     onClick = { wifiGroupInfoVisible = false }
                 ) {
-                    Text("OK")
+                    Text(LocalUiStrings.current.text(UiTextKey.CONFIRM))
                 }
             }
         )
