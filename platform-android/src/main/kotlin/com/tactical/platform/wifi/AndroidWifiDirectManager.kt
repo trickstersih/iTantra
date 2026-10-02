@@ -96,6 +96,30 @@ class AndroidWifiDirectManager(
      */
     private val appDeviceIdByWifiDeviceAddress = mutableMapOf<String, String>()
 
+    /**
+     * Persist the Wi-Fi P2P-address -> iTantra UUID mapping. Android can keep
+     * an existing P2P group alive while the app process is recreated, so an
+     * in-memory-only mapping is not sufficient for restoring the group-head
+     * identity immediately after app restart.
+     */
+    private val wifiIdentityPreferences by lazy {
+        context.getSharedPreferences(
+            "wifi_direct_identity_cache",
+            Context.MODE_PRIVATE
+        )
+    }
+
+    init {
+        wifiIdentityPreferences.all.forEach { (key, value) ->
+            if (key.startsWith(WIFI_IDENTITY_PREFIX) && value is String) {
+                val address = key.removePrefix(WIFI_IDENTITY_PREFIX)
+                if (address.isNotBlank() && value.isNotBlank()) {
+                    appDeviceIdByWifiDeviceAddress[address] = value
+                }
+            }
+        }
+    }
+
     /** Local group's current SSID/passphrase, known once group info is available. */
     private var localGroupCredentials: GroupCredentials? = null
 
@@ -864,11 +888,10 @@ class AndroidWifiDirectManager(
                         )
                     }
 
-                    synchronized(appDeviceIdByWifiDeviceAddress) {
-                        appDeviceIdByWifiDeviceAddress[
-                            device.deviceAddress.lowercase()
-                        ] = id
-                    }
+                    rememberAppDeviceId(
+                        wifiDeviceAddress = device.deviceAddress,
+                        appDeviceId = id
+                    )
 
                     val peer = WifiDirectPeer(
                         deviceAddress = device.deviceAddress,
@@ -1303,11 +1326,10 @@ class AndroidWifiDirectManager(
                             ownerDeviceAddress != null &&
                             ownerAppDeviceId != null
                         ) {
-                            synchronized(appDeviceIdByWifiDeviceAddress) {
-                                appDeviceIdByWifiDeviceAddress[
-                                    ownerDeviceAddress.lowercase()
-                                ] = ownerAppDeviceId
-                            }
+                            rememberAppDeviceId(
+                                wifiDeviceAddress = ownerDeviceAddress,
+                                appDeviceId = ownerAppDeviceId
+                            )
                         }
 
                         _connectionInfo.value = baseInfo.copy(
@@ -1626,6 +1648,22 @@ class AndroidWifiDirectManager(
         }
     }
 
+    private fun rememberAppDeviceId(
+        wifiDeviceAddress: String,
+        appDeviceId: String
+    ) {
+        val normalizedAddress = wifiDeviceAddress.trim().lowercase()
+        if (normalizedAddress.isBlank() || appDeviceId.isBlank()) return
+
+        synchronized(appDeviceIdByWifiDeviceAddress) {
+            appDeviceIdByWifiDeviceAddress[normalizedAddress] = appDeviceId
+        }
+
+        wifiIdentityPreferences.edit()
+            .putString(WIFI_IDENTITY_PREFIX + normalizedAddress, appDeviceId)
+            .apply()
+    }
+
     private fun markPeerState(
         deviceAddress: String,
         state: RadioLinkState
@@ -1740,5 +1778,6 @@ class AndroidWifiDirectManager(
         private const val PRESENCE_RETRY_MS = 5_000L
         private const val AUTO_RECONNECT_INTERVAL_MS = 3_000L
         private const val PEER_REFRESH_MS = 5_000L
+        private const val WIFI_IDENTITY_PREFIX = "app_id_"
     }
 }
