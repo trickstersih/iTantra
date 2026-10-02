@@ -333,21 +333,18 @@ class AndroidWifiDirectManager(
                         WifiP2pManager.WIFI_P2P_DISCOVERY_STOPPED
                     ) == WifiP2pManager.WIFI_P2P_DISCOVERY_STARTED
 
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi P2P discovery state broadcast: " +
+                            if (discovering) "STARTED" else "STOPPED"
+                    )
+
                     if (discovering &&
                         _state.value != RadioLinkState.CONNECTING &&
                         !frameworkConnectionInProgress &&
                         !_connectionInfo.value.groupFormed
                     ) {
                         _state.value = RadioLinkState.AVAILABLE
-                    } else if (!discovering &&
-                        !_connectionInfo.value.groupFormed
-                    ) {
-                        // Android explicitly stops P2P discovery when a connection
-                        // negotiation starts. Treat this stop as a framework-level
-                        // negotiation signal even when this device is the passive
-                        // side and therefore did not call connect().
-                        frameworkConnectionInProgress = true
-                        removeServiceRequest()
                     }
                 }
             }
@@ -1338,6 +1335,11 @@ class AndroidWifiDirectManager(
         connectionAttemptInProgress = true
         frameworkConnectionInProgress = true
         val connectFailureBefore = connectFailureSequence.get()
+
+        // Android stops peer/service discovery when group negotiation starts.
+        // For an explicit outgoing connection, stop our DNS-SD request now so
+        // the service-discovery state cannot race the negotiation.
+        removeServiceRequest()
         _state.value = RadioLinkState.CONNECTING
         _peers.value = _peers.value.map {
             if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
@@ -1452,15 +1454,15 @@ class AndroidWifiDirectManager(
                 connectTargetDeviceAddress = null
             }
             connectionAttemptInProgress = false
+            frameworkConnectionInProgress = false
 
-            // Resume normal discovery only after the negotiation has completely
-            // ended, whether it succeeded or failed.
+            // Resume normal discovery after our explicit negotiation attempt
+            // has ended, whether it succeeded or failed.
             if (
                 started.get() &&
                 wifiManager.isWifiEnabled &&
                 hasWifiDirectPermission() &&
-                !_connectionInfo.value.groupFormed &&
-                !frameworkConnectionInProgress
+                !_connectionInfo.value.groupFormed
             ) {
                 managerScope.launch {
                     delay(300L)
