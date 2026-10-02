@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import com.tactical.app.ui.MainUiState
 import com.tactical.app.ui.PeerNodeUi
 import com.tactical.app.ui.ResponsiveScreen
+import com.tactical.app.ui.ResponsiveUi
 import com.tactical.app.ui.theme.*
 import com.tactical.platform.api.ble.BleLinkState
 
@@ -137,7 +138,7 @@ fun DevicesScreen(
                 },
                 contentDescription = null
             )
-            Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.width(ui.smallSpacing))
             Text(
                 text = if (uiState.isScanning) LocalUiStrings.current.text(UiTextKey.SCANNING) else LocalUiStrings.current.text(UiTextKey.SCAN),
                 fontWeight = FontWeight.ExtraBold,
@@ -154,21 +155,21 @@ fun DevicesScreen(
                     .weight(1f),
                 contentAlignment = Alignment.TopCenter
             ) {
-                EmptyDevicesState(uiState.isScanning)
+                EmptyDevicesState(ui, uiState.isScanning)
             }
         } else {
             LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
+                verticalArrangement = Arrangement.spacedBy(ui.smallSpacing),
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 14.dp)
+                contentPadding = PaddingValues(bottom = ui.sectionSpacing)
             ) {
                 items(
                     uiState.availablePeers,
                     key = { it.deviceAddress }
                 ) { peer ->
-                    AvailableDeviceCard(peer, onAddToSquad)
+                    AvailableDeviceCard(ui, peer, onAddToSquad)
                 }
             }
         }
@@ -177,6 +178,7 @@ fun DevicesScreen(
 
 @Composable
 private fun EmergencySosButton(
+    ui: ResponsiveUi,
     holdProgress: Float,
     enabled: Boolean,
     active: Boolean,
@@ -186,7 +188,7 @@ private fun EmergencySosButton(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 2.dp),
+             .padding(top = ui.dp(2.dp)),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
@@ -199,11 +201,11 @@ private fun EmergencySosButton(
             modifier = Modifier.fillMaxWidth()
         )
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(ui.smallSpacing))
 
         Box(
             modifier = Modifier
-                .size(176.dp)
+                .size(ui.emergencyOuter)
                 .pointerInput(enabled, active) {
                     if (enabled && !active) {
                         detectTapGestures(
@@ -238,7 +240,7 @@ private fun EmergencySosButton(
                                 sweepAngle = 360f * holdProgress,
                                 useCenter = false,
                                 style = Stroke(
-                                    width = 4.dp.toPx(),
+                                    width = ui.dp(4.dp).toPx(),
                                     cap = StrokeCap.Round
                                 )
                             )
@@ -248,7 +250,7 @@ private fun EmergencySosButton(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(164.dp)
+                        .size(ui.emergencyRingOuter)
                         .clip(CircleShape)
                         .background(SquadHoldRed.copy(alpha = 0.11f))
                         .border(
@@ -260,7 +262,7 @@ private fun EmergencySosButton(
 
                 Box(
                     modifier = Modifier
-                        .size(148.dp)
+                        .size(ui.emergencyRingInner)
                         .clip(CircleShape)
                         .background(SquadHoldRed.copy(alpha = 0.16f))
                         .border(
@@ -272,7 +274,7 @@ private fun EmergencySosButton(
 
                 Box(
                     modifier = Modifier
-                        .size(124.dp)
+                        .size(ui.emergencyCore)
                         .shadow(
                             elevation = 24.dp,
                             shape = CircleShape,
@@ -306,7 +308,7 @@ private fun EmergencySosButton(
                             imageVector = Icons.Default.NotificationsActive,
                             contentDescription = LocalUiStrings.current.text(UiTextKey.EMERGENCY_SOS),
                             tint = Color.White,
-                            modifier = Modifier.size(29.dp)
+                            modifier = Modifier.size(ui.dp(29.dp))
                         )
 
                         Spacer(Modifier.height(1.dp))
@@ -340,7 +342,10 @@ private fun EmergencySosButton(
 }
 
 @Composable
-private fun EmptyDevicesState(isScanning: Boolean) {
+private fun EmptyDevicesState(
+    ui: ResponsiveUi,
+    isScanning: Boolean
+) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -349,7 +354,7 @@ private fun EmptyDevicesState(isScanning: Boolean) {
         shape = RoundedCornerShape(14.dp)
     ) {
         Column(
-            modifier = Modifier.padding(22.dp),
+            modifier = Modifier.padding(ui.dp(22.dp)),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(
@@ -360,9 +365,9 @@ private fun EmptyDevicesState(isScanning: Boolean) {
                 },
                 contentDescription = null,
                 tint = SquadBlueGlow,
-                modifier = Modifier.size(32.dp)
+                modifier = Modifier.size(ui.dp(32.dp))
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(ui.sectionSpacing))
             Text(
                 text = if (isScanning) {
                     LocalUiStrings.current.text(UiTextKey.LOOKING_NEARBY)
@@ -373,7 +378,7 @@ private fun EmptyDevicesState(isScanning: Boolean) {
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(4.dp))
+            Spacer(Modifier.height(ui.dp(4.dp)))
             Text(
                 text = "Discovery runs automatically in the background.",
                 color = Color(0xFF8EA8C0),
@@ -386,6 +391,7 @@ private fun EmptyDevicesState(isScanning: Boolean) {
 
 @Composable
 private fun AvailableDeviceCard(
+    ui: ResponsiveUi,
     peer: PeerNodeUi,
     onAddToSquad: (String) -> Unit
 ) {
@@ -394,7 +400,7 @@ private fun AvailableDeviceCard(
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp)) {
+        Column(Modifier.padding(ui.cardPadding)) {
             Row(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
@@ -407,7 +413,7 @@ private fun AvailableDeviceCard(
                         fontWeight = FontWeight.Bold,
                         fontSize = 14.sp
                     )
-                    Spacer(Modifier.height(3.dp))
+                    Spacer(Modifier.height(ui.dp(3.dp)))
                     Text(
                         if (peer.linkText == "DIRECT") {
                             peer.linkText + " • " + peer.distanceText
@@ -447,11 +453,13 @@ private fun AvailableDeviceCard(
                 )
             }
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(ui.sectionSpacing))
 
             Button(
                 onClick = { onAddToSquad(peer.deviceAddress) },
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(ui.controlHeight),
                 shape = RoundedCornerShape(10.dp),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = SquadBlueSurfaceRaised,
@@ -462,7 +470,7 @@ private fun AvailableDeviceCard(
                     imageVector = Icons.Default.Link,
                     contentDescription = null
                 )
-                Spacer(Modifier.width(5.dp))
+                Spacer(Modifier.width(ui.dp(5.dp)))
                 Text(
                     LocalUiStrings.current.text(UiTextKey.ADD_TO_SQUAD),
                     fontWeight = FontWeight.ExtraBold,
