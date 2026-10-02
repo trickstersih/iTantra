@@ -181,43 +181,70 @@ class WifiDirectRadioTransport(
 
     private fun connectToGroupOwner(groupOwnerAddress: String) {
         scope.launch {
-            repeat(SOCKET_CONNECT_ATTEMPTS) { attempt ->
-                if (wifiDirectManager.connectionInfo().value.groupOwnerAddress != groupOwnerAddress) {
+            var attempt = 0
+
+            // Android can keep the Wi-Fi Direct group formed while the TCP
+            // data socket is temporarily lost (range changes, OEM power
+            // management, app restart, etc.). Keep repairing the socket for as
+            // long as this is still the active group instead of giving up
+            // after five disconnects.
+            while (true) {
+                val info = wifiDirectManager.connectionInfo().value
+                if (
+                    !info.groupFormed ||
+                    info.isGroupOwner ||
+                    info.groupOwnerAddress != groupOwnerAddress
+                ) {
                     return@launch
                 }
 
+                // Do not create a second socket while an existing iTantra
+                // session is still registered for this group owner.
+                if (socketsByPeerId.isNotEmpty()) {
+                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
+                    continue
+                }
+
+                attempt += 1
                 val socket = Socket()
-                var readLoopCompleted = false
+
                 try {
                     socket.tcpNoDelay = true
+                    socket.keepAlive = true
                     socket.connect(
                         InetSocketAddress(groupOwnerAddress, TRANSPORT_PORT),
                         CONNECT_TIMEOUT_MS
                     )
                     registerSocket(socket)
                     sendHello(socket)
-                    readLoopCompleted = true
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi Direct group-owner socket connected on attempt " +
+                            attempt
+                    )
                     readLoop(socket)
                 } catch (e: IOException) {
                     android.util.Log.d(
                         TAG,
                         "Wi-Fi Direct group-owner socket attempt " +
-                            (attempt + 1) + "/" + SOCKET_CONNECT_ATTEMPTS +
-                            " failed: " + (e.message ?: "I/O error")
+                            attempt +
+                            " failed: " +
+                            (e.message ?: "I/O error")
                     )
                 } finally {
                     removeSocket(socket)
                 }
 
-                if (wifiDirectManager.connectionInfo().value.groupOwnerAddress != groupOwnerAddress) {
+                val currentInfo = wifiDirectManager.connectionInfo().value
+                if (
+                    !currentInfo.groupFormed ||
+                    currentInfo.isGroupOwner ||
+                    currentInfo.groupOwnerAddress != groupOwnerAddress
+                ) {
                     return@launch
                 }
 
-                if (readLoopCompleted && attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
-                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
-                } else if (attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
-                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
-                }
+                kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
             }
         }
     }
