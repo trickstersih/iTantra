@@ -73,7 +73,8 @@ fun DevicesScreen(
     )
 
     ResponsiveScreen(
-        modifier = modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize(),
+        languageCode = uiState.uiLanguageCode
     ) { ui ->
         Column(
             modifier = Modifier
