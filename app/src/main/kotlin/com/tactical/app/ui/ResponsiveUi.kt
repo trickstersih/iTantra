@@ -6,12 +6,14 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * Geometry scale for compact phone layouts.
  *
- * The reference design is 360 dp wide. Narrower app windows shrink large
+ * The reference design is 400 dp wide. Narrower app windows shrink large
  * controls and gutters proportionally so the same composition fits on phones
  * with a smaller available width. Wider windows do not make controls
  * disproportionately large; they simply get more breathing room.
@@ -36,6 +38,8 @@ data class ResponsiveUi(
     val compactIcon: Dp
 ) {
     fun dp(value: Dp): Dp = value * scale
+
+    fun sp(value: Float): TextUnit = (value * scale).sp
 }
 
 @Composable
@@ -52,7 +56,7 @@ fun ResponsiveScreen(
 }
 
 private fun responsiveUiForWidth(width: Dp): ResponsiveUi {
-    val scale = (width.value / 360f).coerceIn(0.82f, 1f)
+    val scale = (width.value / 400f).coerceIn(0.78f, 1f)
 
     fun d(value: Float): Dp = (value * scale).dp
 
