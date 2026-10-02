@@ -164,9 +164,9 @@ fun MessagesScreen(
                     LocalUiStrings.current.text(UiTextKey.MESSAGES)
                 },
                 color = Color.White,
-                fontSize = 22.sp,
+                fontSize = ui.sp(22f),
                 fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 1.sp,
+                letterSpacing = ui.sp(1f),
                 modifier = Modifier.weight(1f)
             )
 
@@ -186,7 +186,7 @@ fun MessagesScreen(
                             LocalUiStrings.current.text(UiTextKey.SELECT_ALL)
                         },
                         color = SquadBlueGlow,
-                        fontSize = 10.sp,
+                        fontSize = ui.sp(10f),
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -260,7 +260,7 @@ fun MessagesScreen(
                     LocalUiStrings.current.text(UiTextKey.CHAT_PPT_MODE),
                     color = if (selectedTab == 0) Color.White else RedTacticalTextSecondary,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp
+                    fontSize = ui.sp(11f)
                 )
             }
 
@@ -282,7 +282,7 @@ fun MessagesScreen(
                     LocalUiStrings.current.text(UiTextKey.CALL_MODE),
                     color = if (selectedTab == 1) Color.White else RedTacticalTextSecondary,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp
+                    fontSize = ui.sp(11f)
                 )
             }
         }
@@ -301,7 +301,7 @@ fun MessagesScreen(
                     Text(
                         LocalUiStrings.current.text(UiTextKey.NO_MESSAGES),
                         color = RedTacticalTextSecondary,
-                        fontSize = 13.sp,
+                        fontSize = ui.sp(13f),
                         modifier = Modifier.fillMaxWidth(),
                         textAlign = TextAlign.Center
                     )
@@ -527,12 +527,12 @@ private fun MessageRow(
                         "🚨 " + message.sender,
                         color = RedTacticalPrimaryBright,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp
+                        fontSize = ui.sp(13f)
                     )
                     Text(
                         formatLiveMessageTimestamp(message, currentTimeMs),
                         color = RedTacticalTextSecondary,
-                        fontSize = 10.sp
+                        fontSize = ui.sp(10f)
                     )
                 }
 
@@ -541,7 +541,7 @@ private fun MessageRow(
                 Text(
                     message.text,
                     color = Color.White,
-                    fontSize = 14.sp,
+                    fontSize = ui.sp(14f),
                     maxLines = 6
                 )
 
@@ -550,7 +550,7 @@ private fun MessageRow(
                 Text(
                     LocalUiStrings.current.text(UiTextKey.EMERGENCY_TAP_DETAILS),
                     color = RedTacticalPrimaryBright,
-                    fontSize = 10.sp,
+                    fontSize = ui.sp(10f),
                     fontWeight = FontWeight.Bold
                 )
 
@@ -623,7 +623,7 @@ private fun MessageRow(
                             message.sender,
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
+                            fontSize = ui.sp(12f),
                             modifier = Modifier.weight(1f)
                         )
                         Spacer(Modifier.width(ui.smallSpacing))
@@ -632,7 +632,7 @@ private fun MessageRow(
                     Text(
                         formatLiveMessageTimestamp(message, currentTimeMs),
                         color = RedTacticalTextSecondary,
-                        fontSize = 10.sp
+                        fontSize = ui.sp(10f)
                     )
                 }
 
@@ -641,7 +641,7 @@ private fun MessageRow(
                 Text(
                     message.text,
                     color = Color.White,
-                    fontSize = 13.sp
+                    fontSize = ui.sp(13f)
                 )
 
                 Spacer(Modifier.height(ui.dp(4.dp)))
@@ -656,7 +656,7 @@ private fun MessageRow(
                             Text(
                                 message.statusText,
                                 color = borderColor,
-                                fontSize = 9.sp
+                                fontSize = ui.sp(9f)
                             )
                         }
 
@@ -707,7 +707,7 @@ private fun SelectionIndicator(
             Text(
                 "✓",
                 color = Color.White,
-                fontSize = 12.sp,
+                fontSize = ui.sp(12f),
                 fontWeight = FontWeight.ExtraBold
             )
         }
