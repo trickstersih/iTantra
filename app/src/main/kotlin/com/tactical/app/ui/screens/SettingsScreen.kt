@@ -46,8 +46,10 @@ import com.tactical.app.ui.i18n.UiTextKey
 import com.tactical.app.ui.theme.RedTacticalTextSecondary
 import com.tactical.app.ui.theme.SquadBlueBackground
 import com.tactical.app.ui.theme.SquadBlueBorder
+import com.tactical.app.ui.theme.SquadBlueGlow
 import com.tactical.app.ui.theme.SquadBluePrimary
 import com.tactical.app.ui.theme.SquadBlueSurface
+import com.tactical.app.ui.theme.SquadBlueSurfaceRaised
 
 private data class UiLanguageOption(
     val code: String,
