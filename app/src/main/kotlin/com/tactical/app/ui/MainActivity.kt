@@ -265,73 +265,98 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            state.pendingSquadRequest?.let { request ->
-                                val isResponding =
-                                    state.respondingSquadRequestId == request.deviceId
-
+                            if (state.showWifiMultipleRequestWarning) {
                                 AlertDialog(
                                     onDismissRequest = { },
                                     title = {
-                                        Text(
-                                            if (state.pendingSquadRequestCount > 1) {
-                                                "SQUAD REQUEST 1/" +
-                                                    state.pendingSquadRequestCount
-                                            } else {
-                                                ui.text(UiTextKey.SQUAD_REQUEST)
-                                            }
-                                        )
+                                        Text("MULTIPLE WI-FI REQUESTS")
                                     },
                                     text = {
-                                        androidx.compose.foundation.layout.Column {
-                                            Text(
-                                                request.callsign +
-                                                    " " + ui.text(UiTextKey.WANTS_TO_ADD)
-                                            )
-                                            state.squadRequestError?.let { error ->
-                                                androidx.compose.foundation.layout.Spacer(
-                                                    Modifier.height(8.dp)
-                                                )
-                                                Text(
-                                                    error,
-                                                    color = Color(0xFFFF8A80),
-                                                    fontSize = 12.sp
-                                                )
-                                            }
-                                        }
+                                        Text(
+                                            "Several devices are trying to join this squad over Wi-Fi. " +
+                                                "Wi-Fi Direct works as one shared group: your phone can " +
+                                                "only belong to one Wi-Fi group at a time. " +
+                                                "Accept one request first. The other devices can then " +
+                                                "join the same group instead of creating competing groups."
+                                        )
                                     },
                                     confirmButton = {
                                         TextButton(
-                                            onClick = {
-                                                viewModel.respondToSquadRequest(
-                                                    request.deviceId,
-                                                    true
-                                                )
-                                            },
-                                            enabled = !isResponding
+                                            onClick = viewModel::dismissWifiMultipleRequestWarning
                                         ) {
-                                            Text(
-                                                if (isResponding) {
-                                                    ui.text(UiTextKey.SENDING)
-                                                } else {
-                                                    ui.text(UiTextKey.APPROVE)
-                                                }
-                                            )
-                                        }
-                                    },
-                                    dismissButton = {
-                                        TextButton(
-                                            onClick = {
-                                                viewModel.respondToSquadRequest(
-                                                    request.deviceId,
-                                                    false
-                                                )
-                                            },
-                                            enabled = !isResponding
-                                        ) {
-                                            Text(ui.text(UiTextKey.REJECT))
+                                            Text("OK")
                                         }
                                     }
                                 )
+                            } else {
+                                state.pendingSquadRequest?.let { request ->
+                                    val isResponding =
+                                        state.respondingSquadRequestId == request.deviceId
+
+                                    AlertDialog(
+                                        onDismissRequest = { },
+                                        title = {
+                                            Text(
+                                                if (state.pendingSquadRequestCount > 1) {
+                                                    "SQUAD REQUEST 1/" +
+                                                        state.pendingSquadRequestCount
+                                                } else {
+                                                    ui.text(UiTextKey.SQUAD_REQUEST)
+                                                }
+                                            )
+                                        },
+                                        text = {
+                                            androidx.compose.foundation.layout.Column {
+                                                Text(
+                                                    request.callsign +
+                                                        " " + ui.text(UiTextKey.WANTS_TO_ADD)
+                                                )
+                                                state.squadRequestError?.let { error ->
+                                                    androidx.compose.foundation.layout.Spacer(
+                                                        Modifier.height(8.dp)
+                                                    )
+                                                    Text(
+                                                        error,
+                                                        color = Color(0xFFFF8A80),
+                                                        fontSize = 12.sp
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        confirmButton = {
+                                            TextButton(
+                                                onClick = {
+                                                    viewModel.respondToSquadRequest(
+                                                        request.deviceId,
+                                                        true
+                                                    )
+                                                },
+                                                enabled = !isResponding
+                                            ) {
+                                                Text(
+                                                    if (isResponding) {
+                                                        ui.text(UiTextKey.SENDING)
+                                                    } else {
+                                                        ui.text(UiTextKey.APPROVE)
+                                                    }
+                                                )
+                                            }
+                                        },
+                                        dismissButton = {
+                                            TextButton(
+                                                onClick = {
+                                                    viewModel.respondToSquadRequest(
+                                                        request.deviceId,
+                                                        false
+                                                    )
+                                                },
+                                                enabled = !isResponding
+                                            ) {
+                                                Text(ui.text(UiTextKey.REJECT))
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
