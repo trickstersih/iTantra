@@ -417,6 +417,38 @@ class MainViewModel @Inject constructor(
             }
         }
 
+        // On some OEMs the P2P group is reported as connected before the
+        // DNS-SD record that maps the Wi-Fi head's device address to its
+        // stable iTantra UUID arrives. Keep checking the already-known group
+        // state briefly so the Squad HEAD badge appears as soon as Android has
+        // assigned the owner identity, without starting a new Wi-Fi operation.
+        viewModelScope.launch {
+            while (true) {
+                delay(750L)
+                val info = wifiDirectManager.connectionInfo().value
+                if (
+                    info.groupFormed &&
+                    info.groupOwnerAppDeviceId != null &&
+                    (
+                        _uiState.value.wifiDirectGroupOwnerAppDeviceId !=
+                            info.groupOwnerAppDeviceId ||
+                        !_uiState.value.wifiDirectGroupFormed
+                    )
+                ) {
+                    _uiState.update {
+                        it.copy(
+                            wifiDirectGroupFormed = info.groupFormed,
+                            wifiDirectIsGroupOwner = info.isGroupOwner,
+                            wifiDirectGroupOwnerDeviceAddress =
+                                info.groupOwnerDeviceAddress,
+                            wifiDirectGroupOwnerAppDeviceId =
+                                info.groupOwnerAppDeviceId
+                        )
+                    }
+                }
+            }
+        }
+
         viewModelScope.launch {
             meshSquadControlCoordinator.membershipChanged.collect {
                 refreshSquadPeers()
