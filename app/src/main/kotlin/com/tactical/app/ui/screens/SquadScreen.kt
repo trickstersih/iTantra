@@ -744,10 +744,11 @@ fun SquadScreen(
                 key = { "squad_" + it.deviceAddress }
             ) { peer ->
                 PeerCard(
+                    ui = ui,
                     peer = peer,
                     isWifiGroupHead = uiState.wifiDirectGroupFormed &&
                         peer.deviceAddress.equals(
-                            uiState.wifiDirectGroupOwnerDeviceAddress,
+                            uiState.wifiDirectGroupOwnerAppDeviceId,
                             ignoreCase = true
                         ),
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
@@ -761,6 +762,7 @@ fun SquadScreen(
             }
         }
     }
+}
 
     if (wifiGroupInfoVisible) {
         AlertDialog(
