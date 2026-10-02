@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.net.NetworkInfo
 import android.net.wifi.WifiManager
 import android.location.LocationManager
 import android.net.wifi.p2p.WifiP2pConfig
@@ -38,6 +39,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 
 /**
@@ -80,6 +82,10 @@ class AndroidWifiDirectManager(
     private var connectTargetDeviceAddress: String? = null
     private var wifiP2pListenerRegistered = false
     private var connectionAttemptInProgress = false
+    /** True while Android is negotiating a P2P connection, including on the passive peer. */
+    private var frameworkConnectionInProgress = false
+    /** Monotonic terminal-failure signal for the currently waiting connect() call. */
+    private val connectFailureSequence = AtomicLong(0L)
 
     /**
      * Android 15+ exposes the actual P2P state machine through WifiP2pListener.
@@ -109,6 +115,7 @@ class AndroidWifiDirectManager(
                             it.deviceAddress
                         }
                 )
+                frameworkConnectionInProgress = false
                 refreshConnectionInfo()
             }
 
@@ -117,6 +124,8 @@ class AndroidWifiDirectManager(
                     TAG,
                     "Wi-Fi P2P group creation failed via listener: " + reason
                 )
+                frameworkConnectionInProgress = false
+                connectFailureSequence.incrementAndGet()
                 if (!_connectionInfo.value.groupFormed) {
                     connectTargetDeviceAddress = null
                     _state.value = RadioLinkState.FAILED
@@ -128,6 +137,8 @@ class AndroidWifiDirectManager(
                     TAG,
                     "Wi-Fi P2P group negotiation rejected by user"
                 )
+                frameworkConnectionInProgress = false
+                connectFailureSequence.incrementAndGet()
                 if (!_connectionInfo.value.groupFormed) {
                     connectTargetDeviceAddress = null
                     _state.value = RadioLinkState.FAILED
@@ -224,11 +235,51 @@ class AndroidWifiDirectManager(
                 }
 
                 WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION -> {
+                    val networkInfo = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        intent.getParcelableExtra(
+                            WifiP2pManager.EXTRA_NETWORK_INFO,
+                            NetworkInfo::class.java
+                        )
+                    } else {
+                        @Suppress("DEPRECATION")
+                        intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO)
+                    }
+
                     android.util.Log.d(
                         TAG,
-                        "Wi-Fi P2P connection broadcast received"
+                        "Wi-Fi P2P connection broadcast received: " +
+                            (networkInfo?.detailedState?.name ?: "unknown")
                     )
+
+                    when (networkInfo?.detailedState) {
+                        NetworkInfo.DetailedState.CONNECTING,
+                        NetworkInfo.DetailedState.AUTHENTICATING,
+                        NetworkInfo.DetailedState.OBTAINING_IPADDR -> {
+                            frameworkConnectionInProgress = true
+                        }
+
+                        NetworkInfo.DetailedState.DISCONNECTED -> {
+                            frameworkConnectionInProgress = false
+                        }
+
+                        else -> Unit
+                    }
+
                     refreshConnectionInfo()
+
+                    if (
+                        networkInfo?.detailedState == NetworkInfo.DetailedState.DISCONNECTED &&
+                        started.get() &&
+                        wifiManager.isWifiEnabled &&
+                        hasWifiDirectPermission() &&
+                        !connectionAttemptInProgress &&
+                        !_connectionInfo.value.groupFormed
+                    ) {
+                        managerScope.launch {
+                            delay(300L)
+                            startServiceDiscoveryInternal()
+                        }
+                    }
                 }
 
                 WifiP2pManager.ACTION_WIFI_P2P_REQUEST_RESPONSE_CHANGED -> {
@@ -283,15 +334,19 @@ class AndroidWifiDirectManager(
 
                     if (discovering &&
                         _state.value != RadioLinkState.CONNECTING &&
+                        !frameworkConnectionInProgress &&
                         !_connectionInfo.value.groupFormed
                     ) {
                         _state.value = RadioLinkState.AVAILABLE
                     } else if (!discovering &&
-                        !_connectionInfo.value.groupFormed &&
-                        !connectionAttemptInProgress
+                        !_connectionInfo.value.groupFormed
                     ) {
+                        // Android explicitly stops P2P discovery when a connection
+                        // negotiation starts. Treat this stop as a framework-level
+                        // negotiation signal even when this device is the passive
+                        // side and therefore did not call connect().
+                        frameworkConnectionInProgress = true
                         removeServiceRequest()
-                        scheduleServiceDiscoveryRetry()
                     }
                 }
             }
@@ -364,6 +419,7 @@ class AndroidWifiDirectManager(
         autoReconnectJob = null
         connectTargetDeviceAddress = null
         connectionAttemptInProgress = false
+        frameworkConnectionInProgress = false
         presenceRegistered = false
 
         serviceRequest?.let { request ->
@@ -664,6 +720,8 @@ class AndroidWifiDirectManager(
         if (!started.get() ||
             serviceDiscoveryStarted ||
             serviceRequest != null ||
+            connectionAttemptInProgress ||
+            frameworkConnectionInProgress ||
             !wifiManager.isWifiEnabled ||
             !hasWifiDirectPermission()
         ) {
@@ -1046,7 +1104,9 @@ class AndroidWifiDirectManager(
                 if (started.get() &&
                     wifiManager.isWifiEnabled &&
                     hasWifiDirectPermission() &&
-                    !serviceDiscoveryStarted
+                    !serviceDiscoveryStarted &&
+                    !connectionAttemptInProgress &&
+                    !frameworkConnectionInProgress
                 ) {
                     startServiceDiscoveryInternal()
                 }
@@ -1079,6 +1139,7 @@ class AndroidWifiDirectManager(
         presenceRetryJob = null
         presenceRegistered = false
         presenceRegistrationInProgress = false
+        frameworkConnectionInProgress = false
         _connectionInfo.value = WifiDirectConnectionInfo()
         _peers.value = emptyList()
         _state.value = RadioLinkState.UNAVAILABLE
@@ -1105,7 +1166,8 @@ class AndroidWifiDirectManager(
                     if (
                         wasGroupFormed &&
                         wifiManager.isWifiEnabled &&
-                        !connectionAttemptInProgress
+                        !connectionAttemptInProgress &&
+                        !frameworkConnectionInProgress
                     ) {
                         // Some OEM stacks drop the P2P discovery engine together
                         // with the group without sending a discovery-changed
@@ -1119,6 +1181,8 @@ class AndroidWifiDirectManager(
 
                     return@requestConnectionInfo
                 }
+
+                frameworkConnectionInProgress = false
 
                 val baseInfo = WifiDirectConnectionInfo(
                     groupFormed = true,
@@ -1271,6 +1335,8 @@ class AndroidWifiDirectManager(
 
         connectTargetDeviceAddress = cleanedAddress
         connectionAttemptInProgress = true
+        frameworkConnectionInProgress = true
+        val connectFailureBefore = connectFailureSequence.get()
         _state.value = RadioLinkState.CONNECTING
         _peers.value = _peers.value.map {
             if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
@@ -1327,37 +1393,53 @@ class AndroidWifiDirectManager(
                 )
             }
 
-            val established = if (!wasAlreadyInGroup) {
-                // Fresh P2P negotiation: connect() must result in an actual
-                // formed group, not merely an accepted framework request.
-                _connectionInfo.value.groupFormed ||
-                    withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
-                        _connectionInfo.first { it.groupFormed }
-                        true
-                    } == true
-            } else {
-                // Existing group: Android sends an invitation to the peer.
-                // Waiting only for groupFormed would return immediately because
-                // the group already exists, so wait for the target to join it.
-                withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
-                    _connectionInfo.first { info ->
-                        info.groupFormed &&
-                            info.groupMemberDeviceAddresses.any {
-                                it.equals(cleanedAddress, ignoreCase = true)
-                            }
+            val established = withTimeoutOrNull(CONNECT_TIMEOUT_MS) {
+                while (true) {
+                    if (!wasAlreadyInGroup && _connectionInfo.value.groupFormed) {
+                        return@withTimeoutOrNull true
                     }
-                    true
-                } == true
-            }
+
+                    if (
+                        wasAlreadyInGroup &&
+                        _connectionInfo.value.groupFormed &&
+                        _connectionInfo.value.groupMemberDeviceAddresses.any {
+                            it.equals(cleanedAddress, ignoreCase = true)
+                        }
+                    ) {
+                        return@withTimeoutOrNull true
+                    }
+
+                    if (connectFailureSequence.get() != connectFailureBefore) {
+                        return@withTimeoutOrNull false
+                    }
+
+                    delay(50L)
+                }
+            } == true
 
             if (!established) {
+                if (
+                    connectFailureSequence.get() == connectFailureBefore &&
+                    !wasAlreadyInGroup &&
+                    !_connectionInfo.value.groupFormed
+                ) {
+                    runCatching {
+                        wifiP2pManager.cancelConnect(
+                            wifichannel,
+                            null
+                        )
+                    }
+                }
+
                 _state.value = RadioLinkState.FAILED
                 markPeerState(cleanedAddress, RadioLinkState.FAILED)
                 return TacticalResult.Failure(
                     if (wasAlreadyInGroup) {
                         "Wi-Fi Direct peer did not join the existing group"
-                    } else {
+                    } else if (connectFailureSequence.get() == connectFailureBefore) {
                         "Wi-Fi Direct connection timed out"
+                    } else {
+                        "Wi-Fi Direct group creation failed"
                     }
                 )
             }
@@ -1376,7 +1458,8 @@ class AndroidWifiDirectManager(
                 started.get() &&
                 wifiManager.isWifiEnabled &&
                 hasWifiDirectPermission() &&
-                !_connectionInfo.value.groupFormed
+                !_connectionInfo.value.groupFormed &&
+                !frameworkConnectionInProgress
             ) {
                 managerScope.launch {
                     delay(300L)
@@ -1490,7 +1573,7 @@ class AndroidWifiDirectManager(
 
     companion object {
         private const val TAG = "AndroidWifiDirect"
-        private const val CONNECT_TIMEOUT_MS = 15_000L
+        private const val CONNECT_TIMEOUT_MS = 30_000L
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
         private const val AUTO_RECONNECT_INTERVAL_MS = 3_000L
