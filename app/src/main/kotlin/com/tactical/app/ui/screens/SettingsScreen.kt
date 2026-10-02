@@ -76,9 +76,9 @@ fun SettingsScreen(
         Text(
             LocalUiStrings.current.text(UiTextKey.USERNAME_CALLSIGN),
             color = Color.White,
-            fontSize = 22.sp,
+            fontSize = ui.sp(22f),
             fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 1.sp
+            letterSpacing = ui.sp(1f)
         )
 
         Spacer(Modifier.height(ui.dp(6.dp)))
@@ -86,7 +86,7 @@ fun SettingsScreen(
         Text(
             LocalUiStrings.current.text(UiTextKey.NAME_SHOWN),
             color = RedTacticalTextSecondary,
-            fontSize = 12.sp
+            fontSize = ui.sp(12f)
         )
 
         Spacer(Modifier.height(ui.sectionSpacing))
@@ -140,9 +140,9 @@ fun SettingsScreen(
         Text(
             LocalUiStrings.current.text(UiTextKey.UI_LANGUAGE),
             color = Color.White,
-            fontSize = 22.sp,
+            fontSize = ui.sp(22f),
             fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 1.sp
+            letterSpacing = ui.sp(1f)
         )
 
         Spacer(Modifier.height(ui.dp(6.dp)))
@@ -189,7 +189,7 @@ fun SettingsScreen(
                         Text(
                             name,
                             color = Color.White,
-                            fontSize = 15.sp,
+                            fontSize = ui.sp(15f),
                             fontWeight = FontWeight.Bold
                         )
                     }
@@ -202,9 +202,9 @@ fun SettingsScreen(
         Text(
             LocalUiStrings.current.text(UiTextKey.INCOMING_VOICE_PLAYBACK),
             color = Color.White,
-            fontSize = 22.sp,
+            fontSize = ui.sp(22f),
             fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 1.sp
+            letterSpacing = ui.sp(1f)
         )
 
         Spacer(Modifier.height(ui.dp(6.dp)))
@@ -212,7 +212,7 @@ fun SettingsScreen(
         Text(
             LocalUiStrings.current.text(UiTextKey.INCOMING_VOICE_PLAYBACK_DESC),
             color = RedTacticalTextSecondary,
-            fontSize = 12.sp
+            fontSize = ui.sp(12f)
         )
 
         Spacer(Modifier.height(ui.sectionSpacing))
@@ -276,14 +276,14 @@ fun SettingsScreen(
                             Text(
                                 title,
                                 color = Color.White,
-                                fontSize = 15.sp,
+                                fontSize = ui.sp(15f),
                                 fontWeight = FontWeight.Bold
                             )
                             Spacer(Modifier.height(ui.dp(2.dp)))
                             Text(
                                 description,
                                 color = RedTacticalTextSecondary,
-                                fontSize = 11.sp
+                                fontSize = ui.sp(11f)
                             )
                         }
                     }
@@ -296,7 +296,7 @@ fun SettingsScreen(
         Text(
             LocalUiStrings.current.text(UiTextKey.OVERLAPPING_NOTE),
             color = RedTacticalTextSecondary,
-            fontSize = 11.sp
+            fontSize = ui.sp(11f)
         )
         }
     }
