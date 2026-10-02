@@ -188,7 +188,7 @@ private fun EmergencySosButton(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-             .padding(top = ui.dp(2.dp)),
+            .padding(top = ui.dp(2.dp)),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
@@ -224,7 +224,7 @@ private fun EmergencySosButton(
         ) {
             Box(
                 modifier = Modifier
-                    .size(176.dp)
+                    .size(ui.emergencyOuter)
                     .clip(CircleShape)
                     .background(Color(0xFF210A15).copy(alpha = if (enabled) 1f else 0.78f))
                     .border(
