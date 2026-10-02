@@ -875,6 +875,22 @@ class AndroidWifiDirectManager(
                         }
                         .plus(peer)
                         .sortedBy { it.callsign ?: it.deviceName }
+                    
+                    // A group member may receive the owner's service record
+                    // slightly after group info becomes available. Resolve the
+                    // owner app ID again whenever discovery refreshes a peer.
+                    val currentConnectionInfo = _connectionInfo.value
+                    val ownerAddress = currentConnectionInfo.groupOwnerDeviceAddress
+                    if (
+                        currentConnectionInfo.groupFormed &&
+                        currentConnectionInfo.groupOwnerAppDeviceId == null &&
+                        !ownerAddress.isNullOrBlank() &&
+                        ownerAddress.equals(device.deviceAddress, ignoreCase = true)
+                    ) {
+                        _connectionInfo.value = currentConnectionInfo.copy(
+                            groupOwnerAppDeviceId = id
+                        )
+                    }
                 }
             )
 
@@ -1260,8 +1276,17 @@ class AndroidWifiDirectManager(
                             }
                         }
 
+                        val ownerDeviceAddress =
+                            group?.owner?.deviceAddress
+                        val ownerAppDeviceId = ownerDeviceAddress?.let { address ->
+                            _peers.value.firstOrNull {
+                                it.deviceAddress.equals(address, ignoreCase = true)
+                            }?.appDeviceId
+                        }
+
                         _connectionInfo.value = baseInfo.copy(
-                            groupOwnerDeviceAddress = group?.owner?.deviceAddress,
+                            groupOwnerDeviceAddress = ownerDeviceAddress,
+                            groupOwnerAppDeviceId = ownerAppDeviceId,
                             groupMemberDeviceAddresses = members
                         )
 
