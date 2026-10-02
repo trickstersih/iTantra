@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tactical.app.ui.MainUiState
 import com.tactical.app.ui.PeerNodeUi
+import com.tactical.app.ui.ResponsiveScreen
 import com.tactical.app.ui.theme.*
 import com.tactical.platform.api.ble.BleLinkState
 
@@ -70,14 +71,21 @@ fun DevicesScreen(
         label = "devicesEmergencyHoldProgress"
     )
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SquadBlueBackground)
-            .padding(horizontal = 20.dp, vertical = 10.dp)
-            .navigationBarsPadding()
-    ) {
+    ResponsiveScreen(
+        modifier = modifier.fillMaxSize()
+    ) { ui ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(SquadBlueBackground)
+                .padding(
+                    horizontal = ui.horizontalPadding,
+                    vertical = ui.verticalPadding
+                )
+                .navigationBarsPadding()
+        ) {
         EmergencySosButton(
+            ui = ui,
             holdProgress = emergencyHoldProgress,
             enabled = !uiState.emergencyComposerVisible &&
                 (
@@ -95,7 +103,7 @@ fun DevicesScreen(
             }
         )
 
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(ui.sectionSpacing))
 
         Text(
             text = LocalUiStrings.current.text(UiTextKey.AVAILABLE_DEVICES),
@@ -105,14 +113,14 @@ fun DevicesScreen(
             letterSpacing = 1.sp
         )
 
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(ui.smallSpacing))
 
         Button(
             onClick = onScan,
             enabled = !uiState.isScanning,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(50.dp),
+                .height(ui.controlHeight),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(
                 containerColor = SquadBluePrimary,
@@ -137,7 +145,7 @@ fun DevicesScreen(
             )
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(ui.sectionSpacing))
 
         if (uiState.availablePeers.isEmpty()) {
             Box(
@@ -164,8 +172,8 @@ fun DevicesScreen(
                 }
             }
         }
+        }
     }
-}
 
 @Composable
 private fun EmergencySosButton(
