@@ -130,61 +130,7 @@ fun SquadScreen(
                             letterSpacing = ui.sp(1f)
                         )
 
-                        if (uiState.wifiDirectGroupFormed) {
-                            Spacer(Modifier.width(ui.dp(5.dp)))
 
-                            Surface(
-                                color = SquadBlueSurfaceRaised,
-                                shape = RoundedCornerShape(7.dp),
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (uiState.wifiDirectIsGroupOwner) {
-                                        SquadBlueGlow
-                                    } else {
-                                        SquadBlueBorder
-                                    }
-                                )
-                            ) {
-                                Text(
-                                    if (uiState.wifiDirectIsGroupOwner) {
-                                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_HEAD)
-                                    } else {
-                                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_MEMBER)
-                                    },
-                                    color = if (uiState.wifiDirectIsGroupOwner) {
-                                        Color.White
-                                    } else {
-                                        Color(0xFFBFD6EA)
-                                    },
-                                    fontSize = ui.sp(7f),
-                                    maxLines = 1,
-                                    softWrap = false,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = ui.sp(0.5f),
-                                    modifier = Modifier.padding(
-                                        horizontal = ui.dp(5.dp),
-                                        vertical = ui.dp(2.dp)
-                                    )
-                                )
-                            }
-
-                            Box(
-                                modifier = Modifier
-                                    .size(ui.dp(30.dp))
-                                    .clickable { wifiGroupInfoVisible = true },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Default.Info,
-                                    contentDescription = LocalUiStrings.current.text(
-                                        UiTextKey.WIFI_GROUP_INFO_TITLE
-                                    ),
-                                    tint = Color(0xFFBFD6EA),
-                                    modifier = Modifier.size(ui.dp(20.dp))
-                                )
-                            }
-                        }
-                    }
                 }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -668,6 +614,70 @@ fun SquadScreen(
                                 fontSize = ui.sp(10f)
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        if (uiState.wifiDirectGroupFormed) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        color = SquadBlueSurfaceRaised,
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (uiState.wifiDirectIsGroupOwner) {
+                                SquadBlueGlow
+                            } else {
+                                SquadBlueBorder
+                            }
+                        )
+                    ) {
+                        Text(
+                            if (uiState.wifiDirectIsGroupOwner) {
+                                LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_HEAD)
+                            } else {
+                                LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_MEMBER)
+                            },
+                            color = if (uiState.wifiDirectIsGroupOwner) {
+                                Color.White
+                            } else {
+                                Color(0xFFBFD6EA)
+                            },
+                            fontSize = ui.sp(9f),
+                            maxLines = 1,
+                            softWrap = false,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = ui.sp(0.45f),
+                            modifier = Modifier
+                                .padding(
+                                    horizontal = ui.dp(8.dp),
+                                    vertical = ui.dp(4.dp)
+                                )
+                        )
+                    }
+
+                    Spacer(Modifier.width(ui.dp(4.dp)))
+
+                    Box(
+                        modifier = Modifier
+                            .size(ui.dp(32.dp))
+                            .clickable { wifiGroupInfoVisible = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = LocalUiStrings.current.text(
+                                UiTextKey.WIFI_GROUP_INFO_TITLE
+                            ),
+                            tint = Color(0xFFBFD6EA),
+                            modifier = Modifier.size(ui.dp(21.dp))
+                        )
                     }
                 }
             }
