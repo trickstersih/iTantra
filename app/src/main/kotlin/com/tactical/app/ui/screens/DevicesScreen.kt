@@ -175,6 +175,7 @@ fun DevicesScreen(
         }
         }
     }
+}
 
 @Composable
 private fun EmergencySosButton(
