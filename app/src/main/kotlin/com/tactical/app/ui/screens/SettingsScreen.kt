@@ -324,59 +324,69 @@ fun SettingsScreen(
         )
 
 
-        if (uiLanguagePickerVisible) {onDismissRequest = { uiLanguagePickerVisible = false },
-            title = {
-                Text(
-                    LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
-                    color = Color(0xFF10243A)
-                )
-            },
-            text = {
-                Column {
-                    UI_LANGUAGE_OPTIONS.forEach { option ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    uiLanguagePickerVisible = false
-                                    onUiLanguageSelected(option.code)
+        if (uiLanguagePickerVisible) {
+            AlertDialog(
+                onDismissRequest = { uiLanguagePickerVisible = false },
+                title = {
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
+                        color = Color(0xFF10243A),
+                        fontSize = ui.sp(20f),
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    ) {
+                        UI_LANGUAGE_OPTIONS.forEach { option ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        uiLanguagePickerVisible = false
+                                        onUiLanguageSelected(option.code)
+                                    }
+                                    .padding(vertical = ui.dp(7.dp)),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        option.nativeName,
+                                        color = Color(0xFF10243A),
+                                        fontSize = ui.sp(14f),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        option.englishName,
+                                        color = Color(0xFF54708C),
+                                        fontSize = ui.sp(10f)
+                                    )
                                 }
-                                .padding(vertical = ui.dp(7.dp)),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    option.nativeName,
-                                    color = Color(0xFF10243A),
-                                    fontSize = ui.sp(14f),
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    option.englishName,
-                                    color = Color(0xFF54708C),
-                                    fontSize = ui.sp(10f)
+                                RadioButton(
+                                    selected = uiLanguageCode == option.code,
+                                    onClick = {
+                                        uiLanguagePickerVisible = false
+                                        onUiLanguageSelected(option.code)
+                                    }
                                 )
                             }
-                            RadioButton(
-                                selected = uiLanguageCode == option.code,
-                                onClick = {
-                                    uiLanguagePickerVisible = false
-                                    onUiLanguageSelected(option.code)
-                                }
-                            )
                         }
                     }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { uiLanguagePickerVisible = false }
+                    ) {
+                        Text(
+                            LocalUiStrings.current.text(UiTextKey.CLOSE),
+                            color = Color(0xFF1D5B8F),
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = { uiLanguagePickerVisible = false }
-                ) {
-                    Text("OK")
-                }
-            }
-        )
-    }
-}        }
+            )
+        }
+        }
     }
 }
