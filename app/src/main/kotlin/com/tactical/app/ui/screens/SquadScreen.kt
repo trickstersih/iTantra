@@ -273,7 +273,7 @@ fun SquadScreen(
                                             LocalUiStrings.current.text(UiTextKey.CALL_READY)
                                         },
                                         color = Color.White,
-                                        fontSize = ui.sp(11f),
+                                        fontSize = 11.sp,
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 }
@@ -851,7 +851,7 @@ fun SquadScreen(
                         Text(
                             LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
                             color = Color(0xFF10243A),
-                            fontSize = ui.sp(20f),
+                            fontSize = 20.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
 
