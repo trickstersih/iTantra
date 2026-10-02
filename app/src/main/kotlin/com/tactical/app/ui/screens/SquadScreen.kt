@@ -820,7 +820,7 @@ fun SquadScreen(
             BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = ui.dp(12.dp))
+                    .padding(horizontal = 12.dp)
             ) {
                 val dialogWidth = minOf(maxWidth * 0.94f, 420.dp)
                 val dialogMaxHeight = maxHeight * 0.86f
@@ -836,10 +836,7 @@ fun SquadScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .verticalScroll(rememberScrollState())
-                            .padding(
-                            horizontal = ui.dp(18.dp),
-                            vertical = ui.dp(16.dp)
-                        )
+                            .padding(horizontal = 18.dp, vertical = 16.dp)
                     ) {
                         Text(
                             LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
