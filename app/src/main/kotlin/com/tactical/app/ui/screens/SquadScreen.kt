@@ -40,7 +40,6 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.sp
 import com.tactical.app.ui.MainUiState
 import com.tactical.app.ui.PeerNodeUi
@@ -830,7 +829,7 @@ fun SquadScreen(
                 Text(
                     LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
                     color = Color.White,
-                    fontSize = uiSpForDialog(uiState.uiLanguageCode, 20f),
+                    fontSize = ui.sp(20f),
                     fontWeight = FontWeight.ExtraBold
                 )
             },
@@ -848,7 +847,7 @@ fun SquadScreen(
                                         pendingLanguageCode = option.code
                                     }
                                 )
-                                .padding(vertical = 7.dp),
+                                .padding(vertical = ui.dp(7.dp)),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
@@ -859,10 +858,7 @@ fun SquadScreen(
                                     } else {
                                         Color(0xFFA4B2BF)
                                     },
-                                    fontSize = uiSpForDialog(
-                                        uiState.uiLanguageCode,
-                                        14f
-                                    ),
+                                    fontSize = ui.sp(14f),
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
@@ -937,11 +933,6 @@ private val SQUAD_LANGUAGE_OPTIONS = listOf(
 )
 
 @Composable
-
-@Composable
-private fun uiSpForDialog(languageCode: String, value: Float): TextUnit =
-    ((value + if (languageCode == "hi") 1f else 0f) *
-        1f.coerceIn(0.78f, 1f)).sp
 
 @Composable
 private fun SquadLanguageRow(
