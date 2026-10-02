@@ -99,6 +99,7 @@ class AndroidWifiDirectManager(
             override fun onGroupCreating() {
                 android.util.Log.d(TAG, "Wi-Fi P2P group creation started")
                 if (_connectionInfo.value.groupFormed) return
+                frameworkConnectionInProgress = true
                 _state.value = RadioLinkState.CONNECTING
             }
 
