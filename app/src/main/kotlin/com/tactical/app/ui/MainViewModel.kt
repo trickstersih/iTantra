@@ -538,7 +538,21 @@ class MainViewModel @Inject constructor(
             fun updatePeer(peer: PeerNodeUi): PeerNodeUi {
                 val bleConnected = peer.deviceAddress in connectedBleIds
                 val wifiConnected = peer.deviceAddress in connectedWifiIds
-                val isConnected = peer.deviceAddress in connectedIds
+                val isDirectlyConnected = peer.deviceAddress in connectedIds
+
+                // A relayed mesh route is still a usable squad connection.
+                // The physical TCP socket terminates at the relay/GO, so a
+                // peer reached through "VIA ..." will not appear in the direct
+                // transport registry even though messages can traverse the
+                // route normally.
+                val isRelayedReachable =
+                    !isDirectlyConnected &&
+                        (
+                            peer.linkText.startsWith("VIA ") ||
+                                peer.linkText == "RELAYED"
+                            )
+
+                val isConnected = isDirectlyConnected || isRelayedReachable
 
                 return peer.copy(
                     isConnected = isConnected,
