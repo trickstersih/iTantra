@@ -64,7 +64,8 @@ fun SettingsScreen(
     }
 
     ResponsiveScreen(
-        modifier = modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize(),
+        languageCode = uiLanguageCode
     ) { ui ->
         Column(
             modifier = Modifier
