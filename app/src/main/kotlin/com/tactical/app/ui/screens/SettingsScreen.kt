@@ -308,10 +308,13 @@ fun SettingsScreen(
             if (uiLanguagePickerVisible) {
                 AlertDialog(
                     onDismissRequest = { uiLanguagePickerVisible = false },
+                    containerColor = SquadBlueSurfaceRaised,
+                    titleContentColor = Color.White,
+                    textContentColor = Color.White,
                     title = {
                         Text(
                             LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
-                            color = Color(0xFF10243A),
+                            color = Color.White,
                             fontSize = ui.sp(20f),
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -332,19 +335,23 @@ fun SettingsScreen(
                                     Column(Modifier.weight(1f)) {
                                         Text(
                                             option.nativeName,
-                                            color = Color(0xFF10243A),
+                                            color = Color.White,
                                             fontSize = ui.sp(14f),
                                             fontWeight = FontWeight.SemiBold
                                         )
                                         Text(
                                             option.englishName,
-                                            color = Color(0xFF54708C),
+                                            color = Color(0xFFBFD6EA),
                                             fontSize = ui.sp(10f)
                                         )
                                     }
 
                                     RadioButton(
                                         selected = uiLanguageCode == option.code,
+                                        colors = RadioButtonDefaults.colors(
+                                            selectedColor = SquadBluePrimary,
+                                            unselectedColor = Color(0xFF8EAAC2)
+                                        ),
                                         onClick = {
                                             uiLanguagePickerVisible = false
                                             onUiLanguageSelected(option.code)
