@@ -129,8 +129,7 @@ fun SquadScreen(
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = ui.sp(1f)
                         )
-
-
+                    }
                 }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
