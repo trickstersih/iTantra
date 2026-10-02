@@ -146,6 +146,7 @@ data class MainUiState(
     val wifiDirectGroupFormed: Boolean = false,
     val wifiDirectIsGroupOwner: Boolean = false,
     val wifiDirectGroupOwnerDeviceAddress: String? = null,
+    val wifiDirectGroupOwnerAppDeviceId: String? = null,
     val respondingSquadRequestId: String? = null,
     val squadRequestError: String? = null,
     val ttsPlaybackMode: com.tactical.platform.speech.mms.MmsTtsPlaybackMode =
@@ -406,6 +407,7 @@ class MainViewModel @Inject constructor(
                         wifiDirectGroupFormed = info.groupFormed,
                         wifiDirectIsGroupOwner = info.isGroupOwner,
                         wifiDirectGroupOwnerDeviceAddress = info.groupOwnerDeviceAddress,
+                        wifiDirectGroupOwnerAppDeviceId = info.groupOwnerAppDeviceId,
                         showWifiMultipleRequestWarning =
                             requests > 1 &&
                                 info.groupFormed &&
