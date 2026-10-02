@@ -943,7 +943,7 @@ private fun SquadLanguageRow(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(enabled = option.available, onClick = onSelect)
-            .padding(vertical = ui.dp(7.dp)),
+            .padding(vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(Modifier.weight(1f)) {
