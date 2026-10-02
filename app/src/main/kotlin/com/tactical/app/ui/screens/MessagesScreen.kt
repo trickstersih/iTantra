@@ -291,7 +291,7 @@ fun MessagesScreen(
 
         LazyColumn(
             state = listState,
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(ui.smallSpacing),
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -555,7 +555,7 @@ private fun MessageRow(
                 )
 
                 if (isSelectionMode) {
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(ui.smallSpacing))
                     SelectionIndicator(
                         ui = ui,
                         isSelected = isSelected,
