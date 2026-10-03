@@ -1496,37 +1496,6 @@ class AndroidWifiDirectManager(
             connectInternal(deviceAddress)
         }
 
-    private suspend fun stopDiscoveryBeforeConnect() {
-        removeServiceRequest()
-        discoveryRetryJob?.cancel()
-        discoveryRetryJob = null
-
-        runCatching {
-            suspendCancellableCoroutine<Unit> { continuation ->
-                wifiP2pManager.stopPeerDiscovery(
-                    wifichannel,
-                    object : WifiP2pManager.ActionListener {
-                        override fun onSuccess() {
-                            if (continuation.isActive) continuation.resume(Unit)
-                        }
-
-                        override fun onFailure(reason: Int) {
-                            android.util.Log.d(
-                                TAG,
-                                "Wi-Fi P2P stopPeerDiscovery returned: " + reason
-                            )
-                            if (continuation.isActive) continuation.resume(Unit)
-                        }
-                    }
-                )
-            }
-        }
-
-        // Give the framework a small handoff window so the subsequent
-        // connect() is not issued in the same binder turn as discovery stop.
-        delay(150L)
-    }
-
     private suspend fun connectInternal(deviceAddress: String): TacticalResult<Unit> {
         if (!hasWifiDirectPermission()) {
             return TacticalResult.Failure("Missing Wi-Fi Direct permission")
@@ -1570,10 +1539,11 @@ class AndroidWifiDirectManager(
         frameworkConnectionInProgress = true
         val connectFailureBefore = connectFailureSequence.get()
 
-        // Android/OEM Wi-Fi stacks may reject connect() with BUSY while
-        // peer/DNS-SD discovery is active. Tear down discovery bookkeeping and
-        // stop the underlying peer scan before starting group negotiation.
-        stopDiscoveryBeforeConnect()
+        // Keep Android's normal peer discovery session alive while starting
+        // the connection. Some OEM stacks invalidate the discovered peer
+        // immediately when stopPeerDiscovery() is called, causing connect()
+        // to be rejected with reason 0. We only remove the DNS-SD request below
+        // as part of the connection negotiation lifecycle.
         _state.value = RadioLinkState.CONNECTING
         _peers.value = _peers.value.map {
             if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
