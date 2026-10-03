@@ -287,7 +287,7 @@ class MeshSquadControlCoordinator @Inject constructor(
     }
 
 
-    private fun handleRemove(packet: SquadControlPacket) {
+    private suspend fun handleRemove(packet: SquadControlPacket) {
         // Only an existing squad member may revoke the local membership.
         if (!squadMembershipStore.contains(packet.sender.value)) return
 
