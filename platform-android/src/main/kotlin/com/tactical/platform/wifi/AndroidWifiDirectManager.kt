@@ -52,7 +52,8 @@ class AndroidWifiDirectManager(
     private val context: Context,
     private val wifiP2pManager: WifiP2pManager,
     private val wifichannel: WifiP2pManager.Channel,
-    private val squadMembershipStore: SquadMembershipStore
+    private val squadMembershipStore: SquadMembershipStore,
+    @Suppress("UNUSED_PARAMETER") private val localDeviceId: String
 ) : WifiDirectManager {
 
     private val wifiManager by lazy {
