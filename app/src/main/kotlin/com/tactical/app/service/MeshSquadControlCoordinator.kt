@@ -8,6 +8,7 @@ import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.ble.SquadRequest
 import com.tactical.platform.api.squad.SquadMembershipStore
+import com.tactical.platform.api.radio.RadioTransport
 import com.tactical.engine.mesh.service.MeshService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -35,7 +36,8 @@ class MeshSquadControlCoordinator @Inject constructor(
     private val meshService: MeshService,
     private val bleConnectionManager: BleConnectionManager,
     private val identityStore: DeviceIdentityStore,
-    private val squadMembershipStore: SquadMembershipStore
+    private val squadMembershipStore: SquadMembershipStore,
+    private val radioTransport: RadioTransport
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -50,9 +52,11 @@ class MeshSquadControlCoordinator @Inject constructor(
     private val outgoingRequestIdsByDeviceId = ConcurrentHashMap<String, MutableSet<String>>()
     private val _pendingRequests = MutableStateFlow<List<SquadRequest>>(emptyList())
     private val _membershipChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
+    private val _removalNotices = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
     val pendingRequests: Flow<List<SquadRequest>> = _pendingRequests.asStateFlow()
     val membershipChanged: Flow<Unit> = _membershipChanged
+    val removalNotices: Flow<String> = _removalNotices
 
     init {
         scope.launch {
@@ -93,6 +97,8 @@ class MeshSquadControlCoordinator @Inject constructor(
         if (squadMembershipStore.contains(deviceId)) {
             return TacticalResult.Success(Unit)
         }
+
+        radioTransport.allowPeer(deviceId)
 
         if (outgoingRequestIdsByDeviceId[deviceId]?.isNotEmpty() == true) {
             return TacticalResult.Success(Unit)
@@ -157,6 +163,7 @@ class MeshSquadControlCoordinator @Inject constructor(
         }
 
         squadMembershipStore.remove(deviceId)
+        radioTransport.disconnectPeer(deviceId)
         _membershipChanged.tryEmit(Unit)
         return TacticalResult.Success(Unit)
     }
@@ -188,6 +195,8 @@ class MeshSquadControlCoordinator @Inject constructor(
         publishPending()
 
         if (approve) {
+            radioTransport.allowPeer(request.deviceId)
+
             val membership = bleConnectionManager.addMeshSquadMember(
                 deviceId = request.deviceId,
                 callsign = request.callsign
@@ -284,6 +293,11 @@ class MeshSquadControlCoordinator @Inject constructor(
 
         squadMembershipStore.remove(packet.sender.value)
 
+        // The REMOVE packet itself may have arrived over the current Wi-Fi
+        // socket. Close that link after applying the membership change and
+        // suppress this peer's automatic Wi-Fi socket reconnect.
+        radioTransport.disconnectPeer(packet.sender.value)
+
         pendingByRequestId
             .filterValues { it.deviceId == packet.sender.value }
             .keys
@@ -296,6 +310,7 @@ class MeshSquadControlCoordinator @Inject constructor(
 
         publishPending()
         _membershipChanged.tryEmit(Unit)
+        _removalNotices.tryEmit(packet.callsign)
 
         android.util.Log.d(
             "MeshSquadControlCoordinator",
@@ -309,6 +324,7 @@ class MeshSquadControlCoordinator @Inject constructor(
         clearOutgoingRequest(packet.requestId, expectedTarget)
 
         if (packet.accepted == true) {
+            radioTransport.allowPeer(packet.sender.value)
             scope.launch {
                 val result = bleConnectionManager.addMeshSquadMember(
                     deviceId = packet.sender.value,
