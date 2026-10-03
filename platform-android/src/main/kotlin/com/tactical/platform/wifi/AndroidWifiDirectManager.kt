@@ -1484,11 +1484,33 @@ class AndroidWifiDirectManager(
     ): TacticalResult<Unit> {
         val peer = _peers.value.firstOrNull {
             it.appDeviceId.equals(deviceId, ignoreCase = true)
-        } ?: return TacticalResult.Failure(
-            "Wi-Fi Direct peer is no longer discovered"
-        )
+        }
 
-        return connect(peer.deviceAddress)
+        // After a P2P group is torn down, Android can briefly publish an empty
+        // peer list even though the same nearby device is still reachable.
+        // We persist the app-id -> Wi-Fi P2P address mapping so a manual
+        // Add-to-Squad can recover immediately instead of depending on the
+        // next DNS-SD callback.
+        val persistedAddress = synchronized(appDeviceIdByWifiDeviceAddress) {
+            appDeviceIdByWifiDeviceAddress.entries
+                .firstOrNull { it.value.equals(deviceId, ignoreCase = true) }
+                ?.key
+        }
+
+        val targetAddress = peer?.deviceAddress ?: persistedAddress
+            ?: return TacticalResult.Failure(
+                "Wi-Fi Direct peer is no longer discovered"
+            )
+
+        if (peer == null) {
+            android.util.Log.d(
+                TAG,
+                "Wi-Fi Direct reconnect using persisted peer address for " +
+                    deviceId + ": " + targetAddress
+            )
+        }
+
+        return connect(targetAddress)
     }
 
     override suspend fun connect(deviceAddress: String): TacticalResult<Unit> =
