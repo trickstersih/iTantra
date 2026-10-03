@@ -1560,7 +1560,7 @@ class AndroidWifiDirectManager(
         // Android/OEM Wi-Fi stacks may reject connect() with BUSY while
         // peer/DNS-SD discovery is active. Tear down discovery bookkeeping and
         // stop the underlying peer scan before starting group negotiation.
-        await stopDiscoveryBeforeConnect()
+        stopDiscoveryBeforeConnect()
         _state.value = RadioLinkState.CONNECTING
         _peers.value = _peers.value.map {
             if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
