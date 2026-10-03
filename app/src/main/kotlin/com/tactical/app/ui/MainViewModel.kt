@@ -58,6 +58,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.Locale
 import java.text.SimpleDateFormat
 import java.util.Date
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 
 data class PeerNodeUi(
@@ -209,6 +210,8 @@ class MainViewModel @Inject constructor(
     val uiState: StateFlow<MainUiState> = _uiState.asStateFlow()
     private var healthJob: Job? = null
     private val observedPeerIds = mutableSetOf<String>()
+    private val recentlyRemovedFromSquadIds =
+        ConcurrentHashMap.newKeySet<String>()
     private val reconnectJobs = mutableMapOf<String, Job>()
     private val pttController: PttController = DefaultPttController(
         deviceId = DeviceId(identityStore.deviceIdValue),
@@ -619,6 +622,8 @@ class MainViewModel @Inject constructor(
                                     BleLinkState.CONNECTED
                                 bluetoothState == BleLinkState.CONNECTING ->
                                     BleLinkState.CONNECTING
+                                bluetoothState == BleLinkState.AVAILABLE ->
+                                    BleLinkState.AVAILABLE
                                 else ->
                                     BleLinkState.DISCONNECTED
                             }
@@ -629,6 +634,10 @@ class MainViewModel @Inject constructor(
                                     RadioLinkState.CONNECTED
                                 wifiState == RadioLinkState.CONNECTING ->
                                     RadioLinkState.CONNECTING
+                                wifiState == RadioLinkState.AVAILABLE ->
+                                    RadioLinkState.AVAILABLE
+                                wifiState == RadioLinkState.UNAVAILABLE ->
+                                    RadioLinkState.UNAVAILABLE
                                 else ->
                                     RadioLinkState.DISCONNECTED
                             }
@@ -692,11 +701,14 @@ class MainViewModel @Inject constructor(
                     }
                     val knownWifiGroupMembers =
                         state.wifiDirectDiscoveredGroupMemberIds
+                            .filterNot { it in recentlyRemovedFromSquadIds }
+                            .toSet()
                     state.copy(
                         squadPeers = currentSquad,
-                        // A discovered Wi-Fi group member cannot accept a new
-                        // P2P connection. Keep the group head actionable and
-                        // keep devices with no known group role visible.
+                        // Keep normal Wi-Fi group members hidden so another phone
+                        // does not try to create a competing P2P group. A member
+                        // that this exact device just removed is intentionally
+                        // exempt so it returns to Home and can be selected again.
                         availablePeers = peers.filter { peer ->
                             peer.deviceAddress !in squadIds &&
                                 peer.deviceAddress !in knownWifiGroupMembers
@@ -844,9 +856,13 @@ class MainViewModel @Inject constructor(
     }
 
     fun addPeerToSquad(deviceAddress: String) {
+        // A peer that was just removed must become actionable again immediately.
+        recentlyRemovedFromSquadIds.remove(deviceAddress)
         radioTransport.allowPeer(deviceAddress)
+
         val peer = _uiState.value.availablePeers
             .firstOrNull { it.deviceAddress == deviceAddress }
+        val wifiGroupFormed = wifiDirectManager.connectionInfo().value.groupFormed
 
         viewModelScope.launch {
             val result = runCatching {
@@ -858,23 +874,24 @@ class MainViewModel @Inject constructor(
                         meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
                     }
 
-                    // A Wi-Fi Direct TCP session may already be established even
-                    // though the Android P2P/DNS-SD discovery cache has changed.
-                    // In that case, do not attempt to resolve the app UUID back
-                    // through discovery; use the live transport immediately.
+                    // A live physical bearer is authoritative. This is used for
+                    // both BLE-only and Wi-Fi-only tests even when discovery state
+                    // still contains an older/stale entry for the other bearer.
                     deviceAddress in radioTransport.connectedPeerIds() -> {
                         android.util.Log.d(
                             "MainViewModel",
-                            "Adding already-connected peer to squad via existing transport: " +
+                            "Adding already-connected peer via existing transport: " +
                                 deviceAddress
                         )
                         meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
                     }
 
-                    peer?.wifiDirectState == RadioLinkState.CONNECTED -> {
-                        // P2P is connected, but the TCP hello may still be racing
-                        // with the button press. Wait briefly for the transport to
-                        // register the peer instead of restarting P2P discovery.
+                    // Never start a Wi-Fi Direct operation when no P2P group is
+                    // actually formed. BLE-only peers previously inherited a
+                    // stale DISCONNECTED Wi-Fi state and were incorrectly routed
+                    // through Wi-Fi Direct.
+                    wifiGroupFormed &&
+                        peer?.wifiDirectState == RadioLinkState.CONNECTED -> {
                         val ready = withTimeoutOrNull(5_000L) {
                             while (deviceAddress !in radioTransport.connectedPeerIds()) {
                                 delay(100L)
@@ -891,11 +908,13 @@ class MainViewModel @Inject constructor(
                         }
                     }
 
-                    peer != null &&
+                    wifiGroupFormed &&
+                        peer != null &&
                         peer.wifiDirectState != RadioLinkState.UNAVAILABLE &&
                         peer.bleState != BleLinkState.CONNECTED -> {
-                        // We have a Wi-Fi Direct discovery entry but no active
-                        // data socket yet. This is the original connection path.
+                        // Wi-Fi Direct discovery is genuinely active, so use the
+                        // P2P path. This branch is impossible during a BLE-only
+                        // test because wifiGroupFormed is false.
                         val connectResult =
                             wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
@@ -920,6 +939,10 @@ class MainViewModel @Inject constructor(
                     }
 
                     else -> {
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Adding peer through BLE squad request: " + deviceAddress
+                        )
                         bleConnectionManager.addToSquad(deviceAddress)
                     }
                 }
@@ -1018,7 +1041,10 @@ class MainViewModel @Inject constructor(
             }
 
             if (result is TacticalResult.Success) {
-                localAppDataStore.removePairedDevice(deviceAddress)
+                // Keep the peer's persisted identity so it immediately remains
+                // available on Home after squad removal. The discovery pipeline
+                // will refresh/remove it normally based on physical presence.
+                recentlyRemovedFromSquadIds.add(deviceAddress)
                 refreshSquadPeers()
             } else {
                 val error = (result as TacticalResult.Failure).error
