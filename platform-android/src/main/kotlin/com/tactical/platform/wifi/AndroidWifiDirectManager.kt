@@ -1518,17 +1518,20 @@ class AndroidWifiDirectManager(
             startServiceDiscoveryInternal()
             kickPeerDiscovery("manual add waiting for peer rediscovery")
 
-            peer = withTimeoutOrNull(MANUAL_ADD_DISCOVERY_TIMEOUT_MS) {
-                while (true) {
-                    val discovered = _peers.value.firstOrNull {
+            peer = withTimeoutOrNull<WifiDirectPeer>(
+                MANUAL_ADD_DISCOVERY_TIMEOUT_MS
+            ) {
+                var discovered: WifiDirectPeer? = null
+                while (discovered == null) {
+                    discovered = _peers.value.firstOrNull {
                         it.appDeviceId.equals(deviceId, ignoreCase = true) ||
                             it.deviceAddress.equals(targetAddress, ignoreCase = true)
                     }
-                    if (discovered != null) {
-                        return@withTimeoutOrNull discovered
+                    if (discovered == null) {
+                        delay(100L)
                     }
-                    delay(100L)
                 }
+                discovered
             }
 
             if (peer == null) {
