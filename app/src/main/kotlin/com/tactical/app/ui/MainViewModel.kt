@@ -147,6 +147,7 @@ data class MainUiState(
     val wifiDirectIsGroupOwner: Boolean = false,
     val wifiDirectGroupOwnerDeviceAddress: String? = null,
     val wifiDirectGroupOwnerAppDeviceId: String? = null,
+    val wifiDirectDiscoveredGroupHeadIds: Set<String> = emptySet(),
     val respondingSquadRequestId: String? = null,
     val squadRequestError: String? = null,
     val ttsPlaybackMode: com.tactical.platform.speech.mms.MmsTtsPlaybackMode =
@@ -325,6 +326,35 @@ class MainViewModel @Inject constructor(
 
         viewModelScope.launch {
             startDiscovery()
+        }
+
+        // Wi-Fi Direct service discovery also tells us which advertised
+        // devices are group heads. Keep this separate from connection state so
+        // the Available Devices list can offer only a head when a peer is
+        // already part of a Wi-Fi Direct group.
+        viewModelScope.launch {
+            wifiDirectManager.discoverPeers().collect { peers ->
+                val headIds = peers
+                    .filter { it.isGroupOwner == true }
+                    .mapNotNull { it.appDeviceId }
+                    .toSet()
+
+                _uiState.update { state ->
+                    if (state.wifiDirectDiscoveredGroupHeadIds == headIds) {
+                        state
+                    } else {
+                        state.copy(
+                            wifiDirectDiscoveredGroupHeadIds = headIds,
+                            availablePeers = state.availablePeers.filter { peer ->
+                                peer.deviceAddress !in peers
+                                    .filter { it.isGroupOwner == false }
+                                    .mapNotNull { it.appDeviceId }
+                                    .toSet()
+                            }
+                        )
+                    }
+                }
+            }
         }
 
         squadMembershipStore.squadDeviceIds().forEach { pairedId ->
@@ -508,20 +538,57 @@ class MainViewModel @Inject constructor(
                                 ?: previous?.wifiDirectState
                                 ?: RadioLinkState.UNAVAILABLE
 
-                        val hasLiveRadio =
-                            bluetoothState == BleLinkState.CONNECTED ||
-                                wifiState == RadioLinkState.CONNECTED ||
-                                previous?.isConnected == true
+                        val liveConnectedByTransport =
+                            radioTransport.connectedPeerIdsByTransport()
+                        val liveBleIds =
+                            liveConnectedByTransport[RadioType.BLUETOOTH].orEmpty()
+                        val liveWifiIds =
+                            liveConnectedByTransport[RadioType.WIFI_DIRECT].orEmpty()
+                        val liveBleConnected = id in liveBleIds
+                        val liveWifiConnected = id in liveWifiIds
 
                         val routeText = routeLinkText(
                             device = device,
                             knownCallsigns = knownCallsigns
                         )
+                        val previousRelayedRoute =
+                            previous?.linkText
+                                ?.takeIf {
+                                    it.startsWith("VIA ") ||
+                                        it == "RELAYED"
+                                }
+                        val stableRouteText =
+                            if (
+                                routeText.startsWith("VIA ") ||
+                                routeText == "RELAYED"
+                            ) {
+                                routeText
+                            } else {
+                                previousRelayedRoute ?: routeText
+                            }
+
+                        val hasLiveRadio =
+                            liveBleConnected ||
+                                liveWifiConnected ||
+                                previous?.isConnected == true &&
+                                    previousRelayedRoute != null
+
+                        val effectiveWifiState =
+                            when {
+                                liveWifiConnected ->
+                                    RadioLinkState.CONNECTED
+                                device.transportStates[RadioType.WIFI_DIRECT] ==
+                                    RadioLinkState.CONNECTED ->
+                                    RadioLinkState.CONNECTED
+                                else ->
+                                    wifiState
+                            }
+
                         val transportText = buildList {
                             if (bluetoothState == BleLinkState.CONNECTED) {
                                 add("BLE")
                             }
-                            if (wifiState == RadioLinkState.CONNECTED) {
+                            if (effectiveWifiState == RadioLinkState.CONNECTED) {
                                 add("Wi-Fi")
                             }
                         }.joinToString(" + ")
@@ -551,7 +618,7 @@ class MainViewModel @Inject constructor(
                             },
                             linkText = effectiveLinkText,
                             bleState = bluetoothState,
-                            wifiDirectState = wifiState
+                            wifiDirectState = effectiveWifiState
                         )
                     }
 
@@ -566,14 +633,16 @@ class MainViewModel @Inject constructor(
                     val currentSquad = squadIds.mapNotNull { id ->
                         peers.firstOrNull { it.deviceAddress == id } ?: squadById[id]
                     }
+                    val knownWifiGroupMembers = state.wifiDirectDiscoveredGroupHeadIds
                     state.copy(
                         squadPeers = currentSquad,
-                        // "Available" means discovered and not yet in the squad.
-                        // A live Wi-Fi Direct TCP connection must not make the
-                        // device disappear from the list; it should remain
-                        // visible with its transport status.
-                        availablePeers = peers.filter {
-                            it.deviceAddress !in squadIds
+                        // When Wi-Fi Direct role discovery identifies group
+                        // heads and members, only heads are actionable from the
+                        // Available Devices screen. Devices without a known
+                        // group role remain visible.
+                        availablePeers = peers.filter { peer ->
+                            peer.deviceAddress !in squadIds &&
+                                peer.deviceAddress !in knownWifiGroupMembers
                         }
                     )
                 }
