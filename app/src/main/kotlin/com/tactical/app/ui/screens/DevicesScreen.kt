@@ -435,8 +435,10 @@ private fun AvailableDeviceCard(
                 }
                 val transportStatus = connectedTransports.joinToString(" + ")
                 val statusText = when {
-                    transportStatus.isNotBlank() ->
+                    peer.isConnected && transportStatus.isNotBlank() ->
                         LocalUiStrings.current.text(UiTextKey.CONNECTED) + " • " + transportStatus
+                    peer.isConnected ->
+                        LocalUiStrings.current.text(UiTextKey.CONNECTED)
                     peer.bleState == BleLinkState.CONNECTING ||
                         peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTING ->
                         LocalUiStrings.current.text(UiTextKey.CONNECTING)
