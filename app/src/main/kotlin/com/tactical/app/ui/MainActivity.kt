@@ -254,6 +254,29 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            state.squadNotification?.let { message ->
+                                Surface(
+                                    modifier = Modifier
+                                        .align(Alignment.TopCenter)
+                                        .fillMaxWidth()
+                                        .padding(
+                                            top = if (wirelessWarning.value != null) 46.dp else 0.dp
+                                        ),
+                                    color = Color(0xFF5C3B12),
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp)
+                                ) {
+                                    Text(
+                                        text = message,
+                                        color = Color.White,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        modifier = Modifier.padding(
+                                            horizontal = 16.dp,
+                                            vertical = 10.dp
+                                        )
+                                    )
+                                }
+                            }
+
                             if (state.emergencyComposerVisible) {
                                 EmergencyRecordingDialog(
                                     transcription = state.emergencyTranscription,
