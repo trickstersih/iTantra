@@ -606,7 +606,13 @@ class AndroidWifiDirectManager(
                 val recordMap = mutableMapOf(
                     "app" to "itantra",
                     "id" to deviceId,
-                    "callsign" to callsign.take(32)
+                    "callsign" to callsign.take(32),
+                    "group_role" to when {
+                        _connectionInfo.value.groupFormed &&
+                            _connectionInfo.value.isGroupOwner -> "head"
+                        _connectionInfo.value.groupFormed -> "member"
+                        else -> "none"
+                    }
                 )
                 localGroupCredentials?.let { credentials ->
                     recordMap["group_ssid"] = credentials.networkName
@@ -870,6 +876,12 @@ class AndroidWifiDirectManager(
                         return@DnsSdTxtRecordListener
                     }
 
+                    val groupRole = when (record["group_role"]) {
+                        "head" -> true
+                        "member" -> false
+                        else -> null
+                    }
+
                     val groupSsid = record["group_ssid"]
                     val groupPassphrase = record["group_passphrase"]
                     if (!groupSsid.isNullOrBlank() && !groupPassphrase.isNullOrBlank()) {
@@ -898,6 +910,7 @@ class AndroidWifiDirectManager(
                         deviceName = device.deviceName,
                         appDeviceId = id,
                         callsign = callsign,
+                        isGroupOwner = groupRole,
                         linkState = RadioLinkState.AVAILABLE,
                         lastSeenEpochMs = Instant.now().toEpochMilli()
                     )
