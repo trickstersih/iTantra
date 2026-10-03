@@ -148,6 +148,7 @@ data class MainUiState(
     val wifiDirectGroupOwnerDeviceAddress: String? = null,
     val wifiDirectGroupOwnerAppDeviceId: String? = null,
     val wifiDirectDiscoveredGroupHeadIds: Set<String> = emptySet(),
+    val wifiDirectDiscoveredGroupMemberIds: Set<String> = emptySet(),
     val respondingSquadRequestId: String? = null,
     val squadRequestError: String? = null,
     val ttsPlaybackMode: com.tactical.platform.speech.mms.MmsTtsPlaybackMode =
@@ -338,18 +339,23 @@ class MainViewModel @Inject constructor(
                     .filter { it.isGroupOwner == true }
                     .mapNotNull { it.appDeviceId }
                     .toSet()
+                val memberIds = peers
+                    .filter { it.isGroupOwner == false }
+                    .mapNotNull { it.appDeviceId }
+                    .toSet()
 
                 _uiState.update { state ->
-                    if (state.wifiDirectDiscoveredGroupHeadIds == headIds) {
+                    if (
+                        state.wifiDirectDiscoveredGroupHeadIds == headIds &&
+                        state.wifiDirectDiscoveredGroupMemberIds == memberIds
+                    ) {
                         state
                     } else {
                         state.copy(
                             wifiDirectDiscoveredGroupHeadIds = headIds,
-                            availablePeers = state.availablePeers.filter { peer ->
-                                peer.deviceAddress !in peers
-                                    .filter { it.isGroupOwner == false }
-                                    .mapNotNull { it.appDeviceId }
-                                    .toSet()
+                            wifiDirectDiscoveredGroupMemberIds = memberIds,
+                            availablePeers = state.availablePeers.filter {
+                                it.deviceAddress !in memberIds
                             }
                         )
                     }
@@ -633,13 +639,13 @@ class MainViewModel @Inject constructor(
                     val currentSquad = squadIds.mapNotNull { id ->
                         peers.firstOrNull { it.deviceAddress == id } ?: squadById[id]
                     }
-                    val knownWifiGroupMembers = state.wifiDirectDiscoveredGroupHeadIds
+                    val knownWifiGroupMembers =
+                        state.wifiDirectDiscoveredGroupMemberIds
                     state.copy(
                         squadPeers = currentSquad,
-                        // When Wi-Fi Direct role discovery identifies group
-                        // heads and members, only heads are actionable from the
-                        // Available Devices screen. Devices without a known
-                        // group role remain visible.
+                        // A discovered Wi-Fi group member cannot accept a new
+                        // P2P connection. Keep the group head actionable and
+                        // keep devices with no known group role visible.
                         availablePeers = peers.filter { peer ->
                             peer.deviceAddress !in squadIds &&
                                 peer.deviceAddress !in knownWifiGroupMembers
