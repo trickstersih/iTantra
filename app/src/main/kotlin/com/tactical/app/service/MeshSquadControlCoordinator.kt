@@ -162,6 +162,11 @@ class MeshSquadControlCoordinator @Inject constructor(
             return result
         }
 
+        // Give the transport a short grace period after the synchronous write
+        // so the remote mesh receiver has time to consume the REMOVE before
+        // the local TCP/GATT session is deliberately closed.
+        kotlinx.coroutines.delay(300L)
+
         squadMembershipStore.remove(deviceId)
         radioTransport.disconnectPeer(deviceId)
         _membershipChanged.tryEmit(Unit)
@@ -257,24 +262,10 @@ class MeshSquadControlCoordinator @Inject constructor(
             return
         }
 
-        if (squadMembershipStore.contains(packet.sender.value)) {
-            // Already a member; do not generate a duplicate approval dialog.
-            scope.launch {
-                meshService.send(
-                    SquadControlPacket(
-                        sender = DeviceId(identityStore.deviceIdValue),
-                        target = DeviceId(packet.sender.value),
-                        requestId = packet.requestId,
-                        action = SquadControlAction.RESPONSE,
-                        callsign = identityStore.callsign,
-                        accepted = true,
-                        timestamp = System.currentTimeMillis()
-                    )
-                )
-            }
-            return
-        }
-
+        // An explicit Add-to-Squad request is a fresh application-level
+        // authorization event. Do not silently accept it just because the
+        // receiver still has stale membership from a previous connection;
+        // that would bypass the approval UI after a removal/re-add cycle.
         pendingByRequestId.putIfAbsent(
             packet.requestId,
             PendingMeshRequest(
@@ -288,9 +279,9 @@ class MeshSquadControlCoordinator @Inject constructor(
 
 
     private suspend fun handleRemove(packet: SquadControlPacket) {
-        // Only an existing squad member may revoke the local membership.
-        if (!squadMembershipStore.contains(packet.sender.value)) return
-
+        // Removal is authoritative for the addressed relationship. Process it
+        // even if local membership has already drifted, so a stale UI/store
+        // cannot keep the peer in the squad after a valid REMOVE packet.
         squadMembershipStore.remove(packet.sender.value)
 
         // The REMOVE packet itself may have arrived over the current Wi-Fi
