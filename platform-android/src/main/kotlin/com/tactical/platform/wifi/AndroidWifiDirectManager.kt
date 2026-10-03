@@ -1090,9 +1090,22 @@ class AndroidWifiDirectManager(
                     isLocationModeEnabled() &&
                     !_connectionInfo.value.groupFormed
                 ) {
-                    // Keep radio discovery warm while the link is down. The
-                    // actual connect path stops discovery before negotiating.
-                    kickPeerDiscovery("reconnect loop")
+                    // Keep the normal peer/service discovery session alive.
+                    // Do not call discoverPeers() on every reconnect tick:
+                    // repeatedly restarting the P2P discovery operation can
+                    // starve DNS-SD service callbacks on some OEM stacks.
+                    if (
+                        !serviceDiscoveryStarted &&
+                        serviceRequest == null &&
+                        !serviceDiscoveryStarting.get() &&
+                        !connectionAttemptInProgress &&
+                        !frameworkConnectionInProgress
+                    ) {
+                        startServiceDiscoveryInternal()
+                    }
+
+                    // Reconnect checks stay fast, but discovery itself is
+                    // started/stopped only when its lifecycle actually needs it.
                     scheduleAutoReconnectAttempt()
                 }
 
