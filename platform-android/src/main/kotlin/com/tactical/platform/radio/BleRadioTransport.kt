@@ -59,7 +59,7 @@ class BleRadioTransport(
     override suspend fun disconnectPeer(deviceId: String) {
         intentionallyDisconnectedPeers.add(deviceId)
 
-        val address = BlePeerAddressRegistry.addressForApplicationId(deviceId)
+        val address = BlePeerAddressRegistry.addressFor(deviceId)
         val candidateAddresses = buildSet {
             if (!address.isNullOrBlank()) add(address)
             connectionRegistry.allConnectedAddresses().forEach { peerAddress ->
