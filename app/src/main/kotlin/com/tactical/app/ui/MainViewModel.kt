@@ -886,35 +886,13 @@ class MainViewModel @Inject constructor(
                         meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
                     }
 
-                    // Never start a Wi-Fi Direct operation when no P2P group is
-                    // actually formed. BLE-only peers previously inherited a
-                    // stale DISCONNECTED Wi-Fi state and were incorrectly routed
-                    // through Wi-Fi Direct.
-                    wifiGroupFormed &&
-                        peer?.wifiDirectState == RadioLinkState.CONNECTED -> {
-                        val ready = withTimeoutOrNull(5_000L) {
-                            while (deviceAddress !in radioTransport.connectedPeerIds()) {
-                                delay(100L)
-                            }
-                            true
-                        } == true
-
-                        if (!ready) {
-                            TacticalResult.Failure(
-                                "Wi-Fi Direct is connected, but the data link is not ready"
-                            )
-                        } else {
-                            meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
-                        }
-                    }
-
-                    wifiGroupFormed &&
-                        peer != null &&
+                    // If Wi-Fi Direct has discovered this peer and BLE is not
+                    // the live bearer, initiate the Wi-Fi Direct connection now.
+                    // Do not require a P2P group to already exist: connect() is
+                    // precisely what creates the first group.
+                    peer != null &&
                         peer.wifiDirectState != RadioLinkState.UNAVAILABLE &&
                         peer.bleState != BleLinkState.CONNECTED -> {
-                        // Wi-Fi Direct discovery is genuinely active, so use the
-                        // P2P path. This branch is impossible during a BLE-only
-                        // test because wifiGroupFormed is false.
                         val connectResult =
                             wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
