@@ -118,12 +118,6 @@ class WifiDirectRadioTransport(
     override suspend fun disconnectPeer(deviceId: String) {
         intentionallyDisconnectedPeers.add(deviceId)
 
-        if (knownGroupOwnerAppDeviceId == deviceId) {
-            // A Wi-Fi Direct member has exactly one iTantra TCP peer: the
-            // group's head. The reconnect loop checks this suppression set
-            // before opening another socket.
-        }
-
         socketsByPeerId[deviceId]?.let { socket ->
             removeSocket(socket)
         }
