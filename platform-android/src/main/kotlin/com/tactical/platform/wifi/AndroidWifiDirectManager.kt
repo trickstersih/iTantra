@@ -1482,15 +1482,15 @@ class AndroidWifiDirectManager(
     override suspend fun connectByAppDeviceId(
         deviceId: String
     ): TacticalResult<Unit> {
-        val peer = _peers.value.firstOrNull {
+        var peer = _peers.value.firstOrNull {
             it.appDeviceId.equals(deviceId, ignoreCase = true)
         }
 
         // After a P2P group is torn down, Android can briefly publish an empty
         // peer list even though the same nearby device is still reachable.
         // We persist the app-id -> Wi-Fi P2P address mapping so a manual
-        // Add-to-Squad can recover immediately instead of depending on the
-        // next DNS-SD callback.
+        // Add-to-Squad can recover without losing the identity during the
+        // discovery gap.
         val persistedAddress = synchronized(appDeviceIdByWifiDeviceAddress) {
             appDeviceIdByWifiDeviceAddress.entries
                 .firstOrNull { it.value.equals(deviceId, ignoreCase = true) }
@@ -1499,18 +1499,53 @@ class AndroidWifiDirectManager(
 
         val targetAddress = peer?.deviceAddress ?: persistedAddress
             ?: return TacticalResult.Failure(
-                "Wi-Fi Direct peer is no longer discovered"
+                "Wi-Fi Direct peer is no longer known"
             )
 
         if (peer == null) {
             android.util.Log.d(
                 TAG,
-                "Wi-Fi Direct reconnect using persisted peer address for " +
-                    deviceId + ": " + targetAddress
+                "Wi-Fi Direct reconnect waiting for rediscovery of " +
+                    deviceId + " at " + targetAddress
             )
+
+            // A manual re-add can happen in the short interval where Android
+            // has torn down the old P2P group but has not repopulated its peer
+            // cache yet. Calling connect() during that interval is rejected by
+            // some OEM stacks (reason 0), even though discovery finds the peer
+            // moments later. Reuse the cached MAC, restart discovery if needed,
+            // and wait briefly for Android to publish the peer before connecting.
+            startServiceDiscoveryInternal()
+            kickPeerDiscovery("manual add waiting for peer rediscovery")
+
+            peer = withTimeoutOrNull(MANUAL_ADD_DISCOVERY_TIMEOUT_MS) {
+                while (true) {
+                    val discovered = _peers.value.firstOrNull {
+                        it.appDeviceId.equals(deviceId, ignoreCase = true) ||
+                            it.deviceAddress.equals(targetAddress, ignoreCase = true)
+                    }
+                    if (discovered != null) {
+                        return@withTimeoutOrNull discovered
+                    }
+                    delay(100L)
+                }
+            }
+
+            if (peer == null) {
+                android.util.Log.w(
+                    TAG,
+                    "Wi-Fi Direct manual add could not rediscover " +
+                        deviceId + " within " +
+                        MANUAL_ADD_DISCOVERY_TIMEOUT_MS + "ms"
+                )
+                return TacticalResult.Failure(
+                    "Wi-Fi Direct peer is not currently discoverable"
+                )
+            }
         }
 
-        return connect(targetAddress)
+        val resolvedAddress = peer.deviceAddress
+        return connect(resolvedAddress)
     }
 
     override suspend fun connect(deviceAddress: String): TacticalResult<Unit> =
