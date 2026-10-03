@@ -1118,7 +1118,7 @@ class AndroidWifiDirectManager(
 
         // Deterministic reconnect ownership: only one side initiates a given
         // pair's recovery. The other side remains discoverable and accepts it.
-        val target = _peers.value
+        val targetPeer = _peers.value
             .asSequence()
             .filter { peer ->
                 val id = peer.appDeviceId
@@ -1129,19 +1129,38 @@ class AndroidWifiDirectManager(
                     peer.linkState != RadioLinkState.CONNECTING
             }
             .maxByOrNull { it.lastSeenEpochMs }
-            ?: return
+
+        // Wi-Fi can be toggled off/on faster than P2P service discovery can
+        // repopulate _peers. Reuse the persisted MAC -> iTantra-ID association
+        // as a short-lived reconnect hint; normal discovery will refresh it.
+        val fallback = if (targetPeer == null) {
+            squadIds.asSequence()
+                .filter { it != localDeviceId }
+                .mapNotNull { id ->
+                    synchronized(appDeviceIdByWifiDeviceAddress) {
+                        appDeviceIdByWifiDeviceAddress.entries
+                            .firstOrNull { it.value.equals(id, ignoreCase = true) }
+                            ?.key
+                    }?.let { address -> id to address }
+                }
+                .firstOrNull()
+        } else {
+            null
+        }
+
+        val targetAddress = targetPeer?.deviceAddress ?: fallback?.second ?: return
+        val targetLabel = targetPeer?.callsign ?: targetPeer?.deviceName ?: fallback?.first ?: targetAddress
 
         reconnectAttemptJob = managerScope.launch {
             try {
                 android.util.Log.d(
                     TAG,
                     "Wi-Fi Direct auto-reconnect candidate: " +
-                        (target.callsign ?: target.deviceName) +
-                        " / " + target.deviceAddress
+                        targetLabel + " / " + targetAddress
                 )
 
                 val result = runCatching {
-                    connect(target.deviceAddress)
+                    connect(targetAddress)
                 }.getOrElse { error ->
                     TacticalResult.Failure(
                         "Wi-Fi Direct auto-reconnect failed: " +
