@@ -738,9 +738,8 @@ class MainViewModel @Inject constructor(
 
                 val isConnected = isDirectlyConnected || isRelayedReachable
 
-                return peer.copy(
-                    isConnected = isConnected,
-                    linkText = if (isConnected) {
+                val updatedLinkText = when {
+                    isDirectlyConnected -> {
                         connectedTransportText(
                             peer.copy(
                                 bleState = if (bleConnected) {
@@ -755,9 +754,14 @@ class MainViewModel @Inject constructor(
                                 }
                             )
                         )
-                    } else {
-                        peer.linkText
-                    },
+                    }
+                    isRelayedReachable -> peer.linkText
+                    else -> peer.linkText
+                }
+
+                return peer.copy(
+                    isConnected = isConnected,
+                    linkText = updatedLinkText,
                     bleState = when {
                         bleConnected -> BleLinkState.CONNECTED
                         peer.bleState == BleLinkState.CONNECTED ->
