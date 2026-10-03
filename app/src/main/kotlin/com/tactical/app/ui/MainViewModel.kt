@@ -151,6 +151,7 @@ data class MainUiState(
     val wifiDirectDiscoveredGroupMemberIds: Set<String> = emptySet(),
     val respondingSquadRequestId: String? = null,
     val squadRequestError: String? = null,
+    val squadNotification: String? = null,
     val ttsPlaybackMode: com.tactical.platform.speech.mms.MmsTtsPlaybackMode =
         com.tactical.platform.speech.mms.MmsTtsPlaybackMode.OVERLAPPING
 )
@@ -516,6 +517,21 @@ class MainViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            meshSquadControlCoordinator.removalNotices.collect { callsign ->
+                val message = "REMOVED FROM SQUAD BY " + callsign
+                _uiState.update { it.copy(squadNotification = message) }
+                delay(5000L)
+                _uiState.update { state ->
+                    if (state.squadNotification == message) {
+                        state.copy(squadNotification = null)
+                    } else {
+                        state
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
             refreshSquadConnectionStates()
         }
 
@@ -828,6 +844,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun addPeerToSquad(deviceAddress: String) {
+        radioTransport.allowPeer(deviceAddress)
         val peer = _uiState.value.availablePeers
             .firstOrNull { it.deviceAddress == deviceAddress }
 
