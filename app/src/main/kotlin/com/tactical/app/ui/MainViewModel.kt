@@ -462,14 +462,38 @@ class MainViewModel @Inject constructor(
             while (true) {
                 delay(750L)
                 val info = wifiDirectManager.connectionInfo().value
+                val state = _uiState.value
+
+                if (!info.groupFormed) {
+                    if (
+                        state.wifiDirectGroupFormed ||
+                        state.wifiDirectGroupOwnerAppDeviceId != null
+                    ) {
+                        _uiState.update {
+                            it.copy(
+                                wifiDirectGroupFormed = false,
+                                wifiDirectGroupOwnerDeviceAddress = null,
+                                wifiDirectGroupOwnerAppDeviceId = null
+                            )
+                        }
+                    }
+                    continue
+                }
+
+                val candidateHeadIds = state.wifiDirectDiscoveredGroupHeadIds
+                    .filter { it in squadMembershipStore.squadDeviceIds() }
+
+                val resolvedOwnerAppDeviceId =
+                    info.groupOwnerAppDeviceId
+                        ?: candidateHeadIds.singleOrNull()
+
                 if (
-                    info.groupFormed &&
-                    info.groupOwnerAppDeviceId != null &&
-                    (
-                        _uiState.value.wifiDirectGroupOwnerAppDeviceId !=
-                            info.groupOwnerAppDeviceId ||
-                        !_uiState.value.wifiDirectGroupFormed
-                    )
+                    state.wifiDirectGroupFormed != info.groupFormed ||
+                    state.wifiDirectIsGroupOwner != info.isGroupOwner ||
+                    state.wifiDirectGroupOwnerDeviceAddress !=
+                        info.groupOwnerDeviceAddress ||
+                    state.wifiDirectGroupOwnerAppDeviceId !=
+                        resolvedOwnerAppDeviceId
                 ) {
                     _uiState.update {
                         it.copy(
@@ -478,7 +502,7 @@ class MainViewModel @Inject constructor(
                             wifiDirectGroupOwnerDeviceAddress =
                                 info.groupOwnerDeviceAddress,
                             wifiDirectGroupOwnerAppDeviceId =
-                                info.groupOwnerAppDeviceId
+                                resolvedOwnerAppDeviceId
                         )
                     }
                 }
@@ -573,25 +597,34 @@ class MainViewModel @Inject constructor(
                                 previousRelayedRoute ?: routeText
                             }
 
+                        val effectiveBleState =
+                            when {
+                                liveBleConnected ->
+                                    BleLinkState.CONNECTED
+                                bluetoothState == BleLinkState.CONNECTING ->
+                                    BleLinkState.CONNECTING
+                                else ->
+                                    BleLinkState.DISCONNECTED
+                            }
+
+                        val effectiveWifiState =
+                            when {
+                                liveWifiConnected ->
+                                    RadioLinkState.CONNECTED
+                                wifiState == RadioLinkState.CONNECTING ->
+                                    RadioLinkState.CONNECTING
+                                else ->
+                                    RadioLinkState.DISCONNECTED
+                            }
+
                         val hasLiveRadio =
                             liveBleConnected ||
                                 liveWifiConnected ||
                                 previous?.isConnected == true &&
                                     previousRelayedRoute != null
 
-                        val effectiveWifiState =
-                            when {
-                                liveWifiConnected ->
-                                    RadioLinkState.CONNECTED
-                                device.transportStates[RadioType.WIFI_DIRECT] ==
-                                    RadioLinkState.CONNECTED ->
-                                    RadioLinkState.CONNECTED
-                                else ->
-                                    wifiState
-                            }
-
                         val transportText = buildList {
-                            if (bluetoothState == BleLinkState.CONNECTED) {
+                            if (effectiveBleState == BleLinkState.CONNECTED) {
                                 add("BLE")
                             }
                             if (effectiveWifiState == RadioLinkState.CONNECTED) {
@@ -600,12 +633,14 @@ class MainViewModel @Inject constructor(
                         }.joinToString(" + ")
 
                         val effectiveLinkText = when {
-                            hasLiveRadio && transportText.isNotBlank() ->
-                                "DIRECT • $transportText"
-                            hasLiveRadio ->
-                                "DIRECT"
-                            else ->
-                                routeText
+                            liveBleConnected || liveWifiConnected -> {
+                                if (transportText.isNotBlank()) {
+                                    "DIRECT • $transportText"
+                                } else {
+                                    "DIRECT"
+                                }
+                            }
+                            else -> stableRouteText
                         }
 
                         PeerNodeUi(
@@ -623,7 +658,7 @@ class MainViewModel @Inject constructor(
                                 previous?.signalBars ?: 0
                             },
                             linkText = effectiveLinkText,
-                            bleState = bluetoothState,
+                            bleState = effectiveBleState,
                             wifiDirectState = effectiveWifiState
                         )
                     }
