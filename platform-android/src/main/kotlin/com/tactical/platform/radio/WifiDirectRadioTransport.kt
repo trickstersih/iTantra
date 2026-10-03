@@ -51,6 +51,8 @@ class WifiDirectRadioTransport(
     private val socketsByPeerId = ConcurrentHashMap<String, Socket>()
     private val peerIdBySocket = ConcurrentHashMap<Socket, String>()
     private val writeLocks = ConcurrentHashMap<Socket, Mutex>()
+    private val intentionallyDisconnectedPeers =
+        ConcurrentHashMap.newKeySet<String>()
     private val reconfigureLock = Mutex()
 
     @Volatile
@@ -106,6 +108,17 @@ class WifiDirectRadioTransport(
 
     override fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> =
         mapOf(RadioType.WIFI_DIRECT to connectedPeerIds())
+
+    override fun allowPeer(deviceId: String) {
+        intentionallyDisconnectedPeers.remove(deviceId)
+    }
+
+    override suspend fun disconnectPeer(deviceId: String) {
+        intentionallyDisconnectedPeers.add(deviceId)
+        socketsByPeerId[deviceId]?.let { socket ->
+            removeSocket(socket)
+        }
+    }
 
     override suspend fun broadcast(raw: RawPacket): TacticalResult<Unit> =
         withContext(Dispatchers.IO) {
@@ -198,6 +211,11 @@ class WifiDirectRadioTransport(
                     return@launch
                 }
 
+                val groupOwnerAppId =
+                    wifiDirectManager.connectionInfo().value.groupOwnerAddress
+                // Suppression is keyed by the stable iTantra peer ID learned
+                // from the hello frame, not the IP address.
+
                 // Do not create a second socket while an existing iTantra
                 // session is still registered for this group owner.
                 if (socketsByPeerId.isNotEmpty()) {
@@ -269,6 +287,15 @@ class WifiDirectRadioTransport(
                     FRAME_TYPE_HELLO -> {
                         val hello = decodeHello(frame.copyOfRange(1, frame.size))
                             ?: throw IOException("invalid iTantra Wi-Fi hello")
+
+                        if (intentionallyDisconnectedPeers.contains(hello.deviceId)) {
+                            android.util.Log.d(
+                                TAG,
+                                "Rejecting intentionally disconnected Wi-Fi Direct peer: " +
+                                    hello.deviceId
+                            )
+                            throw IOException("peer intentionally disconnected")
+                        }
 
                         val previous = socketsByPeerId.put(hello.deviceId, socket)
                         peerIdBySocket[socket] = hello.deviceId
