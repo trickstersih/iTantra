@@ -80,6 +80,23 @@ class WifiDirectRadioTransport(
                         return@withLock
                     }
 
+                    val wasGroupFormed = activeGroupEndpoint?.groupFormed == true
+
+                    // A newly-created P2P group represents a fresh physical
+                    // negotiation. A previous squad removal may have left a
+                    // transport-level suppression latch in memory, especially
+                    // when the old removal happened over BLE before Wi-Fi was
+                    // ever active. Do not carry that stale latch into a new
+                    // Wi-Fi group.
+                    if (!wasGroupFormed && info.groupFormed) {
+                        intentionallyDisconnectedPeers.clear()
+                        knownGroupOwnerAppDeviceId = null
+                        android.util.Log.d(
+                            TAG,
+                            "Wi-Fi Direct fresh group formed; cleared stale socket suppression"
+                        )
+                    }
+
                     closeDataSockets()
 
                     if (!info.groupFormed) {
@@ -120,6 +137,27 @@ class WifiDirectRadioTransport(
 
         socketsByPeerId[deviceId]?.let { socket ->
             removeSocket(socket)
+        }
+
+        // For the direct two-phone case, do not leave an empty P2P group alive
+        // after squad removal. Keeping the same group makes the peer's
+        // transport suppression indistinguishable from a link that should be
+        // repaired, which prevents a later manual Add-to-Squad from creating a
+        // clean negotiation. Multi-member groups remain intact.
+        val groupInfo = wifiDirectManager.connectionInfo().value
+        if (
+            groupInfo.groupFormed &&
+            groupInfo.groupMemberDeviceAddresses.size <= 2
+        ) {
+            runCatching {
+                wifiDirectManager.disconnect()
+            }.onFailure { error ->
+                android.util.Log.d(
+                    TAG,
+                    "Wi-Fi Direct two-phone group teardown after squad removal failed: " +
+                        (error.message ?: error.javaClass.simpleName)
+                )
+            }
         }
     }
 
