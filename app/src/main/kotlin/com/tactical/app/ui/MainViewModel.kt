@@ -212,6 +212,10 @@ class MainViewModel @Inject constructor(
     private val observedPeerIds = mutableSetOf<String>()
     private val recentlyRemovedFromSquadIds =
         ConcurrentHashMap.newKeySet<String>()
+    // Tracks membership across the whole app lifecycle so a remote REMOVE is
+    // treated the same as a locally initiated removal for Home-screen retention.
+    private var lastObservedSquadIds =
+        squadMembershipStore.squadDeviceIds().toSet()
     private val reconnectJobs = mutableMapOf<String, Job>()
     private val pttController: PttController = DefaultPttController(
         deviceId = DeviceId(identityStore.deviceIdValue),
@@ -515,6 +519,12 @@ class MainViewModel @Inject constructor(
 
         viewModelScope.launch {
             meshSquadControlCoordinator.membershipChanged.collect {
+                val currentSquadIds = squadMembershipStore.squadDeviceIds().toSet()
+                val removedIds = lastObservedSquadIds - currentSquadIds
+                if (removedIds.isNotEmpty()) {
+                    recentlyRemovedFromSquadIds.addAll(removedIds)
+                }
+                lastObservedSquadIds = currentSquadIds
                 refreshSquadPeers()
             }
         }
@@ -699,17 +709,34 @@ class MainViewModel @Inject constructor(
                     val currentSquad = squadIds.mapNotNull { id ->
                         peers.firstOrNull { it.deviceAddress == id } ?: squadById[id]
                     }
+
+                    // Explicitly removed peers must remain selectable on Home
+                    // even after Android's P2P/DNS-SD discovery list temporarily
+                    // goes empty during group teardown. Rehydrate those entries
+                    // from persistent identity data until the user re-adds them.
+                    val retainedRemovedPeers = localAppDataStore
+                        .loadPairedDevices()
+                        .filter {
+                            it.deviceId in recentlyRemovedFromSquadIds &&
+                                it.deviceId !in squadIds
+                        }
+                        .map(::storedPeerToUi)
+
+                    val homePeers = (peers + retainedRemovedPeers)
+                        .distinctBy { it.deviceAddress }
+
                     val knownWifiGroupMembers =
                         state.wifiDirectDiscoveredGroupMemberIds
                             .filterNot { it in recentlyRemovedFromSquadIds }
                             .toSet()
+
                     state.copy(
                         squadPeers = currentSquad,
                         // Keep normal Wi-Fi group members hidden so another phone
-                        // does not try to create a competing P2P group. A member
-                        // that this exact device just removed is intentionally
-                        // exempt so it returns to Home and can be selected again.
-                        availablePeers = peers.filter { peer ->
+                        // does not try to create a competing P2P group. Explicitly
+                        // removed peers are retained from persistent identity data
+                        // so they stay on Home through the P2P discovery gap.
+                        availablePeers = homePeers.filter { peer ->
                             peer.deviceAddress !in squadIds &&
                                 peer.deviceAddress !in knownWifiGroupMembers
                         }
