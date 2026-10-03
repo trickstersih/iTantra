@@ -211,10 +211,6 @@ class WifiDirectRadioTransport(
                     return@launch
                 }
 
-                val groupOwnerAppId =
-                    wifiDirectManager.connectionInfo().value.groupOwnerAddress
-                // Suppression is keyed by the stable iTantra peer ID learned
-                // from the hello frame, not the IP address.
 
                 // Do not create a second socket while an existing iTantra
                 // session is still registered for this group owner.
