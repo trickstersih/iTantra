@@ -1891,6 +1891,7 @@ class AndroidWifiDirectManager(
         private const val PRESENCE_RETRY_MS = 5_000L
         private const val AUTO_RECONNECT_INTERVAL_MS = 750L
         private const val PEER_REFRESH_MS = 1_000L
+        private const val MANUAL_ADD_DISCOVERY_TIMEOUT_MS = 6_000L
         private const val WIFI_IDENTITY_PREFIX = "app_id_"
     }
 }
