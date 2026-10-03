@@ -1542,8 +1542,12 @@ class AndroidWifiDirectManager(
         // Keep Android's normal peer discovery session alive while starting
         // the connection. Some OEM stacks invalidate the discovered peer
         // immediately when stopPeerDiscovery() is called, causing connect()
-        // to be rejected with reason 0. We only remove the DNS-SD request below
-        // as part of the connection negotiation lifecycle.
+        // to be rejected with reason 0.
+        //
+        // Remove only the DNS-SD service request. This pauses our application
+        // service-discovery bookkeeping but leaves Android's P2P peer cache
+        // intact for the connect() call.
+        removeServiceRequest()
         _state.value = RadioLinkState.CONNECTING
         _peers.value = _peers.value.map {
             if (it.deviceAddress.equals(cleanedAddress, ignoreCase = true)) {
