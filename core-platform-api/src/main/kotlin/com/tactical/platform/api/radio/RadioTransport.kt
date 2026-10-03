@@ -31,6 +31,18 @@ interface RadioTransport {
     fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> = emptyMap()
 
     /**
+     * Intentionally terminate the application-level link to one peer.
+     * Concrete transports may also suppress an automatic reconnect until the
+     * peer is explicitly allowed again.
+     */
+    suspend fun disconnectPeer(deviceId: String) {}
+
+    /**
+     * Clear any intentional-disconnect suppression for a peer.
+     */
+    fun allowPeer(deviceId: String) {}
+
+    /**
      * Identifies this transport when a caller needs to report which bearer
      * delivered an incoming packet.
      */
