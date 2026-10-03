@@ -720,7 +720,14 @@ class MainViewModel @Inject constructor(
                             it.deviceId in recentlyRemovedFromSquadIds &&
                                 it.deviceId !in squadIds
                         }
-                        .map(::storedPeerToUi)
+                        .map { stored ->
+                            storedPeerToUi(stored).copy(
+                                isConnected = false,
+                                linkText = "STALE",
+                                bleState = BleLinkState.AVAILABLE,
+                                wifiDirectState = RadioLinkState.UNAVAILABLE
+                            )
+                        }
 
                     val homePeers = (peers + retainedRemovedPeers)
                         .distinctBy { it.deviceAddress }
