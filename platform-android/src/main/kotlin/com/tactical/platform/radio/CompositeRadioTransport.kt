@@ -48,6 +48,20 @@ class CompositeRadioTransport(
         return merged.mapValues { it.value.toSet() }
     }
 
+    override fun allowPeer(deviceId: String) {
+        bleTransport.allowPeer(deviceId)
+        wifiDirectTransport.allowPeer(deviceId)
+    }
+
+    override suspend fun disconnectPeer(deviceId: String) {
+        coroutineScope {
+            val ble = async { bleTransport.disconnectPeer(deviceId) }
+            val wifi = async { wifiDirectTransport.disconnectPeer(deviceId) }
+            ble.await()
+            wifi.await()
+        }
+    }
+
     override fun incoming(): Flow<RawPacket> =
         merge(
             bleTransport.incoming().catch { e ->
