@@ -54,27 +54,20 @@ class CompositeRadioTransport(
     }
 
     override suspend fun disconnectPeer(deviceId: String) {
-        // Only apply the intentional-removal latch to a bearer that is
-        // actually carrying this peer. Otherwise a BLE-only removal would
-        // incorrectly suppress a future Wi-Fi Direct re-add (or vice versa).
-        coroutineScope {
-            val bleConnected = deviceId in bleTransport.connectedPeerIds()
-            val wifiConnected = deviceId in wifiDirectTransport.connectedPeerIds()
+        // Squad removal is bearer-aware. If both BLE and Wi-Fi Direct are
+        // carrying the same peer, remove only the Wi-Fi Direct relationship;
+        // the independent BLE link must remain usable. For a Wi-Fi-only peer,
+        // remove Wi-Fi. For a BLE-only peer, preserve the old BLE-only removal
+        // behavior.
+        val wifiConnected = deviceId in wifiDirectTransport.connectedPeerIds()
+        if (wifiConnected) {
+            wifiDirectTransport.disconnectPeer(deviceId)
+            return
+        }
 
-            val ble = if (bleConnected) {
-                async { bleTransport.disconnectPeer(deviceId) }
-            } else {
-                null
-            }
-
-            val wifi = if (wifiConnected) {
-                async { wifiDirectTransport.disconnectPeer(deviceId) }
-            } else {
-                null
-            }
-
-            ble?.await()
-            wifi?.await()
+        val bleConnected = deviceId in bleTransport.connectedPeerIds()
+        if (bleConnected) {
+            bleTransport.disconnectPeer(deviceId)
         }
     }
 
