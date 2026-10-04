@@ -659,11 +659,18 @@ class MainViewModel @Inject constructor(
                                     RadioLinkState.DISCONNECTED
                             }
 
+                        val immediateRelayId =
+                            device.path.lastOrNull()?.value
+                        val liveRelayedRoute =
+                            immediateRelayId != null &&
+                                (
+                                    immediateRelayId in liveBleIds ||
+                                        immediateRelayId in liveWifiIds
+                                    )
                         val hasLiveRadio =
                             liveBleConnected ||
                                 liveWifiConnected ||
-                                previous?.isConnected == true &&
-                                    previousRelayedRoute != null
+                                liveRelayedRoute
 
                         val transportText = buildList {
                             if (effectiveBleState == BleLinkState.CONNECTED) {
