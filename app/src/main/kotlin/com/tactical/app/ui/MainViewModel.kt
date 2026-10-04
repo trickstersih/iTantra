@@ -69,7 +69,13 @@ data class PeerNodeUi(
     val signalBars: Int,
     val linkText: String,
     val bleState: BleLinkState = BleLinkState.AVAILABLE,
-    val wifiDirectState: RadioLinkState = RadioLinkState.UNAVAILABLE
+    val wifiDirectState: RadioLinkState = RadioLinkState.UNAVAILABLE,
+    /**
+     * Discovery path from the original sender to this device. For a relayed
+     * packet the last element is the immediate relay we must still be able
+     * to reach physically before reporting the route as connected.
+     */
+    val path: List<String> = emptyList()
 )
 
 data class ChatMessageUi(
@@ -695,7 +701,8 @@ class MainViewModel @Inject constructor(
                             },
                             linkText = effectiveLinkText,
                             bleState = effectiveBleState,
-                            wifiDirectState = effectiveWifiState
+                            wifiDirectState = effectiveWifiState,
+                            path = device.path.map { it.value }
                         )
                     }
 
@@ -792,12 +799,15 @@ class MainViewModel @Inject constructor(
                 // peer reached through "VIA ..." will not appear in the direct
                 // transport registry even though messages can traverse the
                 // route normally.
+                // A remembered "VIA ..." label is not proof that the relay
+                // is still reachable. For a relayed discovery path, the last
+                // hop is the immediate relay that must have a live physical
+                // bearer on this device.
+                val immediateRelayId = peer.path.lastOrNull()
                 val isRelayedReachable =
                     !isDirectlyConnected &&
-                        (
-                            peer.linkText.startsWith("VIA ") ||
-                                peer.linkText == "RELAYED"
-                            )
+                        immediateRelayId != null &&
+                        immediateRelayId in connectedIds
 
                 val isConnected = isDirectlyConnected || isRelayedReachable
 
@@ -818,7 +828,6 @@ class MainViewModel @Inject constructor(
                             )
                         )
                     }
-                    isRelayedReachable -> peer.linkText
                     else -> peer.linkText
                 }
 
