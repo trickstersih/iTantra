@@ -363,7 +363,8 @@ class MainViewModel @Inject constructor(
                             wifiDirectDiscoveredGroupHeadIds = headIds,
                             wifiDirectDiscoveredGroupMemberIds = memberIds,
                             availablePeers = state.availablePeers.filter {
-                                it.deviceAddress !in memberIds
+                                it.deviceAddress !in memberIds ||
+                                    it.deviceAddress in recentlyRemovedFromSquadIds
                             }
                         )
                     }
@@ -890,13 +891,17 @@ class MainViewModel @Inject constructor(
     }
 
     fun addPeerToSquad(deviceAddress: String) {
-        // A peer that was just removed must become actionable again immediately.
+        // Remember whether this is an explicit re-add before clearing the
+        // stale/removal marker. A retained "STALE" peer has no live Wi-Fi state
+        // in the UI, but it may still have a persisted Wi-Fi identity that can
+        // be used to re-form its direct link.
+        val wasRecentlyRemoved =
+            deviceAddress in recentlyRemovedFromSquadIds
         recentlyRemovedFromSquadIds.remove(deviceAddress)
         radioTransport.allowPeer(deviceAddress)
 
         val peer = _uiState.value.availablePeers
             .firstOrNull { it.deviceAddress == deviceAddress }
-        val wifiGroupFormed = wifiDirectManager.connectionInfo().value.groupFormed
 
         viewModelScope.launch {
             val result = runCatching {
@@ -925,13 +930,24 @@ class MainViewModel @Inject constructor(
                     // Do not require a P2P group to already exist: connect() is
                     // precisely what creates the first group.
                     peer != null &&
-                        peer.wifiDirectState != RadioLinkState.UNAVAILABLE &&
-                        peer.bleState != BleLinkState.CONNECTED -> {
+                        peer.bleState != BleLinkState.CONNECTED &&
+                        (
+                            peer.wifiDirectState != RadioLinkState.UNAVAILABLE ||
+                                wasRecentlyRemoved
+                            ) -> {
                         val connectResult =
                             wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
                         if (connectResult is TacticalResult.Failure) {
-                            connectResult
+                            // A recently removed BLE-only peer can also be
+                            // re-added from Home. If it has no remembered
+                            // Wi-Fi identity, keep BLE as the fallback instead
+                            // of turning the UI into a Wi-Fi-only path.
+                            if (wasRecentlyRemoved) {
+                                bleConnectionManager.addToSquad(deviceAddress)
+                            } else {
+                                connectResult
+                            }
                         } else {
                             val ready = withTimeoutOrNull(5_000L) {
                                 while (deviceAddress !in radioTransport.connectedPeerIds()) {
