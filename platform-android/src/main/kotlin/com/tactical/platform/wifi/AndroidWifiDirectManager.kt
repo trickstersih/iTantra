@@ -1305,12 +1305,22 @@ class AndroidWifiDirectManager(
                     val wasGroupFormed = _connectionInfo.value.groupFormed
                     connectTargetDeviceAddress = null
                     _connectionInfo.value = WifiDirectConnectionInfo()
+                    localGroupCredentials = null
 
                     if (_state.value != RadioLinkState.CONNECTING) {
                         _state.value = if (wifiManager.isWifiEnabled) {
                             RadioLinkState.AVAILABLE
                         } else {
                             RadioLinkState.UNAVAILABLE
+                        }
+                    }
+
+                    // The TXT record also carries group_role. Refresh it to
+                    // "none" as soon as the old group disappears so nearby
+                    // devices do not keep treating this phone as a member.
+                    advertisedDeviceId?.let { id ->
+                        advertisedCallsign?.let { callsign ->
+                            refreshPresenceWithGroupCredentials(id, callsign)
                         }
                     }
 
@@ -1393,11 +1403,16 @@ class AndroidWifiDirectManager(
                                     networkName = networkName,
                                     passphrase = passphrase
                                 )
-                                advertisedDeviceId?.let { id ->
-                                    advertisedCallsign?.let { callsign ->
-                                        refreshPresenceWithGroupCredentials(id, callsign)
-                                    }
-                                }
+                            }
+                        }
+
+                        // Re-advertise the current role even when Android has
+                        // not supplied group credentials yet. This is what
+                        // makes member-vs-head discovery deterministic for a
+                        // newly formed group.
+                        advertisedDeviceId?.let { id ->
+                            advertisedCallsign?.let { callsign ->
+                                refreshPresenceWithGroupCredentials(id, callsign)
                             }
                         }
 
