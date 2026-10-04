@@ -82,18 +82,16 @@ class WifiDirectRadioTransport(
 
                     val wasGroupFormed = activeGroupEndpoint?.groupFormed == true
 
-                    // A newly-created P2P group represents a fresh physical
-                    // negotiation. A previous squad removal may have left a
-                    // transport-level suppression latch in memory, especially
-                    // when the old removal happened over BLE before Wi-Fi was
-                    // ever active. Do not carry that stale latch into a new
-                    // Wi-Fi group.
+                    // A fresh P2P group does not invalidate an explicit
+                    // per-peer squad removal. Keep suppression latched until
+                    // that specific peer is deliberately re-added through
+                    // allowPeer(), rather than clearing every removed peer when
+                    // an unrelated group is formed.
                     if (!wasGroupFormed && info.groupFormed) {
-                        intentionallyDisconnectedPeers.clear()
                         knownGroupOwnerAppDeviceId = null
                         android.util.Log.d(
                             TAG,
-                            "Wi-Fi Direct fresh group formed; cleared stale socket suppression"
+                            "Wi-Fi Direct fresh group formed; preserved per-peer socket suppression"
                         )
                     }
 
