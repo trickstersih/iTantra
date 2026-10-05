@@ -127,6 +127,7 @@ class MeshSquadControlCoordinator @Inject constructor(
             return TacticalResult.Success(Unit)
         }
 
+        wifiDirectManager.allowAutoReconnectTo(deviceId)
         radioTransport.allowPeer(deviceId)
 
         if (outgoingRequestIdsByDeviceId[deviceId]?.isNotEmpty() == true) {
@@ -238,6 +239,7 @@ class MeshSquadControlCoordinator @Inject constructor(
         publishPending()
 
         if (approve) {
+            wifiDirectManager.allowAutoReconnectTo(request.deviceId)
             radioTransport.allowPeer(request.deviceId)
 
             val membership = bleConnectionManager.addMeshSquadMember(
