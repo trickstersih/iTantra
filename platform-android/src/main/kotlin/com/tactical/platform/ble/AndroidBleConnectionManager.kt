@@ -24,6 +24,7 @@ import com.tactical.platform.api.ble.BleDiagnostics
 import com.tactical.platform.api.ble.BleLinkState
 import com.tactical.platform.api.ble.SquadRequest
 import com.tactical.platform.api.squad.SquadMembershipStore
+import com.tactical.platform.api.wifi.WifiDirectManager
 import com.tactical.platform.radio.BleConnectionRegistry
 import com.tactical.platform.radio.BleRadioTransport
 import kotlinx.coroutines.CompletableDeferred
@@ -49,7 +50,8 @@ class AndroidBleConnectionManager(
     private val context: Context,
     private val registry: BleConnectionRegistry,
     private val localDeviceId: String,
-    private val squadMembershipStore: SquadMembershipStore
+    private val squadMembershipStore: SquadMembershipStore,
+    private val wifiDirectManager: WifiDirectManager
 ) : BleConnectionManager, BleConnectionRegistry.ConnectionListener {
 
     private val states = ConcurrentHashMap<String, MutableStateFlow<BleLinkState>>()
@@ -620,6 +622,9 @@ class AndroidBleConnectionManager(
                         registry.registerOutboundConnection(gatt)
                         setState(resolvedAddress, BleLinkState.CONNECTED)
                         startRssiPolling(resolvedAddress, gatt)
+                        val stablePeerId =
+                            applicationIdForAddress(resolvedAddress) ?: resolvedAddress
+                        wifiDirectManager.noteBlePeerConnected(stablePeerId)
                         android.util.Log.d(
                             TAG,
                             "GATT ready for " + resolvedAddress
@@ -975,6 +980,7 @@ class AndroidBleConnectionManager(
         val appId = applicationIdForAddress(device.address) ?: return
         rememberAddress(appId, device.address)
         setState(device.address, BleLinkState.CONNECTED)
+        wifiDirectManager.noteBlePeerConnected(appId)
         android.util.Log.d(
             TAG,
             "Inbound BLE link ready for " + appId +
