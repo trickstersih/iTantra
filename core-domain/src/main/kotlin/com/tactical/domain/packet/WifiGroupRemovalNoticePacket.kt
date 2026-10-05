@@ -15,6 +15,12 @@ data class WifiGroupRemovalNoticePacket(
     val target: DeviceId,
     val removedDevice: DeviceId,
     val removedCallsign: String,
+    /**
+     * Wi-Fi peers whose automatic P2P reconnection must be suppressed after
+     * this removal. This is carried to both the removed peer and the remaining
+     * peers so neither side recreates the old Wi-Fi-only relationship.
+     */
+    val blockedPeerIds: Set<String> = emptySet(),
     val timestamp: Long
 ) : Packet {
     init {
