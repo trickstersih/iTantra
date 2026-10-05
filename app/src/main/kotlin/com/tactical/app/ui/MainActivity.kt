@@ -68,11 +68,27 @@ class MainActivity : ComponentActivity() {
     private val wirelessWarning = mutableStateOf<String?>(null)
     private val wirelessStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (
-                intent.action == BluetoothAdapter.ACTION_STATE_CHANGED ||
-                intent.action == WifiManager.WIFI_STATE_CHANGED_ACTION
-            ) {
-                ensureWirelessEnabled()
+            when (intent.action) {
+                BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    ensureWirelessEnabled()
+                }
+
+                WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                    ensureWirelessEnabled()
+
+                    if (
+                        intent.getIntExtra(
+                            WifiManager.EXTRA_WIFI_STATE,
+                            WifiManager.WIFI_STATE_UNKNOWN
+                        ) == WifiManager.WIFI_STATE_ENABLED
+                    ) {
+                        // Wi-Fi can be enabled after the app already started
+                        // with BLE only. Explicitly wake the discovery layer so
+                        // the Wi-Fi Direct manager starts advertising/discovery
+                        // and can upgrade an existing BLE relationship.
+                        viewModel.refreshWifiDirect()
+                    }
+                }
             }
         }
     }
