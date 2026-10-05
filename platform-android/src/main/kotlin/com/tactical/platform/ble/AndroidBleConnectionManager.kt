@@ -770,6 +770,11 @@ class AndroidBleConnectionManager(
             is SquadControlCodec.Message.Hello -> {
                 if (message.deviceId == localDeviceId) return
                 rememberAddress(message.deviceId, address)
+                // The inbound GATT callback can arrive before the remote
+                // iTantra UUID is known. The hello is the first authoritative
+                // identity, so register it for the cross-bearer Wi-Fi upgrade
+                // here as well.
+                wifiDirectManager.noteBlePeerConnected(message.deviceId)
                 setState(address, if (hasDirectConnection(address)) {
                     BleLinkState.CONNECTED
                 } else {
