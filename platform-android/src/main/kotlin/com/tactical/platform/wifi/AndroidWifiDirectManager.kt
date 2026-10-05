@@ -82,6 +82,9 @@ class AndroidWifiDirectManager(
     private val connectMutex = kotlinx.coroutines.sync.Mutex()
     private val suppressedAutoReconnectPeerIds =
         java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    /** Physical BLE peers that should be upgraded to Wi-Fi when possible. */
+    private val bleWifiUpgradePeerIds =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var activePresenceServiceInfo: WifiP2pDnsSdServiceInfo? = null
     private var connectTargetDeviceAddress: String? = null
     private var wifiP2pListenerRegistered = false
@@ -1109,20 +1112,51 @@ class AndroidWifiDirectManager(
             ) {
                 try {
                     wifiP2pManager.requestPeers(wifichannel) { peerList ->
-                        val seenAddresses = peerList.deviceList
-                            .map { it.deviceAddress }
-                            .toSet()
-
-                        if (seenAddresses.isEmpty()) return@requestPeers
-
                         val now = System.currentTimeMillis()
-                        _peers.value = _peers.value.map { peer ->
-                            if (peer.deviceAddress in seenAddresses) {
-                                peer.copy(lastSeenEpochMs = now)
-                            } else {
-                                peer
+                        val androidPeers = peerList.deviceList
+                        if (androidPeers.isEmpty()) return@requestPeers
+
+                        val byAddress = _peers.value.associateBy { it.deviceAddress.lowercase() }
+                        val refreshed = _peers.value.toMutableList()
+
+                        androidPeers.forEach { androidPeer ->
+                            val address = androidPeer.deviceAddress
+                            val key = address.lowercase()
+                            val existing = byAddress[key]
+                            if (existing != null) {
+                                refreshed.removeAll {
+                                    it.deviceAddress.equals(address, ignoreCase = true)
+                                }
+                                refreshed += existing.copy(lastSeenEpochMs = now)
+                                return@forEach
+                            }
+
+                            // DNS-SD is occasionally asymmetric on OEM P2P
+                            // stacks. If this MAC was learned before, materialize
+                            // the stable iTantra identity from the persistent cache
+                            // even when the fresh TXT callback has not arrived yet.
+                            val cachedId = synchronized(appDeviceIdByWifiDeviceAddress) {
+                                appDeviceIdByWifiDeviceAddress.entries
+                                    .firstOrNull { it.key.equals(address, ignoreCase = true) }
+                                    ?.value
+                            }
+                            if (!cachedId.isNullOrBlank() && cachedId != localDeviceId) {
+                                refreshed.removeAll {
+                                    it.deviceAddress.equals(address, ignoreCase = true)
+                                }
+                                refreshed += WifiDirectPeer(
+                                    deviceAddress = address,
+                                    deviceName = androidPeer.deviceName,
+                                    appDeviceId = cachedId,
+                                    callsign = androidPeer.deviceName,
+                                    isGroupOwner = null,
+                                    linkState = RadioLinkState.AVAILABLE,
+                                    lastSeenEpochMs = now
+                                )
                             }
                         }
+
+                        _peers.value = refreshed
                     }
                 } catch (_: SecurityException) {
                     break
@@ -1194,18 +1228,21 @@ class AndroidWifiDirectManager(
         if (connectionAttemptInProgress) return
 
         val squadIds = squadMembershipStore.squadDeviceIds()
-        if (squadIds.isEmpty()) return
+        val candidateIds = (squadIds + bleWifiUpgradePeerIds)
+            .filter { it != localDeviceId && it !in suppressedAutoReconnectPeerIds }
+            .toSet()
+        if (candidateIds.isEmpty()) return
 
         // Deterministic reconnect ownership: only one side initiates a given
         // pair's recovery. The other side remains discoverable and accepts it.
+        // This applies both to persistent squad members and to a live BLE peer
+        // waiting for a Wi-Fi link upgrade.
         val targetPeer = _peers.value
             .asSequence()
             .filter { peer ->
                 val id = peer.appDeviceId
                 id != null &&
-                    id in squadIds &&
-                    id != localDeviceId &&
-                    id !in suppressedAutoReconnectPeerIds &&
+                    id in candidateIds &&
                     localDeviceId.compareTo(id) < 0 &&
                     peer.linkState != RadioLinkState.CONNECTING
             }
@@ -1215,11 +1252,8 @@ class AndroidWifiDirectManager(
         // repopulate _peers. Reuse the persisted MAC -> iTantra-ID association
         // as a short-lived reconnect hint; normal discovery will refresh it.
         val fallback = if (targetPeer == null) {
-            squadIds.asSequence()
-                .filter {
-                    it != localDeviceId &&
-                        it !in suppressedAutoReconnectPeerIds
-                }
+            candidateIds.asSequence()
+                .filter { id -> localDeviceId.compareTo(id) < 0 }
                 .mapNotNull { id ->
                     synchronized(appDeviceIdByWifiDeviceAddress) {
                         appDeviceIdByWifiDeviceAddress.entries
@@ -1651,6 +1685,18 @@ class AndroidWifiDirectManager(
                 "Resolved Wi-Fi group-owner app identity from transport hello: " +
                     deviceId
             )
+        }
+    }
+
+    override fun noteBlePeerConnected(deviceId: String) {
+        if (deviceId.isBlank() || deviceId == localDeviceId) return
+        bleWifiUpgradePeerIds.add(deviceId)
+        android.util.Log.d(
+            TAG,
+            "BLE peer registered for automatic Wi-Fi upgrade: " + deviceId
+        )
+        if (started.get() && wifiManager.isWifiEnabled) {
+            scheduleAutoReconnectAttempt()
         }
     }
 
