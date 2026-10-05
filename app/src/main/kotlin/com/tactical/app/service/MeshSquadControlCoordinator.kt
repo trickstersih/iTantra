@@ -1,6 +1,7 @@
 package com.tactical.app.service
 
 import com.tactical.app.di.DeviceIdentityStore
+import com.tactical.app.di.LocalAppDataStore
 import com.tactical.domain.identity.DeviceId
 import com.tactical.domain.identity.RadioType
 import com.tactical.domain.packet.SquadControlAction
@@ -41,7 +42,8 @@ class MeshSquadControlCoordinator @Inject constructor(
     private val identityStore: DeviceIdentityStore,
     private val squadMembershipStore: SquadMembershipStore,
     private val radioTransport: RadioTransport,
-    private val wifiDirectManager: WifiDirectManager
+    private val wifiDirectManager: WifiDirectManager,
+    private val localAppDataStore: LocalAppDataStore
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -313,7 +315,7 @@ class MeshSquadControlCoordinator @Inject constructor(
     }
 
 
-    private fun sendWifiGroupRemovalNoticesIfHead(
+    private suspend fun sendWifiGroupRemovalNoticesIfHead(
         removedDeviceId: String
     ) {
         val groupInfo = wifiDirectManager.connectionInfo().value
@@ -336,29 +338,30 @@ class MeshSquadControlCoordinator @Inject constructor(
             return
         }
 
-        val removedCallsign = removedDeviceId.take(8)
+        val removedCallsign =
+            localAppDataStore.callsignForPeer(removedDeviceId)
+                ?.takeIf { it.isNotBlank() }
+                ?: removedDeviceId.take(8)
 
         remainingWifiPeers.forEach { targetId ->
-            scope.launch {
-                val packet = WifiGroupRemovalNoticePacket(
-                    sender = DeviceId(localDeviceId),
-                    target = DeviceId(targetId),
-                    removedDevice = DeviceId(removedDeviceId),
-                    removedCallsign = removedCallsign,
-                    timestamp = System.currentTimeMillis()
-                )
+            val packet = WifiGroupRemovalNoticePacket(
+                sender = DeviceId(localDeviceId),
+                target = DeviceId(targetId),
+                removedDevice = DeviceId(removedDeviceId),
+                removedCallsign = removedCallsign,
+                timestamp = System.currentTimeMillis()
+            )
 
-                val result = meshService.sendOnTransport(
-                    packet = packet,
-                    transport = RadioType.WIFI_DIRECT
-                )
+            val result = meshService.sendOnTransport(
+                packet = packet,
+                transport = RadioType.WIFI_DIRECT
+            )
 
-                if (result is TacticalResult.Failure) {
-                    android.util.Log.d(
-                        "MeshSquadControlCoordinator",
-                        "Wi-Fi removal notice to " + targetId + " failed: " + result.error
-                    )
-                }
+            if (result is TacticalResult.Failure) {
+                android.util.Log.d(
+                    "MeshSquadControlCoordinator",
+                    "Wi-Fi removal notice to " + targetId + " failed: " + result.error
+                )
             }
         }
     }
@@ -371,7 +374,10 @@ class MeshSquadControlCoordinator @Inject constructor(
                 removedDeviceId = packet.removedDevice.value,
                 removedCallsign = packet.removedCallsign,
                 removedByDeviceId = packet.sender.value,
-                removedByCallsign = localCallsignForDevice(packet.sender.value)
+                removedByCallsign =
+                    localAppDataStore.callsignForPeer(packet.sender.value)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: packet.sender.value.take(8)
             )
         )
 
@@ -383,13 +389,6 @@ class MeshSquadControlCoordinator @Inject constructor(
                 packet.sender.value
         )
     }
-
-    private fun localCallsignForDevice(deviceId: String): String =
-        if (deviceId == identityStore.deviceIdValue) {
-            identityStore.callsign
-        } else {
-            deviceId.take(8)
-        }
 
     private suspend fun handleRemove(packet: SquadControlPacket) {
         // Removal is authoritative for the addressed relationship. Process it
