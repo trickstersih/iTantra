@@ -1550,6 +1550,8 @@ class AndroidWifiDirectManager(
         }
     }
 
+    override fun isWifiEnabled(): Boolean = wifiManager.isWifiEnabled
+
     override fun connectionInfo(): StateFlow<WifiDirectConnectionInfo> =
         _connectionInfo.asStateFlow()
 
