@@ -80,6 +80,9 @@ class AndroidWifiDirectManager(
     private var presenceRegistered = false
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val connectMutex = kotlinx.coroutines.sync.Mutex()
+    private val suppressedAutoReconnectPeerIds =
+        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private var activePresenceServiceInfo: WifiP2pDnsSdServiceInfo? = null
     private var connectTargetDeviceAddress: String? = null
     private var wifiP2pListenerRegistered = false
     private var connectionAttemptInProgress = false
@@ -458,6 +461,7 @@ class AndroidWifiDirectManager(
         connectionAttemptInProgress = false
         frameworkConnectionInProgress = false
         presenceRegistered = false
+        activePresenceServiceInfo = null
 
         serviceRequest?.let { request ->
             runCatching {
@@ -497,11 +501,18 @@ class AndroidWifiDirectManager(
             return startResult
         }
 
+        val identityChanged =
+            advertisedDeviceId != deviceId ||
+                advertisedCallsign != callsign
         advertisedDeviceId = deviceId
         advertisedCallsign = callsign
+        if (identityChanged) {
+            presenceRegistered = false
+        }
         android.util.Log.d(
             TAG,
-            "Advertising iTantra Wi-Fi presence for id=" + deviceId
+            "Advertising iTantra Wi-Fi presence for id=" + deviceId +
+                " callsign=" + callsign
         )
 
         if (!wifiManager.isWifiEnabled) {
@@ -641,20 +652,62 @@ class AndroidWifiDirectManager(
                 }
 
                 try {
-                    // Do not clear all local P2P services before every
-                    // advertisement. On some Android/OEM Wi-Fi stacks the
-                    // clear+add sequence races the P2P discovery engine and
-                    // leaves both operations reporting BUSY. A local service
-                    // is safe to add directly; stop() clears it during the
-                    // manager lifecycle shutdown.
+                    val previousService = activePresenceServiceInfo
+                    if (previousService != null) {
+                        suspendCancellableCoroutine<Unit> { continuation ->
+                            try {
+                                wifiP2pManager.removeLocalService(
+                                    wifichannel,
+                                    previousService,
+                                    object : WifiP2pManager.ActionListener {
+                                        override fun onSuccess() {
+                                            if (continuation.isActive) {
+                                                continuation.resume(Unit)
+                                            }
+                                        }
+
+                                        override fun onFailure(reason: Int) {
+                                            android.util.Log.d(
+                                                TAG,
+                                                "Previous iTantra Wi-Fi presence removal returned " +
+                                                    reason
+                                            )
+                                            if (continuation.isActive) {
+                                                continuation.resume(Unit)
+                                            }
+                                        }
+                                    }
+                                )
+                            } catch (_: SecurityException) {
+                                if (continuation.isActive) {
+                                    continuation.resume(Unit)
+                                }
+                            } catch (_: Exception) {
+                                if (continuation.isActive) {
+                                    continuation.resume(Unit)
+                                }
+                            }
+                        }
+                        activePresenceServiceInfo = null
+                    }
+
                     wifiP2pManager.addLocalService(
                         wifichannel,
                         serviceInfo,
                         object : WifiP2pManager.ActionListener {
                             override fun onSuccess() {
+                                activePresenceServiceInfo = serviceInfo
                                 android.util.Log.d(
                                     TAG,
-                                    "iTantra Wi-Fi presence advertised"
+                                    "iTantra Wi-Fi presence advertised: callsign=" +
+                                        callsign +
+                                        " role=" +
+                                        when {
+                                            _connectionInfo.value.groupFormed &&
+                                                _connectionInfo.value.isGroupOwner -> "head"
+                                            _connectionInfo.value.groupFormed -> "member"
+                                            else -> "none"
+                                        }
                                 )
                                 finish(TacticalResult.Success(Unit))
                             }
@@ -1138,6 +1191,7 @@ class AndroidWifiDirectManager(
                 id != null &&
                     id in squadIds &&
                     id != localDeviceId &&
+                    id !in suppressedAutoReconnectPeerIds &&
                     localDeviceId.compareTo(id) < 0 &&
                     peer.linkState != RadioLinkState.CONNECTING
             }
@@ -1148,7 +1202,10 @@ class AndroidWifiDirectManager(
         // as a short-lived reconnect hint; normal discovery will refresh it.
         val fallback = if (targetPeer == null) {
             squadIds.asSequence()
-                .filter { it != localDeviceId }
+                .filter {
+                    it != localDeviceId &&
+                        it !in suppressedAutoReconnectPeerIds
+                }
                 .mapNotNull { id ->
                     synchronized(appDeviceIdByWifiDeviceAddress) {
                         appDeviceIdByWifiDeviceAddress.entries
@@ -1289,6 +1346,7 @@ class AndroidWifiDirectManager(
         presenceRetryJob?.cancel()
         presenceRetryJob = null
         presenceRegistered = false
+        activePresenceServiceInfo = null
         presenceRegistrationInProgress = false
         frameworkConnectionInProgress = false
         _connectionInfo.value = WifiDirectConnectionInfo()
@@ -1564,6 +1622,23 @@ class AndroidWifiDirectManager(
 
         val resolvedAddress = peer.deviceAddress
         return connect(resolvedAddress)
+    }
+
+    override fun suppressAutoReconnectTo(deviceId: String) {
+        if (deviceId.isBlank() || deviceId == localDeviceId) return
+        suppressedAutoReconnectPeerIds.add(deviceId)
+        android.util.Log.d(
+            TAG,
+            "Wi-Fi auto-reconnect suppressed for " + deviceId
+        )
+    }
+
+    override fun allowAutoReconnectTo(deviceId: String) {
+        suppressedAutoReconnectPeerIds.remove(deviceId)
+        android.util.Log.d(
+            TAG,
+            "Wi-Fi auto-reconnect allowed for " + deviceId
+        )
     }
 
     override suspend fun connect(deviceAddress: String): TacticalResult<Unit> =
