@@ -68,11 +68,27 @@ class MainActivity : ComponentActivity() {
     private val wirelessWarning = mutableStateOf<String?>(null)
     private val wirelessStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            if (
-                intent.action == BluetoothAdapter.ACTION_STATE_CHANGED ||
-                intent.action == WifiManager.WIFI_STATE_CHANGED_ACTION
-            ) {
-                ensureWirelessEnabled()
+            when (intent.action) {
+                BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    ensureWirelessEnabled()
+                }
+
+                WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                    ensureWirelessEnabled()
+
+                    if (
+                        intent.getIntExtra(
+                            WifiManager.EXTRA_WIFI_STATE,
+                            WifiManager.WIFI_STATE_UNKNOWN
+                        ) == WifiManager.WIFI_STATE_ENABLED
+                    ) {
+                        // Wi-Fi can be enabled after the app already started
+                        // with BLE only. Explicitly wake the discovery layer so
+                        // the Wi-Fi Direct manager starts advertising/discovery
+                        // and can upgrade an existing BLE relationship.
+                        viewModel.refreshWifiDirect()
+                    }
+                }
             }
         }
     }
@@ -97,6 +113,9 @@ class MainActivity : ComponentActivity() {
         // Bluetooth and Wi-Fi Direct runtime permissions are requested together
         // from Android's Nearby Devices permission group.
         ensureWirelessEnabled()
+        if (hasWifiDirectRuntimePermission()) {
+            viewModel.refreshWifiDirect()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -210,7 +229,10 @@ class MainActivity : ComponentActivity() {
                                 when (selectedTab) {
                                     0 -> DevicesScreen(
                                         uiState = state,
-                                        onScan = viewModel::forceDiscovery,
+                                        onScan = {
+                                            requestWifiDirectPermissionIfNeeded()
+                                            viewModel.forceDiscovery()
+                                        },
                                         onAddToSquad = viewModel::addPeerToSquad,
                                         onEmergencyPress = viewModel::startEmergencyHold,
                                         onEmergencyRelease = viewModel::releaseEmergencyHold
@@ -254,6 +276,29 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
+                            state.squadNotification?.let { message ->
+                                Surface(
+                                    modifier = Modifier
+                                        .align(Alignment.TopCenter)
+                                        .fillMaxWidth()
+                                        .padding(
+                                            top = if (wirelessWarning.value != null) 46.dp else 0.dp
+                                        ),
+                                    color = Color(0xFF5C3B12),
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(0.dp)
+                                ) {
+                                    Text(
+                                        text = message,
+                                        color = Color.White,
+                                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                        modifier = Modifier.padding(
+                                            horizontal = 16.dp,
+                                            vertical = 10.dp
+                                        )
+                                    )
+                                }
+                            }
+
                             if (state.emergencyComposerVisible) {
                                 EmergencyRecordingDialog(
                                     transcription = state.emergencyTranscription,
@@ -265,73 +310,98 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            state.pendingSquadRequest?.let { request ->
-                                val isResponding =
-                                    state.respondingSquadRequestId == request.deviceId
-
+                            if (state.showWifiMultipleRequestWarning) {
                                 AlertDialog(
                                     onDismissRequest = { },
                                     title = {
-                                        Text(
-                                            if (state.pendingSquadRequestCount > 1) {
-                                                "SQUAD REQUEST 1/" +
-                                                    state.pendingSquadRequestCount
-                                            } else {
-                                                ui.text(UiTextKey.SQUAD_REQUEST)
-                                            }
-                                        )
+                                        Text("MULTIPLE WI-FI REQUESTS")
                                     },
                                     text = {
-                                        androidx.compose.foundation.layout.Column {
-                                            Text(
-                                                request.callsign +
-                                                    " " + ui.text(UiTextKey.WANTS_TO_ADD)
-                                            )
-                                            state.squadRequestError?.let { error ->
-                                                androidx.compose.foundation.layout.Spacer(
-                                                    Modifier.height(8.dp)
-                                                )
-                                                Text(
-                                                    error,
-                                                    color = Color(0xFFFF8A80),
-                                                    fontSize = 12.sp
-                                                )
-                                            }
-                                        }
+                                        Text(
+                                            "Several devices are trying to join this squad over Wi-Fi. " +
+                                                "Wi-Fi Direct works as one shared group: your phone can " +
+                                                "only belong to one Wi-Fi group at a time. " +
+                                                "Accept one request first. The other devices can then " +
+                                                "join the same group instead of creating competing groups."
+                                        )
                                     },
                                     confirmButton = {
                                         TextButton(
-                                            onClick = {
-                                                viewModel.respondToSquadRequest(
-                                                    request.deviceId,
-                                                    true
-                                                )
-                                            },
-                                            enabled = !isResponding
+                                            onClick = viewModel::dismissWifiMultipleRequestWarning
                                         ) {
-                                            Text(
-                                                if (isResponding) {
-                                                    ui.text(UiTextKey.SENDING)
-                                                } else {
-                                                    ui.text(UiTextKey.APPROVE)
-                                                }
-                                            )
-                                        }
-                                    },
-                                    dismissButton = {
-                                        TextButton(
-                                            onClick = {
-                                                viewModel.respondToSquadRequest(
-                                                    request.deviceId,
-                                                    false
-                                                )
-                                            },
-                                            enabled = !isResponding
-                                        ) {
-                                            Text(ui.text(UiTextKey.REJECT))
+                                            Text("OK")
                                         }
                                     }
                                 )
+                            } else {
+                                state.pendingSquadRequest?.let { request ->
+                                    val isResponding =
+                                        state.respondingSquadRequestId == request.deviceId
+
+                                    AlertDialog(
+                                        onDismissRequest = { },
+                                        title = {
+                                            Text(
+                                                if (state.pendingSquadRequestCount > 1) {
+                                                    "SQUAD REQUEST 1/" +
+                                                        state.pendingSquadRequestCount
+                                                } else {
+                                                    ui.text(UiTextKey.SQUAD_REQUEST)
+                                                }
+                                            )
+                                        },
+                                        text = {
+                                            androidx.compose.foundation.layout.Column {
+                                                Text(
+                                                    request.callsign +
+                                                        " " + ui.text(UiTextKey.WANTS_TO_ADD)
+                                                )
+                                                state.squadRequestError?.let { error ->
+                                                    androidx.compose.foundation.layout.Spacer(
+                                                        Modifier.height(8.dp)
+                                                    )
+                                                    Text(
+                                                        error,
+                                                        color = Color(0xFFFF8A80),
+                                                        fontSize = 12.sp
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        confirmButton = {
+                                            TextButton(
+                                                onClick = {
+                                                    viewModel.respondToSquadRequest(
+                                                        request.deviceId,
+                                                        true
+                                                    )
+                                                },
+                                                enabled = !isResponding
+                                            ) {
+                                                Text(
+                                                    if (isResponding) {
+                                                        ui.text(UiTextKey.SENDING)
+                                                    } else {
+                                                        ui.text(UiTextKey.APPROVE)
+                                                    }
+                                                )
+                                            }
+                                        },
+                                        dismissButton = {
+                                            TextButton(
+                                                onClick = {
+                                                    viewModel.respondToSquadRequest(
+                                                        request.deviceId,
+                                                        false
+                                                    )
+                                                },
+                                                enabled = !isResponding
+                                            ) {
+                                                Text(ui.text(UiTextKey.REJECT))
+                                            }
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -407,6 +477,23 @@ class MainActivity : ComponentActivity() {
             runtimePermissionRequestInFlight = true
             requestPermissions.launch(missing.toTypedArray())
         }
+    }
+
+    private fun requestWifiDirectPermissionIfNeeded() {
+        val wifiOn =
+            getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+        if (!wifiOn) return
+        if (hasWifiDirectRuntimePermission()) return
+        if (runtimePermissionRequestInFlight) return
+
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.NEARBY_WIFI_DEVICES
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+
+        runtimePermissionRequestInFlight = true
+        requestPermissions.launch(arrayOf(permission))
     }
 
     private fun hasWifiDirectRuntimePermission(): Boolean {

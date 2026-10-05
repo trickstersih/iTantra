@@ -51,6 +51,10 @@ class WifiDirectRadioTransport(
     private val socketsByPeerId = ConcurrentHashMap<String, Socket>()
     private val peerIdBySocket = ConcurrentHashMap<Socket, String>()
     private val writeLocks = ConcurrentHashMap<Socket, Mutex>()
+    private val intentionallyDisconnectedPeers =
+        ConcurrentHashMap.newKeySet<String>()
+    @Volatile
+    private var knownGroupOwnerAppDeviceId: String? = null
     private val reconfigureLock = Mutex()
 
     @Volatile
@@ -74,6 +78,21 @@ class WifiDirectRadioTransport(
                     // response to those membership-only updates.
                     if (endpoint == activeGroupEndpoint) {
                         return@withLock
+                    }
+
+                    val wasGroupFormed = activeGroupEndpoint?.groupFormed == true
+
+                    // A fresh P2P group does not invalidate an explicit
+                    // per-peer squad removal. Keep suppression latched until
+                    // that specific peer is deliberately re-added through
+                    // allowPeer(), rather than clearing every removed peer when
+                    // an unrelated group is formed.
+                    if (!wasGroupFormed && info.groupFormed) {
+                        knownGroupOwnerAppDeviceId = null
+                        android.util.Log.d(
+                            TAG,
+                            "Wi-Fi Direct fresh group formed; preserved per-peer socket suppression"
+                        )
                     }
 
                     closeDataSockets()
@@ -106,6 +125,39 @@ class WifiDirectRadioTransport(
 
     override fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> =
         mapOf(RadioType.WIFI_DIRECT to connectedPeerIds())
+
+    override fun allowPeer(deviceId: String) {
+        intentionallyDisconnectedPeers.remove(deviceId)
+    }
+
+    override suspend fun disconnectPeer(deviceId: String) {
+        intentionallyDisconnectedPeers.add(deviceId)
+
+        socketsByPeerId[deviceId]?.let { socket ->
+            removeSocket(socket)
+        }
+
+        // For the direct two-phone case, do not leave an empty P2P group alive
+        // after squad removal. Keeping the same group makes the peer's
+        // transport suppression indistinguishable from a link that should be
+        // repaired, which prevents a later manual Add-to-Squad from creating a
+        // clean negotiation. Multi-member groups remain intact.
+        val groupInfo = wifiDirectManager.connectionInfo().value
+        if (
+            groupInfo.groupFormed &&
+            groupInfo.groupMemberDeviceAddresses.size <= 2
+        ) {
+            runCatching {
+                wifiDirectManager.disconnect()
+            }.onFailure { error ->
+                android.util.Log.d(
+                    TAG,
+                    "Wi-Fi Direct two-phone group teardown after squad removal failed: " +
+                        (error.message ?: error.javaClass.simpleName)
+                )
+            }
+        }
+    }
 
     override suspend fun broadcast(raw: RawPacket): TacticalResult<Unit> =
         withContext(Dispatchers.IO) {
@@ -181,43 +233,83 @@ class WifiDirectRadioTransport(
 
     private fun connectToGroupOwner(groupOwnerAddress: String) {
         scope.launch {
-            repeat(SOCKET_CONNECT_ATTEMPTS) { attempt ->
-                if (wifiDirectManager.connectionInfo().value.groupOwnerAddress != groupOwnerAddress) {
+            var attempt = 0
+
+            // Android can keep the Wi-Fi Direct group formed while the TCP
+            // data socket is temporarily lost (range changes, OEM power
+            // management, app restart, etc.). Keep repairing the socket for as
+            // long as this is still the active group instead of giving up
+            // after five disconnects.
+            while (true) {
+                val info = wifiDirectManager.connectionInfo().value
+                if (
+                    !info.groupFormed ||
+                    info.isGroupOwner ||
+                    info.groupOwnerAddress != groupOwnerAddress
+                ) {
                     return@launch
                 }
 
+                val ownerAppDeviceId = knownGroupOwnerAppDeviceId
+                if (
+                    ownerAppDeviceId != null &&
+                    intentionallyDisconnectedPeers.contains(ownerAppDeviceId)
+                ) {
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi Direct socket reconnect suppressed after squad removal"
+                    )
+                    return@launch
+                }
+
+
+                // Do not create a second socket while an existing iTantra
+                // session is still registered for this group owner.
+                if (socketsByPeerId.isNotEmpty()) {
+                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
+                    continue
+                }
+
+                attempt += 1
                 val socket = Socket()
-                var readLoopCompleted = false
+
                 try {
                     socket.tcpNoDelay = true
+                    socket.keepAlive = true
                     socket.connect(
                         InetSocketAddress(groupOwnerAddress, TRANSPORT_PORT),
                         CONNECT_TIMEOUT_MS
                     )
                     registerSocket(socket)
                     sendHello(socket)
-                    readLoopCompleted = true
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi Direct group-owner socket connected on attempt " +
+                            attempt
+                    )
                     readLoop(socket)
                 } catch (e: IOException) {
                     android.util.Log.d(
                         TAG,
                         "Wi-Fi Direct group-owner socket attempt " +
-                            (attempt + 1) + "/" + SOCKET_CONNECT_ATTEMPTS +
-                            " failed: " + (e.message ?: "I/O error")
+                            attempt +
+                            " failed: " +
+                            (e.message ?: "I/O error")
                     )
                 } finally {
                     removeSocket(socket)
                 }
 
-                if (wifiDirectManager.connectionInfo().value.groupOwnerAddress != groupOwnerAddress) {
+                val currentInfo = wifiDirectManager.connectionInfo().value
+                if (
+                    !currentInfo.groupFormed ||
+                    currentInfo.isGroupOwner ||
+                    currentInfo.groupOwnerAddress != groupOwnerAddress
+                ) {
                     return@launch
                 }
 
-                if (readLoopCompleted && attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
-                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
-                } else if (attempt + 1 < SOCKET_CONNECT_ATTEMPTS) {
-                    kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
-                }
+                kotlinx.coroutines.delay(SOCKET_RETRY_DELAY_MS)
             }
         }
     }
@@ -242,6 +334,25 @@ class WifiDirectRadioTransport(
                     FRAME_TYPE_HELLO -> {
                         val hello = decodeHello(frame.copyOfRange(1, frame.size))
                             ?: throw IOException("invalid iTantra Wi-Fi hello")
+
+                        if (intentionallyDisconnectedPeers.contains(hello.deviceId)) {
+                            android.util.Log.d(
+                                TAG,
+                                "Rejecting intentionally disconnected Wi-Fi Direct peer: " +
+                                    hello.deviceId
+                            )
+                            throw IOException("peer intentionally disconnected")
+                        }
+
+                        if (
+                            peerIdBySocket.isEmpty() &&
+                            !wifiDirectManager.connectionInfo().value.isGroupOwner
+                        ) {
+                            knownGroupOwnerAppDeviceId = hello.deviceId
+                            wifiDirectManager.noteGroupOwnerAppDeviceId(
+                                hello.deviceId
+                            )
+                        }
 
                         val previous = socketsByPeerId.put(hello.deviceId, socket)
                         peerIdBySocket[socket] = hello.deviceId

@@ -162,6 +162,13 @@ class DefaultDiscoveryService(
      */
     fun scanNow() {
         immediateScanRequests.trySend(Unit)
+
+        // A manual Home-screen scan is also the explicit recovery path for
+        // Wi-Fi Direct. This matters when the app started while Wi-Fi was off
+        // and the framework did not deliver a usable P2P state transition.
+        scope.launch {
+            runCatching { refreshWifiDirect() }
+        }
     }
 
     private suspend fun runBleScanWindow() {

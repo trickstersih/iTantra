@@ -48,6 +48,29 @@ class CompositeRadioTransport(
         return merged.mapValues { it.value.toSet() }
     }
 
+    override fun allowPeer(deviceId: String) {
+        bleTransport.allowPeer(deviceId)
+        wifiDirectTransport.allowPeer(deviceId)
+    }
+
+    override suspend fun disconnectPeer(deviceId: String) {
+        // Squad removal is bearer-aware. If both BLE and Wi-Fi Direct are
+        // carrying the same peer, remove only the Wi-Fi Direct relationship;
+        // the independent BLE link must remain usable. For a Wi-Fi-only peer,
+        // remove Wi-Fi. For a BLE-only peer, preserve the old BLE-only removal
+        // behavior.
+        val wifiConnected = deviceId in wifiDirectTransport.connectedPeerIds()
+        if (wifiConnected) {
+            wifiDirectTransport.disconnectPeer(deviceId)
+            return
+        }
+
+        val bleConnected = deviceId in bleTransport.connectedPeerIds()
+        if (bleConnected) {
+            bleTransport.disconnectPeer(deviceId)
+        }
+    }
+
     override fun incoming(): Flow<RawPacket> =
         merge(
             bleTransport.incoming().catch { e ->
@@ -59,6 +82,25 @@ class CompositeRadioTransport(
         )
 
     override suspend fun broadcast(raw: RawPacket): TacticalResult<Unit> = coroutineScope {
+        // A non-null outgoing transport is an explicit bearer constraint.
+        // Normal packets keep transport == null and retain the existing
+        // concurrent BLE + Wi-Fi broadcast behavior.
+        when (raw.transport) {
+            RadioType.BLUETOOTH -> {
+                return@coroutineScope runCatching { bleTransport.broadcast(raw) }
+                    .getOrElse {
+                        TacticalResult.Failure("BLE broadcast threw: " + (it.message ?: "unknown"))
+                    }
+            }
+            RadioType.WIFI_DIRECT -> {
+                return@coroutineScope runCatching { wifiDirectTransport.broadcast(raw) }
+                    .getOrElse {
+                        TacticalResult.Failure("Wi-Fi Direct broadcast threw: " + (it.message ?: "unknown"))
+                    }
+            }
+            null -> Unit
+        }
+
         // Targeted packets can now traverse either bearer. BLE retains its
         // existing physical target filtering, while Wi-Fi forwards the mesh
         // packet to its connected group peers and lets FloodMeshRouter apply

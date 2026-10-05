@@ -24,6 +24,7 @@ class BinaryPacketSerializer : PacketSerializer {
             is EmergencyPacket -> encodeEmergencyPacket(packet)
             is BeaconPacket -> encodeBeaconPacket(packet)
             is SquadControlPacket -> encodeSquadControlPacket(packet)
+            is WifiGroupRemovalNoticePacket -> encodeWifiGroupRemovalNoticePacket(packet)
         }
 
         val type: Byte = when (packet) {
@@ -32,6 +33,7 @@ class BinaryPacketSerializer : PacketSerializer {
             is EmergencyPacket -> 3
             is BeaconPacket -> 4
             is SquadControlPacket -> 5
+            is WifiGroupRemovalNoticePacket -> 6
         }
 
         return wrapInEnvelope(type, payload)
@@ -134,6 +136,18 @@ class BinaryPacketSerializer : PacketSerializer {
         writeString(packet.callsign)
         writeBoolean(packet.accepted != null)
         packet.accepted?.let { writeBoolean(it) }
+        writeLong(packet.timestamp)
+    }
+
+    private fun encodeWifiGroupRemovalNoticePacket(
+        packet: WifiGroupRemovalNoticePacket
+    ): ByteArray = byteStream {
+        writeString(packet.sender.value)
+        writeString(packet.target.value)
+        writeString(packet.removedDevice.value)
+        writeString(packet.removedCallsign)
+        writeInt(packet.blockedPeerIds.size)
+        packet.blockedPeerIds.forEach { writeString(it) }
         writeLong(packet.timestamp)
     }
 
@@ -261,6 +275,30 @@ class BinaryPacketSerializer : PacketSerializer {
                     action = action,
                     callsign = callsign,
                     accepted = accepted,
+                    timestamp = timestamp
+                )
+            }
+            6 -> input.use {
+                val sender = DeviceId(it.readString())
+                val target = DeviceId(it.readString())
+                val removedDevice = DeviceId(it.readString())
+                val removedCallsign = it.readString()
+                val blockedCount = it.readInt()
+                require(blockedCount in 0..128) {
+                    "Invalid Wi-Fi removal blocked-peer count: $blockedCount"
+                }
+                val blockedPeerIds = buildSet {
+                    repeat(blockedCount) {
+                        add(input.readString())
+                    }
+                }
+                val timestamp = it.readLong()
+                WifiGroupRemovalNoticePacket(
+                    sender = sender,
+                    target = target,
+                    removedDevice = removedDevice,
+                    removedCallsign = removedCallsign,
+                    blockedPeerIds = blockedPeerIds,
                     timestamp = timestamp
                 )
             }

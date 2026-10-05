@@ -11,7 +11,7 @@ class UiLanguagePreferences @Inject constructor(
 ) {
     val selectedLanguageCode: String
         get() = preferences.getString(KEY_LANGUAGE_CODE, DEFAULT_LANGUAGE_CODE)
-            ?.takeIf { it == "en" || it == "hi" }
+            ?.takeIf { it in SUPPORTED_LANGUAGE_CODES }
             ?: DEFAULT_LANGUAGE_CODE
 
     private val preferences = context.getSharedPreferences(
@@ -20,7 +20,7 @@ class UiLanguagePreferences @Inject constructor(
     )
 
     fun setSelectedLanguageCode(languageCode: String) {
-        require(languageCode == "en" || languageCode == "hi")
+        require(languageCode in SUPPORTED_LANGUAGE_CODES)
         preferences.edit()
             .putString(KEY_LANGUAGE_CODE, languageCode)
             .apply()
@@ -30,5 +30,9 @@ class UiLanguagePreferences @Inject constructor(
         private const val PREFS_NAME = "ui_language_preferences"
         private const val KEY_LANGUAGE_CODE = "ui_language_code"
         private const val DEFAULT_LANGUAGE_CODE = "en"
+        private val SUPPORTED_LANGUAGE_CODES = setOf(
+            "en", "hi", "gu", "mr", "kn", "ml",
+            "ta", "te", "or", "bn"
+        )
     }
 }

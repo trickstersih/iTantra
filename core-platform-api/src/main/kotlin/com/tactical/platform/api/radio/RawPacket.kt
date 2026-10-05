@@ -11,8 +11,10 @@ data class RawPacket(
     val rssi: Int,
     val timestamp: Long,
     /**
-     * The bearer that delivered this packet. Null is used for an outgoing
-     * bearer-agnostic broadcast that may be copied to multiple radios.
+     * For received packets, the bearer that delivered the packet.
+     *
+     * For outgoing packets, a non-null value is a bearer preference and null
+     * means "send through every available bearer".
      */
     val transport: RadioType? = null,
     /**

@@ -49,6 +49,38 @@ class BleRadioTransport(
     override fun connectedPeerIdsByTransport(): Map<RadioType, Set<String>> =
         mapOf(RadioType.BLUETOOTH to connectedPeerIds())
 
+    private val intentionallyDisconnectedPeers =
+        ConcurrentHashMap.newKeySet<String>()
+
+    override fun allowPeer(deviceId: String) {
+        intentionallyDisconnectedPeers.remove(deviceId)
+    }
+
+    override suspend fun disconnectPeer(deviceId: String) {
+        intentionallyDisconnectedPeers.add(deviceId)
+
+        val address = BlePeerAddressRegistry.addressFor(deviceId)
+        val candidateAddresses = buildSet {
+            if (!address.isNullOrBlank()) add(address)
+            connectionRegistry.allConnectedAddresses().forEach { peerAddress ->
+                if (BlePeerAddressRegistry.applicationIdFor(peerAddress) == deviceId) {
+                    add(peerAddress)
+                }
+            }
+        }
+
+        candidateAddresses.forEach { peerAddress ->
+            runCatching {
+                connectionRegistry.outboundGatt(peerAddress)?.disconnect()
+            }
+            runCatching {
+                connectionRegistry.inboundDevice(peerAddress)?.let { device ->
+                    gattServer?.cancelConnection(device)
+                }
+            }
+        }
+    }
+
     private val bluetoothManager: BluetoothManager by lazy {
         context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
     }

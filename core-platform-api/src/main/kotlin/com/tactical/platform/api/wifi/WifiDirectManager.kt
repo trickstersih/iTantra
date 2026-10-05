@@ -45,4 +45,34 @@ interface WifiDirectManager {
      */
     suspend fun connectByAppDeviceId(deviceId: String): TacticalResult<Unit> =
         TacticalResult.Failure("Wi-Fi Direct app-device lookup is unsupported")
+
+    /**
+     * Records the stable iTantra identity learned from the current Wi-Fi group
+     * owner's transport hello. This is more authoritative than waiting for
+     * DNS-SD and lets a group client render the HEAD immediately.
+     */
+    fun noteGroupOwnerAppDeviceId(deviceId: String) {}
+
+    /** Returns the current framework Wi-Fi enabled state, independent of P2P state. */
+    fun isWifiEnabled(): Boolean = false
+
+    /**
+     * Registers a live BLE peer as a candidate for automatic Wi-Fi Direct
+     * link upgrade. This is transport-only and does not change squad membership.
+     */
+    fun noteBlePeerConnected(deviceId: String) {}
+
+    /**
+     * Prevent the background Wi-Fi reconnect loop from recreating a relationship
+     * that was explicitly invalidated by a Wi-Fi group removal.
+     *
+     * This does not affect BLE and does not prevent an explicit user initiated
+     * connect/add operation.
+     */
+    fun suppressAutoReconnectTo(deviceId: String) {}
+
+    /**
+     * Explicit user re-add clears the Wi-Fi-only reconnect suppression.
+     */
+    fun allowAutoReconnectTo(deviceId: String) {}
 }

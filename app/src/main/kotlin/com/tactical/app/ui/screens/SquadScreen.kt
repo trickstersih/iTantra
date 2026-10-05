@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
@@ -42,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tactical.app.ui.MainUiState
 import com.tactical.app.ui.PeerNodeUi
+import com.tactical.app.ui.ResponsiveScreen
+import com.tactical.app.ui.ResponsiveUi
 import com.tactical.ptt.session.SessionState
 import com.tactical.app.ui.theme.*
 import com.tactical.platform.api.ble.BleLinkState
@@ -69,6 +72,7 @@ fun SquadScreen(
     var pttHeld by remember { mutableStateOf(false) }
     var removeArmedDeviceId by rememberSaveable { mutableStateOf<String?>(null) }
     var languagePickerVisible by rememberSaveable { mutableStateOf(false) }
+    var wifiGroupInfoVisible by rememberSaveable { mutableStateOf(false) }
     var pendingLanguageCode by rememberSaveable {
         mutableStateOf(uiState.selectedLanguageCode)
     }
@@ -92,15 +96,22 @@ fun SquadScreen(
         }
     }
 
-    LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .background(SquadBlueBackground)
-            .padding(horizontal = 20.dp, vertical = 12.dp)
-            .navigationBarsPadding(),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(bottom = 18.dp)
-    ) {
+    ResponsiveScreen(
+        modifier = modifier.fillMaxSize(),
+        languageCode = uiState.uiLanguageCode
+    ) { ui ->
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(SquadBlueBackground)
+                .padding(
+                    horizontal = ui.horizontalPadding,
+                    vertical = ui.dp(12.dp)
+                )
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(ui.smallSpacing),
+            contentPadding = PaddingValues(bottom = ui.dp(18.dp))
+        ) {
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -108,13 +119,17 @@ fun SquadScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        LocalUiStrings.current.text(UiTextKey.SQUAD),
-                        color = Color.White,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 1.sp
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            LocalUiStrings.current.text(UiTextKey.SQUAD),
+                            color = Color.White,
+                            fontSize = ui.sp(22f),
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = ui.sp(1f)
+                        )
+                    }
                 }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -144,12 +159,12 @@ fun SquadScreen(
                         Text(
                             if (uiState.pttEnabled) LocalUiStrings.current.text(UiTextKey.SWITCH_TO_CALL_MODE) else LocalUiStrings.current.text(UiTextKey.SWITCH_TO_PTT_MODE),
                             color = Color.White,
-                            fontSize = 10.sp,
+                            fontSize = ui.sp(10f),
                             fontWeight = FontWeight.ExtraBold,
-                            letterSpacing = 0.8.sp,
+                            letterSpacing = ui.sp(0.8f),
                             modifier = Modifier.padding(
-                                horizontal = 12.dp,
-                                vertical = 7.dp
+                                horizontal = ui.dp(10.dp),
+                                vertical = ui.dp(6.dp)
                             )
                         )
                     }
@@ -196,12 +211,12 @@ fun SquadScreen(
                                             LocalUiStrings.current.text(UiTextKey.LAST_TRANSMISSION)
                                     },
                                     color = Color(0xFF8EA8C0),
-                                    fontSize = 9.sp,
+                                    fontSize = ui.sp(9f),
                                     fontWeight = FontWeight.Bold,
-                                    letterSpacing = 0.8.sp
+                                    letterSpacing = ui.sp(0.8f)
                                 )
                                 if (!uiState.pttEnabled) {
-                                    Spacer(Modifier.height(3.dp))
+                                    Spacer(Modifier.height(ui.dp(3.dp)))
                                     Text(
                                         if (uiState.pttContinuousSession) {
                                             LocalUiStrings.current.text(UiTextKey.LISTENING_CONTINUOUSLY)
@@ -219,7 +234,7 @@ fun SquadScreen(
                                 Text(
                                     if (transmissionExpanded) "▲" else "▼",
                                     color = Color(0xFF8EA8C0),
-                                    fontSize = 13.sp,
+                                    fontSize = ui.sp(13f),
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -230,11 +245,11 @@ fun SquadScreen(
                                 uiState.pttSessionState == SessionState.RECORDING &&
                                 !uiState.pttLastTranscription.isNullOrBlank()
                         ) {
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(ui.smallSpacing))
                             Text(
                                 uiState.pttLastTranscription.orEmpty(),
                                 color = Color.White,
-                                fontSize = 13.sp
+                                fontSize = ui.sp(13f)
                             )
                             Spacer(Modifier.height(6.dp))
                             Row(
@@ -244,13 +259,13 @@ fun SquadScreen(
                                 Text(
                                     LocalUiStrings.current.text(UiTextKey.RECORDING),
                                     color = RedTacticalVoiceOrange,
-                                    fontSize = 10.sp,
+                                    fontSize = ui.sp(10f),
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
                                     LocalUiStrings.current.text(UiTextKey.LIVE),
                                     color = Color(0xFF8EA8C0),
-                                    fontSize = 10.sp,
+                                    fontSize = ui.sp(10f),
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -266,7 +281,7 @@ fun SquadScreen(
                                 Text(
                                     latest.text,
                                     color = Color.White,
-                                    fontSize = 13.sp
+                                    fontSize = ui.sp(13f)
                                 )
                                 Spacer(Modifier.height(6.dp))
                                 Row(
@@ -276,13 +291,13 @@ fun SquadScreen(
                                     Text(
                                         latest.statusText,
                                         color = transmissionStatusColor(latest.statusText),
-                                        fontSize = 10.sp,
+                                        fontSize = ui.sp(10f),
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
                                         formatPttTimestamp(latest.timestampEpochMs),
                                         color = Color(0xFF8EA8C0),
-                                        fontSize = 10.sp
+                                        fontSize = ui.sp(10f)
                                     )
                                 }
                             } else {
@@ -300,13 +315,13 @@ fun SquadScreen(
                                                     Text(
                                                         transmission.text,
                                                         color = Color.White,
-                                                        fontSize = 13.sp
+                                                        fontSize = ui.sp(13f)
                                                     )
                                                     Spacer(Modifier.height(3.dp))
                                                     Text(
                                                         formatPttTimestamp(transmission.timestampEpochMs),
                                                         color = Color(0xFF8EA8C0),
-                                                        fontSize = 9.sp
+                                                        fontSize = ui.sp(9f)
                                                     )
                                                 }
                                                 Spacer(Modifier.width(10.dp))
@@ -315,7 +330,7 @@ fun SquadScreen(
                                                     color = transmissionStatusColor(
                                                         transmission.statusText
                                                     ),
-                                                    fontSize = 10.sp,
+                                                    fontSize = ui.sp(10f),
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             }
@@ -341,13 +356,13 @@ fun SquadScreen(
                                     Text(
                                         "LIVE: $liveText",
                                         color = Color.White,
-                                        fontSize = 12.sp
+                                        fontSize = ui.sp(12f)
                                     )
                                 }
                                 ?: Text(
                                     LocalUiStrings.current.text(UiTextKey.SPEAK_NORMALLY),
                                     color = Color(0xFF8EA8C0),
-                                    fontSize = 10.sp
+                                    fontSize = ui.sp(10f)
                                 )
                         }
                     }
@@ -378,9 +393,9 @@ fun SquadScreen(
                         Text(
                             LocalUiStrings.current.text(UiTextKey.LANGUAGE),
                             color = Color(0xFF8EA8C0),
-                            fontSize = 9.sp,
+                            fontSize = ui.sp(9f),
                             fontWeight = FontWeight.Bold,
-                            letterSpacing = 0.8.sp
+                            letterSpacing = ui.sp(0.8f)
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
@@ -390,7 +405,7 @@ fun SquadScreen(
                                 uiState.selectedLanguage
                             },
                             color = Color.White,
-                            fontSize = 14.sp,
+                            fontSize = ui.sp(14f),
                             fontWeight = FontWeight.SemiBold
                         )
                     }
@@ -432,12 +447,12 @@ fun SquadScreen(
                     contentAlignment = Alignment.Center
                 ) {
                     Box(
-                        modifier = Modifier.size(222.dp),
+                        modifier = Modifier.size(ui.pttOuter),
                         contentAlignment = Alignment.Center
                     ) {
                         Box(
                             Modifier
-                                .size(216.dp)
+                                .size(ui.pttRingInner)
                                 .border(
                                     1.5.dp,
                                     pttGlowColor.copy(alpha = 0.25f),
@@ -446,7 +461,7 @@ fun SquadScreen(
                         )
                         Box(
                             Modifier
-                                .size(202.dp)
+                                .size(ui.pttRingOuter)
                                 .border(
                                     2.dp,
                                     pttGlowColor.copy(alpha = 0.45f),
@@ -455,7 +470,7 @@ fun SquadScreen(
                         )
                         Box(
                             modifier = Modifier
-                                .size(186.dp)
+                                .size(ui.pttCore)
                                 .shadow(
                                     elevation = 28.dp,
                                     shape = CircleShape,
@@ -499,7 +514,7 @@ fun SquadScreen(
 
                                                     if (
                                                         !cancelled &&
-                                                        totalDragX > 80.dp.toPx() &&
+                                                        totalDragX > ui.dp(80.dp).toPx() &&
                                                         totalDragX > kotlin.math.abs(totalDragY) * 1.2f
                                                     ) {
                                                         cancelled = true
@@ -537,15 +552,15 @@ fun SquadScreen(
                                     Icons.Default.Mic,
                                     contentDescription = null,
                                     tint = Color.White,
-                                    modifier = Modifier.size(44.dp)
+                                    modifier = Modifier.size(ui.dp(44.dp))
                                 )
                                 Spacer(Modifier.height(8.dp))
                                 Text(
                                     pttLabel,
                                     color = Color.White,
-                                    fontSize = 13.sp,
+                                    fontSize = ui.sp(13f),
                                     fontWeight = FontWeight.ExtraBold,
-                                    letterSpacing = 1.sp,
+                                    letterSpacing = ui.sp(1f),
                                     textAlign = TextAlign.Center
                                 )
                             }
@@ -558,7 +573,7 @@ fun SquadScreen(
                 Text(
                     pttHint,
                     color = Color(0xFF8EA8C0),
-                    fontSize = 10.sp,
+                    fontSize = ui.sp(10f),
                     modifier = Modifier.fillMaxWidth(),
                     textAlign = TextAlign.Center
                 )
@@ -587,17 +602,81 @@ fun SquadScreen(
                             Text(
                                 LocalUiStrings.current.text(UiTextKey.CALL_MODE),
                                 color = Color.White,
-                                fontSize = 13.sp,
+                                fontSize = ui.sp(13f),
                                 fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 1.sp
+                                letterSpacing = ui.sp(1f)
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 LocalUiStrings.current.text(UiTextKey.CALL_MODE_VOICE),
                                 color = Color(0xFF8EA8C0),
-                                fontSize = 10.sp
+                                fontSize = ui.sp(10f)
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        if (uiState.wifiDirectGroupFormed) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        color = SquadBlueSurfaceRaised,
+                        shape = RoundedCornerShape(8.dp),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (uiState.wifiDirectIsGroupOwner) {
+                                SquadBlueGlow
+                            } else {
+                                SquadBlueBorder
+                            }
+                        )
+                    ) {
+                        Text(
+                            if (uiState.wifiDirectIsGroupOwner) {
+                                LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_HEAD)
+                            } else {
+                                LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_MEMBER)
+                            },
+                            color = if (uiState.wifiDirectIsGroupOwner) {
+                                Color.White
+                            } else {
+                                Color(0xFFBFD6EA)
+                            },
+                            fontSize = ui.sp(9f),
+                            maxLines = 1,
+                            softWrap = false,
+                            fontWeight = FontWeight.ExtraBold,
+                            letterSpacing = ui.sp(0.45f),
+                            modifier = Modifier
+                                .padding(
+                                    horizontal = ui.dp(8.dp),
+                                    vertical = ui.dp(4.dp)
+                                )
+                        )
+                    }
+
+                    Spacer(Modifier.width(ui.dp(4.dp)))
+
+                    Box(
+                        modifier = Modifier
+                            .size(ui.dp(32.dp))
+                            .clickable { wifiGroupInfoVisible = true },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.Info,
+                            contentDescription = LocalUiStrings.current.text(
+                                UiTextKey.WIFI_GROUP_INFO_TITLE
+                            ),
+                            tint = Color(0xFFBFD6EA),
+                            modifier = Modifier.size(ui.dp(21.dp))
+                        )
                     }
                 }
             }
@@ -610,6 +689,7 @@ fun SquadScreen(
             ) {
                 SectionDividerLabel(
                     "${connectedPeers.size} CONNECTED DEVICES",
+                    ui = ui,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -625,7 +705,7 @@ fun SquadScreen(
                         } else {
                             Color(0xFFBFD6EA)
                         },
-                        modifier = Modifier.size(21.dp)
+                        modifier = Modifier.size(ui.compactIcon)
                     )
                 }
             }
@@ -633,7 +713,10 @@ fun SquadScreen(
 
         if (connectedPeers.isEmpty()) {
             item {
-                EmptySquadSection(LocalUiStrings.current.text(UiTextKey.NO_CONNECTED_DEVICES))
+                EmptySquadSection(
+                    LocalUiStrings.current.text(UiTextKey.NO_CONNECTED_DEVICES),
+                    ui = ui
+                )
             }
         } else {
             items(
@@ -641,7 +724,13 @@ fun SquadScreen(
                 key = { "connected_" + it.deviceAddress }
             ) { peer ->
                 PeerCard(
+                    ui = ui,
                     peer = peer,
+                    isWifiGroupHead = uiState.wifiDirectGroupFormed &&
+                        peer.deviceAddress.equals(
+                            uiState.wifiDirectGroupOwnerAppDeviceId,
+                            ignoreCase = true
+                        ),
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
                     onLongPress = { removeArmedDeviceId = peer.deviceAddress },
                     onRemove = {
@@ -655,7 +744,10 @@ fun SquadScreen(
 
         item {
             Spacer(Modifier.height(2.dp))
-            SectionDividerLabel("OFFLINE MEMBERS (${squadOfflinePeers.size})")
+            SectionDividerLabel(
+                "OFFLINE MEMBERS (${squadOfflinePeers.size})",
+                ui = ui
+            )
         }
 
         if (squadOfflinePeers.isEmpty()) {
@@ -665,7 +757,8 @@ fun SquadScreen(
                         LocalUiStrings.current.text(UiTextKey.NO_SQUAD_MEMBERS)
                     } else {
                         LocalUiStrings.current.text(UiTextKey.ALL_SQUAD_CONNECTED)
-                    }
+                    },
+                    ui = ui
                 )
             }
         } else {
@@ -674,7 +767,13 @@ fun SquadScreen(
                 key = { "squad_" + it.deviceAddress }
             ) { peer ->
                 PeerCard(
+                    ui = ui,
                     peer = peer,
+                    isWifiGroupHead = uiState.wifiDirectGroupFormed &&
+                        peer.deviceAddress.equals(
+                            uiState.wifiDirectGroupOwnerAppDeviceId,
+                            ignoreCase = true
+                        ),
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
                     onLongPress = { removeArmedDeviceId = peer.deviceAddress },
                     onRemove = {
@@ -685,96 +784,140 @@ fun SquadScreen(
                 )
             }
         }
-
     }
-    if (languagePickerVisible) {
-        Dialog(
-            onDismissRequest = { languagePickerVisible = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false)
-        ) {
-            BoxWithConstraints(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp)
-            ) {
-                val dialogWidth = minOf(maxWidth * 0.94f, 420.dp)
-                val dialogMaxHeight = maxHeight * 0.86f
+}
 
-                Surface(
-                    modifier = Modifier
-                        .width(dialogWidth)
-                        .heightIn(max = dialogMaxHeight),
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color(0xFFF7FAFE)
+    if (wifiGroupInfoVisible) {
+        AlertDialog(
+            onDismissRequest = { wifiGroupInfoVisible = false },
+            title = {
+                Text(LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_TITLE))
+            },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState())
                 ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 18.dp, vertical = 16.dp)
-                    ) {
-                        Text(
-                            LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
-                            color = Color(0xFF10243A),
-                            fontSize = 20.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-
-                        Spacer(Modifier.height(14.dp))
-
-                        Text(
-                            LocalUiStrings.current.text(UiTextKey.INDIAN_LANGUAGES),
-                            color = Color(0xFF54708C),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        SQUAD_LANGUAGE_OPTIONS
-                            .filter { it.code != "en" }
-                            .forEach { option ->
-                                SquadLanguageRow(
-                                    option = option,
-                                    selected = pendingLanguageCode == option.code,
-                                    onSelect = { pendingLanguageCode = option.code }
-                                )
-                            }
-
-                        Spacer(Modifier.height(8.dp))
-
-                        Text(
-                            LocalUiStrings.current.text(UiTextKey.OTHER),
-                            color = Color(0xFF54708C),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-
-                        SquadLanguageRow(
-                            option = SQUAD_LANGUAGE_OPTIONS.first { it.code == "en" },
-                            selected = pendingLanguageCode == "en",
-                            onSelect = { pendingLanguageCode = "en" }
-                        )
-
-                        Spacer(Modifier.height(12.dp))
-
-                        Button(
-                            onClick = {
-                                languagePickerVisible = false
-                                onLanguageSelected(pendingLanguageCode)
-                            },
-                            enabled = SQUAD_LANGUAGE_OPTIONS.any {
-                                it.code == pendingLanguageCode && it.available
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(
-                                LocalUiStrings.current.text(UiTextKey.CONFIRM),
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-                    }
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_SAME_GROUP)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_JOIN)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_SEPARATE_GROUPS)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_ONE_GROUP)
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_INFO_HEAD_ROLE)
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { wifiGroupInfoVisible = false }
+                ) {
+                    Text(LocalUiStrings.current.text(UiTextKey.CONFIRM))
                 }
             }
+        )
+    }
+
+    if (languagePickerVisible) {
+        ResponsiveScreen(
+            languageCode = uiState.uiLanguageCode
+        ) { dialogUi ->
+            AlertDialog(
+                onDismissRequest = { languagePickerVisible = false },
+                containerColor = SquadBlueSurfaceRaised,
+                titleContentColor = Color.White,
+                textContentColor = Color.White,
+                title = {
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.SELECT_LANGUAGE),
+                        color = Color.White,
+                        fontSize = dialogUi.sp(20f),
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState())
+                    ) {
+                        SQUAD_LANGUAGE_OPTIONS.forEach { option ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable(
+                                        enabled = option.available,
+                                        onClick = {
+                                            pendingLanguageCode = option.code
+                                        }
+                                    )
+                                    .padding(vertical = dialogUi.dp(7.dp)),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        option.nativeName,
+                                        color = if (option.available) {
+                                            Color.White
+                                        } else {
+                                            Color(0xFFA4B2BF)
+                                        },
+                                        fontSize = dialogUi.sp(14f),
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        option.name,
+                                        color = if (option.available) {
+                                            Color(0xFFBFD6EA)
+                                        } else {
+                                            Color(0xFF8EAAC2)
+                                        },
+                                        fontSize = dialogUi.sp(10f)
+                                    )
+                                }
+
+                                RadioButton(
+                                    selected = pendingLanguageCode == option.code,
+                                    enabled = option.available,
+                                    colors = RadioButtonDefaults.colors(
+                                        selectedColor = SquadBluePrimary,
+                                        unselectedColor = Color(0xFF8EAAC2),
+                                        disabledSelectedColor = SquadBluePrimary.copy(alpha = 0.5f),
+                                        disabledUnselectedColor = Color(0xFF526A80)
+                                    ),
+                                    onClick = {
+                                        if (option.available) {
+                                            pendingLanguageCode = option.code
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            languagePickerVisible = false
+                            onLanguageSelected(pendingLanguageCode)
+                        }
+                    ) {
+                        Text(
+                            LocalUiStrings.current.text(UiTextKey.CONFIRM),
+                            color = SquadBlueGlow,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            )
         }
     }
 }
@@ -857,6 +1000,7 @@ private fun transmissionStatusColor(status: String): Color =
 @Composable
 private fun SectionDividerLabel(
     label: String,
+    ui: ResponsiveUi,
     modifier: Modifier = Modifier
 ) {
     Row(
@@ -870,7 +1014,7 @@ private fun SectionDividerLabel(
         Text(
             text = label,
             color = Color(0xFF8EA8C0),
-            fontSize = 10.sp,
+            fontSize = ui.sp(10f),
             fontWeight = FontWeight.Bold,
             letterSpacing = 0.9.sp,
             modifier = Modifier.padding(horizontal = 10.dp)
@@ -883,11 +1027,14 @@ private fun SectionDividerLabel(
 }
 
 @Composable
-private fun EmptySquadSection(message: String) {
+private fun EmptySquadSection(
+    message: String,
+    ui: ResponsiveUi
+) {
     Text(
         text = message,
         color = Color(0xFF8EA8C0),
-        fontSize = 12.sp,
+        fontSize = ui.sp(12f),
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 14.dp),
@@ -897,7 +1044,9 @@ private fun EmptySquadSection(message: String) {
 
 @Composable
 fun PeerCard(
+    ui: ResponsiveUi,
     peer: PeerNodeUi,
+    isWifiGroupHead: Boolean = false,
     removeArmed: Boolean = false,
     onLongPress: () -> Unit = {},
     onRemove: () -> Unit = {},
@@ -916,13 +1065,16 @@ fun PeerCard(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 14.dp),
+                    .padding(
+                        horizontal = ui.dp(4.dp),
+                        vertical = ui.dp(14.dp)
+                    ),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(
                     contentAlignment = Alignment.Center,
                     modifier = Modifier
-                        .size(38.dp)
+                        .size(ui.dp(38.dp))
                         .clip(CircleShape)
                         .background(SquadBlueSurfaceRaised)
                         .border(
@@ -939,19 +1091,48 @@ fun PeerCard(
                         Icons.Default.Person,
                         contentDescription = peer.callsign,
                         tint = Color.White,
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier.size(ui.dp(20.dp))
                     )
                 }
 
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(ui.dp(12.dp)))
 
                 Column(Modifier.weight(1f)) {
-                    Text(
-                        peer.callsign,
-                        color = Color.White,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            peer.callsign,
+                            color = Color.White,
+                            fontSize = ui.sp(14f),
+                            fontWeight = FontWeight.Bold,
+                        )
+
+                        if (isWifiGroupHead) {
+                            Spacer(Modifier.width(ui.dp(6.dp)))
+                            Surface(
+                                color = SquadBluePrimary.copy(alpha = 0.28f),
+                                shape = RoundedCornerShape(6.dp),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    SquadBlueGlow.copy(alpha = 0.65f)
+                                )
+                            ) {
+                                Text(
+                                    LocalUiStrings.current.text(UiTextKey.WIFI_GROUP_HEAD_BADGE),
+                                    color = Color.White,
+                                    fontSize = ui.sp(7f),
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = ui.sp(0.45f),
+                                    modifier = Modifier.padding(
+                                        horizontal = ui.dp(6.dp),
+                                        vertical = ui.dp(3.dp)
+                                    )
+                                )
+                            }
+                        }
+                    }
+
                     Spacer(Modifier.height(3.dp))
                     val connectedDetail = when {
                         peer.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED &&
@@ -971,7 +1152,7 @@ fun PeerCard(
 
                     Text(
                         if (peer.isConnected) {
-                            LocalUiStrings.current.text(UiTextKey.CONNECTED_DOT) + connectedDetail
+                            "Connected • " + connectedDetail
                         } else if (peer.linkText == "DIRECT") {
                             LocalUiStrings.current.text(UiTextKey.IN_SQUAD_DOT) + peer.distanceText
                         } else {
@@ -982,7 +1163,7 @@ fun PeerCard(
                         } else {
                             Color(0xFF8EA8C0)
                         },
-                        fontSize = 11.sp
+                        fontSize = ui.sp(11f)
                     )
                 }
 
@@ -1018,9 +1199,9 @@ fun PeerCard(
                     Text(
                         LocalUiStrings.current.text(UiTextKey.REMOVE_FROM_SQUAD),
                         color = SquadHoldRedGlow,
-                        fontSize = 10.sp,
+                        fontSize = ui.sp(10f),
                         fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.4.sp
+                        letterSpacing = ui.sp(0.4f)
                     )
                 },
                 onClick = onRemove,
