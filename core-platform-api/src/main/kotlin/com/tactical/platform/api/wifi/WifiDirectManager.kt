@@ -53,6 +53,9 @@ interface WifiDirectManager {
      */
     fun noteGroupOwnerAppDeviceId(deviceId: String) {}
 
+    /** Returns the current framework Wi-Fi enabled state, independent of P2P state. */
+    fun isWifiEnabled(): Boolean = false
+
     /**
      * Registers a live BLE peer as a candidate for automatic Wi-Fi Direct
      * link upgrade. This is transport-only and does not change squad membership.
