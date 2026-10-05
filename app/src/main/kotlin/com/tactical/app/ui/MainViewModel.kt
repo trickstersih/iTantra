@@ -1022,8 +1022,6 @@ class MainViewModel @Inject constructor(
         // stale/removal marker. A retained "STALE" peer has no live Wi-Fi state
         // in the UI, but it may still have a persisted Wi-Fi identity that can
         // be used to re-form its direct link.
-        val wasRecentlyRemoved =
-            deviceAddress in recentlyRemovedFromSquadIds
         recentlyRemovedFromSquadIds.remove(deviceAddress)
         clearWifiRelayInvalidationsForPeer(deviceAddress)
         wifiDirectManager.allowAutoReconnectTo(deviceAddress)
