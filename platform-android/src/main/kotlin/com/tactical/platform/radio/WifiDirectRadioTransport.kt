@@ -350,6 +350,9 @@ class WifiDirectRadioTransport(
                             !wifiDirectManager.connectionInfo().value.isGroupOwner
                         ) {
                             knownGroupOwnerAppDeviceId = hello.deviceId
+                            wifiDirectManager.noteGroupOwnerAppDeviceId(
+                                hello.deviceId
+                            )
                         }
 
                         val previous = socketsByPeerId.put(hello.deviceId, socket)
