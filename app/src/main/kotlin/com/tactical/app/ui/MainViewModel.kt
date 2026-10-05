@@ -1018,21 +1018,40 @@ class MainViewModel @Inject constructor(
     }
 
     fun addPeerToSquad(deviceAddress: String) {
-        // Remember whether this is an explicit re-add before clearing the
-        // stale/removal marker. A retained "STALE" peer has no live Wi-Fi state
-        // in the UI, but it may still have a persisted Wi-Fi identity that can
-        // be used to re-form its direct link.
+        // Explicit Add starts a fresh application-level authorization attempt.
+        // Do not clear Wi-Fi removal suppression until we actually enter the
+        // Wi-Fi path; BLE-only Add must remain completely independent of Wi-Fi.
         recentlyRemovedFromSquadIds.remove(deviceAddress)
         clearWifiRelayInvalidationsForPeer(deviceAddress)
-        wifiDirectManager.allowAutoReconnectTo(deviceAddress)
         radioTransport.allowPeer(deviceAddress)
 
         val peer = _uiState.value.availablePeers
             .firstOrNull { it.deviceAddress == deviceAddress }
 
         viewModelScope.launch {
+            val liveBleConnected =
+                deviceAddress in radioTransport
+                    .connectedPeerIdsByTransport()[RadioType.BLUETOOTH].orEmpty() ||
+                    withTimeoutOrNull(500L) {
+                        bleConnectionManager.state(deviceAddress).first {
+                            it == BleLinkState.CONNECTED
+                        }
+                    } == BleLinkState.CONNECTED
+
             val result = runCatching {
                 when {
+                    // A live BLE session always wins over stale UI topology or
+                    // remembered Wi-Fi state. Wi-Fi is only an automatic upgrade
+                    // performed by WifiDirectManager after BLE is already connected.
+                    liveBleConnected ||
+                        deviceAddress in radioTransport.connectedPeerIds() -> {
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Adding peer through existing BLE transport: " + deviceAddress
+                        )
+                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
                     peer != null &&
                         (peer.linkText.startsWith("VIA ") || peer.linkText == "RELAYED") -> {
                         // Relayed peers must use the mesh control plane; there is
@@ -1057,8 +1076,12 @@ class MainViewModel @Inject constructor(
                     // showing only the peer's BLE beacon. connectByAppDeviceId()
                     // can recover the Wi-Fi MAC from the manager's persisted
                     // identity cache and can wait for fresh P2P rediscovery.
-                    wifiDirectManager.state().value != RadioLinkState.UNAVAILABLE &&
+                    wifiDirectManager.isWifiEnabled() &&
                         peer?.bleState != BleLinkState.CONNECTED -> {
+                        // Wi-Fi suppression is cleared only when the user is
+                        // actually attempting a Wi-Fi re-add.
+                        wifiDirectManager.allowAutoReconnectTo(deviceAddress)
+
                         val connectResult =
                             wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
