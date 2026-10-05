@@ -409,6 +409,12 @@ class MeshSquadControlCoordinator @Inject constructor(
     private fun handleWifiGroupRemovalNotice(
         packet: WifiGroupRemovalNoticePacket
     ) {
+        // Enforce this at the singleton service layer so the background
+        // reconnect loop is blocked even when the Activity/ViewModel is gone.
+        packet.blockedPeerIds.forEach { peerId ->
+            wifiDirectManager.suppressAutoReconnectTo(peerId)
+        }
+
         _wifiRemovalNotices.tryEmit(
             WifiGroupRemovalNotice(
                 removedDeviceId = packet.removedDevice.value,
