@@ -250,11 +250,10 @@ class WifiDirectRadioTransport(
                     return@launch
                 }
 
+                val ownerAppDeviceId = knownGroupOwnerAppDeviceId
                 if (
-                    knownGroupOwnerAppDeviceId != null &&
-                    intentionallyDisconnectedPeers.contains(
-                        knownGroupOwnerAppDeviceId
-                    )
+                    ownerAppDeviceId != null &&
+                    intentionallyDisconnectedPeers.contains(ownerAppDeviceId)
                 ) {
                     android.util.Log.d(
                         TAG,
