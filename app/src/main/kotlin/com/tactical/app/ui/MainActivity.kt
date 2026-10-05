@@ -113,6 +113,9 @@ class MainActivity : ComponentActivity() {
         // Bluetooth and Wi-Fi Direct runtime permissions are requested together
         // from Android's Nearby Devices permission group.
         ensureWirelessEnabled()
+        if (hasWifiDirectRuntimePermission()) {
+            viewModel.refreshWifiDirect()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -226,7 +229,10 @@ class MainActivity : ComponentActivity() {
                                 when (selectedTab) {
                                     0 -> DevicesScreen(
                                         uiState = state,
-                                        onScan = viewModel::forceDiscovery,
+                                        onScan = {
+                                            requestWifiDirectPermissionIfNeeded()
+                                            viewModel.forceDiscovery()
+                                        },
                                         onAddToSquad = viewModel::addPeerToSquad,
                                         onEmergencyPress = viewModel::startEmergencyHold,
                                         onEmergencyRelease = viewModel::releaseEmergencyHold
@@ -471,6 +477,17 @@ class MainActivity : ComponentActivity() {
             runtimePermissionRequestInFlight = true
             requestPermissions.launch(missing.toTypedArray())
         }
+    }
+
+    private fun requestWifiDirectPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (hasWifiDirectRuntimePermission()) return
+        if (runtimePermissionRequestInFlight) return
+
+        runtimePermissionRequestInFlight = true
+        requestPermissions.launch(
+            arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+        )
     }
 
     private fun hasWifiDirectRuntimePermission(): Boolean {
