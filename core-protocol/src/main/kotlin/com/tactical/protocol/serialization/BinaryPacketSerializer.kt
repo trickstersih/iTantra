@@ -146,6 +146,8 @@ class BinaryPacketSerializer : PacketSerializer {
         writeString(packet.target.value)
         writeString(packet.removedDevice.value)
         writeString(packet.removedCallsign)
+        writeInt(packet.blockedPeerIds.size)
+        packet.blockedPeerIds.forEach { writeString(it) }
         writeLong(packet.timestamp)
     }
 
@@ -281,12 +283,22 @@ class BinaryPacketSerializer : PacketSerializer {
                 val target = DeviceId(it.readString())
                 val removedDevice = DeviceId(it.readString())
                 val removedCallsign = it.readString()
+                val blockedCount = it.readInt()
+                require(blockedCount in 0..128) {
+                    "Invalid Wi-Fi removal blocked-peer count: $blockedCount"
+                }
+                val blockedPeerIds = buildSet {
+                    repeat(blockedCount) {
+                        add(it.readString())
+                    }
+                }
                 val timestamp = it.readLong()
                 WifiGroupRemovalNoticePacket(
                     sender = sender,
                     target = target,
                     removedDevice = removedDevice,
                     removedCallsign = removedCallsign,
+                    blockedPeerIds = blockedPeerIds,
                     timestamp = timestamp
                 )
             }
