@@ -441,30 +441,6 @@ class MeshSquadControlCoordinator @Inject constructor(
         )
     }
 
-    private fun handleWifiGroupRemovalNotice(
-        packet: WifiGroupRemovalNoticePacket
-    ) {
-        _wifiRemovalNotices.tryEmit(
-            WifiGroupRemovalNotice(
-                removedDeviceId = packet.removedDevice.value,
-                removedCallsign = packet.removedCallsign,
-                removedByDeviceId = packet.sender.value,
-                removedByCallsign =
-                    localAppDataStore.callsignForPeer(packet.sender.value)
-                        ?.takeIf { it.isNotBlank() }
-                        ?: packet.sender.value.take(8)
-            )
-        )
-
-        android.util.Log.d(
-            "MeshSquadControlCoordinator",
-            "Received Wi-Fi group removal notice: " +
-                packet.removedDevice.value +
-                " removed by " +
-                packet.sender.value
-        )
-    }
-
     private suspend fun handleRemove(packet: SquadControlPacket) {
         // Removal is authoritative for the addressed relationship. Process it
         // even if local membership has already drifted, so a stale UI/store
