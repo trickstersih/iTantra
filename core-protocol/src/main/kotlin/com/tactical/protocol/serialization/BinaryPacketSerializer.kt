@@ -289,7 +289,7 @@ class BinaryPacketSerializer : PacketSerializer {
                 }
                 val blockedPeerIds = buildSet {
                     repeat(blockedCount) {
-                        add(it.readString())
+                        add(input.readString())
                     }
                 }
                 val timestamp = it.readLong()
