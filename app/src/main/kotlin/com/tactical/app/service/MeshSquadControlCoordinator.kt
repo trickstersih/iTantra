@@ -57,7 +57,8 @@ class MeshSquadControlCoordinator @Inject constructor(
         val removedDeviceId: String,
         val removedCallsign: String,
         val removedByDeviceId: String,
-        val removedByCallsign: String
+        val removedByCallsign: String,
+        val blockedPeerIds: Set<String>
     )
 
     private val pendingByRequestId = ConcurrentHashMap<String, PendingMeshRequest>()
@@ -325,16 +326,15 @@ class MeshSquadControlCoordinator @Inject constructor(
 
         val localDeviceId = identityStore.deviceIdValue
         val squadIds = squadMembershipStore.squadDeviceIds()
-        val remainingWifiPeers = radioTransport
+        val wifiPeers = radioTransport
             .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
             .orEmpty()
             .filter {
                 it != localDeviceId &&
-                    it != removedDeviceId &&
                     it in squadIds
             }
 
-        if (remainingWifiPeers.isEmpty()) {
+        if (wifiPeers.isEmpty()) {
             return
         }
 
@@ -343,27 +343,94 @@ class MeshSquadControlCoordinator @Inject constructor(
                 ?.takeIf { it.isNotBlank() }
                 ?: removedDeviceId.take(8)
 
-        remainingWifiPeers.forEach { targetId ->
-            val packet = WifiGroupRemovalNoticePacket(
-                sender = DeviceId(localDeviceId),
-                target = DeviceId(targetId),
-                removedDevice = DeviceId(removedDeviceId),
-                removedCallsign = removedCallsign,
-                timestamp = System.currentTimeMillis()
-            )
-
-            val result = meshService.sendOnTransport(
-                packet = packet,
-                transport = RadioType.WIFI_DIRECT
-            )
-
-            if (result is TacticalResult.Failure) {
-                android.util.Log.d(
-                    "MeshSquadControlCoordinator",
-                    "Wi-Fi removal notice to " + targetId + " failed: " + result.error
+        // Tell every remaining Wi-Fi peer that the removed member must no
+        // longer be considered a Wi-Fi route through this head.
+        wifiPeers
+            .filter { it != removedDeviceId }
+            .forEach { targetId ->
+                val packet = WifiGroupRemovalNoticePacket(
+                    sender = DeviceId(localDeviceId),
+                    target = DeviceId(targetId),
+                    removedDevice = DeviceId(removedDeviceId),
+                    removedCallsign = removedCallsign,
+                    blockedPeerIds = setOf(removedDeviceId),
+                    timestamp = System.currentTimeMillis()
                 )
+
+                val result = meshService.sendOnTransport(
+                    packet = packet,
+                    transport = RadioType.WIFI_DIRECT
+                )
+
+                if (result is TacticalResult.Failure) {
+                    android.util.Log.d(
+                        "MeshSquadControlCoordinator",
+                        "Wi-Fi removal notice to " + targetId + " failed: " + result.error
+                    )
+                }
+            }
+
+        // Also send an internal-only copy to the removed member. It already
+        // receives the normal REMOVE control packet; this copy tells it exactly
+        // which remaining Wi-Fi squad peers it must not auto-reconnect to.
+        if (removedDeviceId in wifiPeers) {
+            val blockedPeerIds = wifiPeers
+                .filter { it != removedDeviceId }
+                .toSet()
+
+            if (blockedPeerIds.isNotEmpty()) {
+                val packet = WifiGroupRemovalNoticePacket(
+                    sender = DeviceId(localDeviceId),
+                    target = DeviceId(removedDeviceId),
+                    removedDevice = DeviceId(removedDeviceId),
+                    removedCallsign = removedCallsign,
+                    blockedPeerIds = blockedPeerIds,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                val result = meshService.sendOnTransport(
+                    packet = packet,
+                    transport = RadioType.WIFI_DIRECT
+                )
+
+                if (result is TacticalResult.Failure) {
+                    android.util.Log.d(
+                        "MeshSquadControlCoordinator",
+                        "Wi-Fi internal suppression notice to removed peer " +
+                            removedDeviceId +
+                            " failed: " +
+                            result.error
+                    )
+                }
             }
         }
+    }
+
+    private fun handleWifiGroupRemovalNotice(
+        packet: WifiGroupRemovalNoticePacket
+    ) {
+        _wifiRemovalNotices.tryEmit(
+            WifiGroupRemovalNotice(
+                removedDeviceId = packet.removedDevice.value,
+                removedCallsign = packet.removedCallsign,
+                removedByDeviceId = packet.sender.value,
+                removedByCallsign =
+                    localAppDataStore.callsignForPeer(packet.sender.value)
+                        ?.takeIf { it.isNotBlank() }
+                        ?: packet.sender.value.take(8),
+                blockedPeerIds = packet.blockedPeerIds
+            )
+        )
+
+        android.util.Log.d(
+            "MeshSquadControlCoordinator",
+            "Received Wi-Fi group removal notice: removed=" +
+                packet.removedDevice.value +
+                " blocked=" +
+                packet.blockedPeerIds.joinToString(",") +
+                " by=" +
+                packet.sender.value
+        )
     }
 
     private fun handleWifiGroupRemovalNotice(
