@@ -560,32 +560,45 @@ class MainViewModel @Inject constructor(
 
         viewModelScope.launch {
             meshSquadControlCoordinator.wifiRemovalNotices.collect { notice ->
-                invalidatedWifiRelayRoutes[
-                    wifiRelayRouteKey(
-                        removedDeviceId = notice.removedDeviceId,
-                        relayDeviceId = notice.removedByDeviceId
-                    )
-                ] = System.currentTimeMillis()
+                // Block the exact Wi-Fi relationships named by the head. This
+                // does not touch BLE and only affects background P2P reconnects.
+                notice.blockedPeerIds.forEach { peerId ->
+                    wifiDirectManager.suppressAutoReconnectTo(peerId)
+                    invalidatedWifiRelayRoutes[
+                        wifiRelayRouteKey(
+                            removedDeviceId = peerId,
+                            relayDeviceId = notice.removedByDeviceId
+                        )
+                    ] = System.currentTimeMillis()
+                }
 
-                val message =
-                    notice.removedCallsign +
-                        " REMOVED FROM WI-FI GROUP BY " +
-                        notice.removedByCallsign
+                // The remaining member gets the user-facing notice. The removed
+                // member receives this packet only to suppress automatic Wi-Fi
+                // reconnection; it already received the normal squad REMOVE.
+                if (notice.removedDeviceId != identityStore.deviceIdValue) {
+                    val message =
+                        notice.removedCallsign +
+                            " REMOVED FROM WI-FI GROUP BY " +
+                            notice.removedByCallsign
 
-                _uiState.update { it.copy(squadNotification = message) }
-                refreshSquadConnectionStates()
-
-                delay(5000L)
-                _uiState.update { state ->
-                    if (state.squadNotification == message) {
-                        state.copy(squadNotification = null)
-                    } else {
-                        state
+                    _uiState.update {
+                        it.copy(squadNotification = message)
                     }
+                    refreshSquadConnectionStates()
+
+                    delay(5000L)
+                    _uiState.update { state ->
+                        if (state.squadNotification == message) {
+                            state.copy(squadNotification = null)
+                        } else {
+                            state
+                        }
+                    }
+                } else {
+                    refreshSquadConnectionStates()
                 }
             }
         }
-
         viewModelScope.launch {
             refreshSquadConnectionStates()
         }
@@ -1002,6 +1015,7 @@ class MainViewModel @Inject constructor(
             deviceAddress in recentlyRemovedFromSquadIds
         recentlyRemovedFromSquadIds.remove(deviceAddress)
         clearWifiRelayInvalidationsForPeer(deviceAddress)
+        wifiDirectManager.allowAutoReconnectTo(deviceAddress)
         radioTransport.allowPeer(deviceAddress)
 
         val peer = _uiState.value.availablePeers
