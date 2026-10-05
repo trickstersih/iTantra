@@ -2,13 +2,16 @@ package com.tactical.app.service
 
 import com.tactical.app.di.DeviceIdentityStore
 import com.tactical.domain.identity.DeviceId
+import com.tactical.domain.identity.RadioType
 import com.tactical.domain.packet.SquadControlAction
 import com.tactical.domain.packet.SquadControlPacket
+import com.tactical.domain.packet.WifiGroupRemovalNoticePacket
 import com.tactical.domain.result.TacticalResult
 import com.tactical.platform.api.ble.BleConnectionManager
 import com.tactical.platform.api.ble.SquadRequest
 import com.tactical.platform.api.squad.SquadMembershipStore
 import com.tactical.platform.api.radio.RadioTransport
+import com.tactical.platform.api.wifi.WifiDirectManager
 import com.tactical.engine.mesh.service.MeshService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,7 +40,8 @@ class MeshSquadControlCoordinator @Inject constructor(
     private val bleConnectionManager: BleConnectionManager,
     private val identityStore: DeviceIdentityStore,
     private val squadMembershipStore: SquadMembershipStore,
-    private val radioTransport: RadioTransport
+    private val radioTransport: RadioTransport,
+    private val wifiDirectManager: WifiDirectManager
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -47,28 +51,50 @@ class MeshSquadControlCoordinator @Inject constructor(
         val callsign: String
     )
 
+    data class WifiGroupRemovalNotice(
+        val removedDeviceId: String,
+        val removedCallsign: String,
+        val removedByDeviceId: String,
+        val removedByCallsign: String
+    )
+
     private val pendingByRequestId = ConcurrentHashMap<String, PendingMeshRequest>()
     private val outgoingByRequestId = ConcurrentHashMap<String, String>()
     private val outgoingRequestIdsByDeviceId = ConcurrentHashMap<String, MutableSet<String>>()
     private val _pendingRequests = MutableStateFlow<List<SquadRequest>>(emptyList())
     private val _membershipChanged = MutableSharedFlow<Unit>(extraBufferCapacity = 8)
     private val _removalNotices = MutableSharedFlow<String>(extraBufferCapacity = 8)
+    private val _wifiRemovalNotices =
+        MutableSharedFlow<WifiGroupRemovalNotice>(extraBufferCapacity = 8)
 
     val pendingRequests: Flow<List<SquadRequest>> = _pendingRequests.asStateFlow()
     val membershipChanged: Flow<Unit> = _membershipChanged
     val removalNotices: Flow<String> = _removalNotices
+    val wifiRemovalNotices: Flow<WifiGroupRemovalNotice> = _wifiRemovalNotices
 
     init {
         scope.launch {
             meshService.receive().collect { packet ->
-                val control = packet as? SquadControlPacket ?: return@collect
+                when (packet) {
+                    is SquadControlPacket -> {
+                        if (packet.target.value != identityStore.deviceIdValue) {
+                            return@collect
+                        }
 
-                if (control.target.value != identityStore.deviceIdValue) return@collect
+                        when (packet.action) {
+                            SquadControlAction.REQUEST -> handleRequest(packet)
+                            SquadControlAction.RESPONSE -> handleResponse(packet)
+                            SquadControlAction.REMOVE -> handleRemove(packet)
+                        }
+                    }
 
-                when (control.action) {
-                    SquadControlAction.REQUEST -> handleRequest(control)
-                    SquadControlAction.RESPONSE -> handleResponse(control)
-                    SquadControlAction.REMOVE -> handleRemove(control)
+                    is WifiGroupRemovalNoticePacket -> {
+                        if (packet.target.value == identityStore.deviceIdValue) {
+                            handleWifiGroupRemovalNotice(packet)
+                        }
+                    }
+
+                    else -> Unit
                 }
             }
         }
@@ -161,6 +187,15 @@ class MeshSquadControlCoordinator @Inject constructor(
         if (result is TacticalResult.Failure) {
             return result
         }
+
+        // Only the Wi-Fi Direct group owner owns the physical links to all
+        // group members. When the head removes one member, tell every other
+        // squad member in that same Wi-Fi group so they can invalidate any
+        // logical relay route that depended on the removed member. The notice
+        // itself is forced onto Wi-Fi and never uses BLE.
+        sendWifiGroupRemovalNoticesIfHead(
+            removedDeviceId = deviceId
+        )
 
         // Give the transport a short grace period after the synchronous write
         // so the remote mesh receiver has time to consume the REMOVE before
@@ -277,6 +312,84 @@ class MeshSquadControlCoordinator @Inject constructor(
         publishPending()
     }
 
+
+    private fun sendWifiGroupRemovalNoticesIfHead(
+        removedDeviceId: String
+    ) {
+        val groupInfo = wifiDirectManager.connectionInfo().value
+        if (!groupInfo.groupFormed || !groupInfo.isGroupOwner) {
+            return
+        }
+
+        val localDeviceId = identityStore.deviceIdValue
+        val squadIds = squadMembershipStore.squadDeviceIds()
+        val remainingWifiPeers = radioTransport
+            .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
+            .orEmpty()
+            .filter {
+                it != localDeviceId &&
+                    it != removedDeviceId &&
+                    it in squadIds
+            }
+
+        if (remainingWifiPeers.isEmpty()) {
+            return
+        }
+
+        val removedCallsign = removedDeviceId.take(8)
+
+        remainingWifiPeers.forEach { targetId ->
+            scope.launch {
+                val packet = WifiGroupRemovalNoticePacket(
+                    sender = DeviceId(localDeviceId),
+                    target = DeviceId(targetId),
+                    removedDevice = DeviceId(removedDeviceId),
+                    removedCallsign = removedCallsign,
+                    timestamp = System.currentTimeMillis()
+                )
+
+                val result = meshService.sendOnTransport(
+                    packet = packet,
+                    transport = RadioType.WIFI_DIRECT
+                )
+
+                if (result is TacticalResult.Failure) {
+                    android.util.Log.d(
+                        "MeshSquadControlCoordinator",
+                        "Wi-Fi removal notice to " + targetId + " failed: " + result.error
+                    )
+                }
+            }
+        }
+    }
+
+    private fun handleWifiGroupRemovalNotice(
+        packet: WifiGroupRemovalNoticePacket
+    ) {
+        _wifiRemovalNotices.tryEmit(
+            WifiGroupRemovalNotice(
+                removedDeviceId = packet.removedDevice.value,
+                removedCallsign = packet.removedCallsign,
+                removedByDeviceId = packet.sender.value,
+                removedByCallsign = localCallsignForDevice(packet.sender.value)
+            )
+        )
+
+        android.util.Log.d(
+            "MeshSquadControlCoordinator",
+            "Received Wi-Fi group removal notice: " +
+                packet.removedDevice.value +
+                " removed by " +
+                packet.sender.value
+        )
+    }
+
+    private fun localCallsignForDevice(deviceId: String): String =
+        if (deviceId == identityStore.deviceIdValue) {
+            identityStore.callsign
+        } else {
+            deviceId.take(8)
+        }
 
     private suspend fun handleRemove(packet: SquadControlPacket) {
         // Removal is authoritative for the addressed relationship. Process it
