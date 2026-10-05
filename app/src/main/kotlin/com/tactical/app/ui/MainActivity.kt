@@ -480,14 +480,20 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestWifiDirectPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val wifiOn =
+            getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+        if (!wifiOn) return
         if (hasWifiDirectRuntimePermission()) return
         if (runtimePermissionRequestInFlight) return
 
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.NEARBY_WIFI_DEVICES
+        } else {
+            Manifest.permission.ACCESS_FINE_LOCATION
+        }
+
         runtimePermissionRequestInFlight = true
-        requestPermissions.launch(
-            arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
-        )
+        requestPermissions.launch(arrayOf(permission))
     }
 
     private fun hasWifiDirectRuntimePermission(): Boolean {
