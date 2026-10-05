@@ -502,6 +502,7 @@ class MeshSquadControlCoordinator @Inject constructor(
         clearOutgoingRequest(packet.requestId, expectedTarget)
 
         if (packet.accepted == true) {
+            wifiDirectManager.allowAutoReconnectTo(packet.sender.value)
             radioTransport.allowPeer(packet.sender.value)
             scope.launch {
                 val result = bleConnectionManager.addMeshSquadMember(
