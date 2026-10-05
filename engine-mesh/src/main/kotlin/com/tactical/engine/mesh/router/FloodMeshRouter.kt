@@ -54,6 +54,13 @@ class FloodMeshRouter(
             return ForwardDecision.Drop("Relay path already contains local device")
         }
 
+        // Wi-Fi group-removal notices are sent directly to the remaining
+        // Wi-Fi peers by the remover. They must never be relayed through
+        // another bearer or another mesh hop, because this is a physical
+        // Wi-Fi-group relationship notification, not a general mesh event.
+        val isWifiGroupRemovalNotice =
+            relayPacket.payload is com.tactical.domain.packet.WifiGroupRemovalNoticePacket
+
         // Targeted text is still mesh-routed, but only the intended squad
         // members may consume it. Intermediate nodes forward it without
         // consuming it. Keep track of recipients already reached so a packet
@@ -92,6 +99,14 @@ class FloodMeshRouter(
         // 4. Accept locally only when this node is an intended recipient (or
         // the packet is an unrestricted broadcast). Relay-only nodes continue
         // forwarding targeted packets so multi-hop squad delivery works.
+        if (isWifiGroupRemovalNotice) {
+            return if (localIsTarget) {
+                ForwardDecision.AcceptLocal
+            } else {
+                ForwardDecision.Drop("Wi-Fi removal notice is direct-targeted")
+            }
+        }
+
         return when {
             localIsTarget && updatedPacket != null ->
                 ForwardDecision.AcceptAndRebroadcast(updatedPacket)
