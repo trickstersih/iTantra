@@ -23,14 +23,18 @@ class BinaryPacketSerializer : PacketSerializer {
             is VoicePacket -> encodeVoicePacket(packet)
             is EmergencyPacket -> encodeEmergencyPacket(packet)
             is BeaconPacket -> encodeBeaconPacket(packet)
-undefined
+            is SquadControlPacket -> encodeSquadControlPacket(packet)
+            is WifiGroupRemovalNoticePacket -> encodeWifiGroupRemovalNoticePacket(packet)
+        }
 
         val type: Byte = when (packet) {
             is TextPacket -> 1
             is VoicePacket -> 2
             is EmergencyPacket -> 3
             is BeaconPacket -> 4
-undefined
+            is SquadControlPacket -> 5
+            is WifiGroupRemovalNoticePacket -> 6
+        }
 
         return wrapInEnvelope(type, payload)
     }
@@ -135,7 +139,17 @@ undefined
         writeLong(packet.timestamp)
     }
 
-undefined {
+    private fun encodeWifiGroupRemovalNoticePacket(
+        packet: WifiGroupRemovalNoticePacket
+    ): ByteArray = byteStream {
+        writeString(packet.sender.value)
+        writeString(packet.target.value)
+        writeString(packet.removedDevice.value)
+        writeString(packet.removedCallsign)
+        writeLong(packet.timestamp)
+    }
+
+    private fun DataOutputStream.writeGeoFix(fix: GeoFix?) {
         writeBoolean(fix != null)
         if (fix == null) return
         writeDouble(fix.latitude)
