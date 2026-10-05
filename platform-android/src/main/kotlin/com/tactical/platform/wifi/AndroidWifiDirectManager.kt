@@ -616,29 +616,35 @@ class AndroidWifiDirectManager(
         }
 
         return try {
-            suspendCancellableCoroutine { continuation ->
-                val recordMap = mutableMapOf(
-                    "app" to "itantra",
-                    "id" to deviceId,
-                    "callsign" to callsign.take(32),
-                    "group_role" to when {
-                        _connectionInfo.value.groupFormed &&
-                            _connectionInfo.value.isGroupOwner -> "head"
-                        _connectionInfo.value.groupFormed -> "member"
-                        else -> "none"
-                    }
-                )
-                localGroupCredentials?.let { credentials ->
-                    recordMap["group_ssid"] = credentials.networkName
-                    recordMap["group_passphrase"] = credentials.passphrase
-                }
-                val record = recordMap.toMap()
-                val serviceInfo = WifiP2pDnsSdServiceInfo.newInstance(
-                    "_itantra",
-                    "_presence._tcp",
-                    record
-                )
+            // This is a suspend function body, so removing the previous
+            // service is performed here, outside the non-suspending Android
+            // callback used by addLocalService().
+            removeActivePresenceService()
 
+            val recordMap = mutableMapOf(
+                "app" to "itantra",
+                "id" to deviceId,
+                "callsign" to callsign.take(32),
+                "group_role" to when {
+                    _connectionInfo.value.groupFormed &&
+                        _connectionInfo.value.isGroupOwner -> "head"
+                    _connectionInfo.value.groupFormed -> "member"
+                    else -> "none"
+                }
+            )
+
+            localGroupCredentials?.let { credentials ->
+                recordMap["group_ssid"] = credentials.networkName
+                recordMap["group_passphrase"] = credentials.passphrase
+            }
+
+            val serviceInfo = WifiP2pDnsSdServiceInfo.newInstance(
+                "_itantra",
+                "_presence._tcp",
+                recordMap.toMap()
+            )
+
+            suspendCancellableCoroutine { continuation ->
                 fun finish(result: TacticalResult<Unit>) {
                     synchronized(this) {
                         presenceRegistrationInProgress = false
@@ -646,51 +652,13 @@ class AndroidWifiDirectManager(
                             presenceRegistered = true
                         }
                     }
+
                     if (continuation.isActive) {
                         continuation.resume(result)
                     }
                 }
 
                 try {
-                    val previousService = activePresenceServiceInfo
-                    if (previousService != null) {
-                        suspendCancellableCoroutine<Unit> { continuation ->
-                            try {
-                                wifiP2pManager.removeLocalService(
-                                    wifichannel,
-                                    previousService,
-                                    object : WifiP2pManager.ActionListener {
-                                        override fun onSuccess() {
-                                            if (continuation.isActive) {
-                                                continuation.resume(Unit)
-                                            }
-                                        }
-
-                                        override fun onFailure(reason: Int) {
-                                            android.util.Log.d(
-                                                TAG,
-                                                "Previous iTantra Wi-Fi presence removal returned " +
-                                                    reason
-                                            )
-                                            if (continuation.isActive) {
-                                                continuation.resume(Unit)
-                                            }
-                                        }
-                                    }
-                                )
-                            } catch (_: SecurityException) {
-                                if (continuation.isActive) {
-                                    continuation.resume(Unit)
-                                }
-                            } catch (_: Exception) {
-                                if (continuation.isActive) {
-                                    continuation.resume(Unit)
-                                }
-                            }
-                        }
-                        activePresenceServiceInfo = null
-                    }
-
                     wifiP2pManager.addLocalService(
                         wifichannel,
                         serviceInfo,
@@ -750,6 +718,52 @@ class AndroidWifiDirectManager(
                 "iTantra Wi-Fi service registration failed: " +
                     (e.message ?: e.javaClass.simpleName)
             )
+        }
+    }
+
+    private suspend fun removeActivePresenceService() {
+        val previousService = activePresenceServiceInfo ?: return
+        activePresenceServiceInfo = null
+
+        try {
+            suspendCancellableCoroutine<Unit> { continuation ->
+                try {
+                    wifiP2pManager.removeLocalService(
+                        wifichannel,
+                        previousService,
+                        object : WifiP2pManager.ActionListener {
+                            override fun onSuccess() {
+                                if (continuation.isActive) {
+                                    continuation.resume(Unit)
+                                }
+                            }
+
+                            override fun onFailure(reason: Int) {
+                                android.util.Log.d(
+                                    TAG,
+                                    "Previous iTantra Wi-Fi presence removal returned " +
+                                        reason
+                                )
+                                if (continuation.isActive) {
+                                    continuation.resume(Unit)
+                                }
+                            }
+                        }
+                    )
+                } catch (_: SecurityException) {
+                    if (continuation.isActive) {
+                        continuation.resume(Unit)
+                    }
+                } catch (_: Exception) {
+                    if (continuation.isActive) {
+                        continuation.resume(Unit)
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Replacement is best-effort. Continue with registration so a
+            // transient OEM remove failure does not prevent advertising the
+            // current role/callsign.
         }
     }
 
