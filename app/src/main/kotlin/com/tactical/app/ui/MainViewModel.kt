@@ -1008,12 +1008,22 @@ class MainViewModel @Inject constructor(
     fun forceDiscovery() {
         val service = discoveryService as? DefaultDiscoveryService ?: return
 
+        // Manual scan refreshes both radios. Wi-Fi Direct may have been off
+        // when the app started, so explicitly re-running its startup/discovery
+        // path is required when Wi-Fi has just been enabled.
         service.scanNow()
         _uiState.update { it.copy(isScanning = true) }
 
         viewModelScope.launch {
             delay(MANUAL_SCAN_DISPLAY_MS)
             _uiState.update { it.copy(isScanning = false) }
+        }
+    }
+
+    fun refreshWifiDirect() {
+        val service = discoveryService as? DefaultDiscoveryService ?: return
+        viewModelScope.launch {
+            runCatching { service.refreshWifiDirect() }
         }
     }
 
