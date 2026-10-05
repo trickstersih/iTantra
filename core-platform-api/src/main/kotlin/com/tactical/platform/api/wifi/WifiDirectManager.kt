@@ -47,6 +47,13 @@ interface WifiDirectManager {
         TacticalResult.Failure("Wi-Fi Direct app-device lookup is unsupported")
 
     /**
+     * Records the stable iTantra identity learned from the current Wi-Fi group
+     * owner's transport hello. This is more authoritative than waiting for
+     * DNS-SD and lets a group client render the HEAD immediately.
+     */
+    fun noteGroupOwnerAppDeviceId(deviceId: String) {}
+
+    /**
      * Prevent the background Wi-Fi reconnect loop from recreating a relationship
      * that was explicitly invalidated by a Wi-Fi group removal.
      *
