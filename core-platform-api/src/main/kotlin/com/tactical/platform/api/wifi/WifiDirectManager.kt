@@ -54,6 +54,12 @@ interface WifiDirectManager {
     fun noteGroupOwnerAppDeviceId(deviceId: String) {}
 
     /**
+     * Registers a live BLE peer as a candidate for automatic Wi-Fi Direct
+     * link upgrade. This is transport-only and does not change squad membership.
+     */
+    fun noteBlePeerConnected(deviceId: String) {}
+
+    /**
      * Prevent the background Wi-Fi reconnect loop from recreating a relationship
      * that was explicitly invalidated by a Wi-Fi group removal.
      *
