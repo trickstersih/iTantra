@@ -224,7 +224,7 @@ class MainViewModel @Inject constructor(
     // Wi-Fi route is observed or the peer reconnects directly. This state is
     // deliberately separate from BLE, so an independent BLE link remains live.
     private val invalidatedWifiRelayRoutes =
-        ConcurrentHashMap.newKeySet<String>()
+        ConcurrentHashMap<String, Long>()
     // Tracks membership across the whole app lifecycle so a remote REMOVE is
     // treated the same as a locally initiated removal for Home-screen retention.
     private var lastObservedSquadIds =
@@ -560,12 +560,12 @@ class MainViewModel @Inject constructor(
 
         viewModelScope.launch {
             meshSquadControlCoordinator.wifiRemovalNotices.collect { notice ->
-                invalidatedWifiRelayRoutes.add(
+                invalidatedWifiRelayRoutes[
                     wifiRelayRouteKey(
                         removedDeviceId = notice.removedDeviceId,
                         relayDeviceId = notice.removedByDeviceId
                     )
-                )
+                ] = System.currentTimeMillis()
 
                 val message =
                     notice.removedCallsign +
@@ -659,6 +659,36 @@ class MainViewModel @Inject constructor(
                             device = device,
                             knownCallsigns = knownCallsigns
                         )
+
+                        val immediateRelayId =
+                            device.path.lastOrNull()?.value
+                        val relayRouteKey =
+                            immediateRelayId?.let {
+                                wifiRelayRouteKey(
+                                    removedDeviceId = id,
+                                    relayDeviceId = it
+                                )
+                            }
+
+                        // A fresh topology beacon that arrives after the
+                        // removal notice proves the Wi-Fi relay route has been
+                        // rebuilt. Ignore the brief in-flight beacon window
+                        // immediately after removal so the route cannot flicker
+                        // back to connected while the head is closing the link.
+                        val invalidatedAt =
+                            relayRouteKey?.let { invalidatedWifiRelayRoutes[it] }
+                        if (
+                            invalidatedAt != null &&
+                                device.link == LinkType.RELAYED &&
+                                device.lastSeen.toEpochMilli() >
+                                    invalidatedAt + WIFI_ROUTE_RESTORE_GRACE_MS
+                        ) {
+                            invalidatedWifiRelayRoutes.remove(
+                                relayRouteKey,
+                                invalidatedAt
+                            )
+                        }
+
                         val previousRelayedRoute =
                             previous?.linkText
                                 ?.takeIf {
@@ -701,15 +731,10 @@ class MainViewModel @Inject constructor(
                                     RadioLinkState.DISCONNECTED
                             }
 
-                        val immediateRelayId =
-                            device.path.lastOrNull()?.value
                         val relayRouteInvalidated =
-                            immediateRelayId != null &&
-                                invalidatedWifiRelayRoutes.contains(
-                                    wifiRelayRouteKey(
-                                        removedDeviceId = id,
-                                        relayDeviceId = immediateRelayId
-                                    )
+                            relayRouteKey != null &&
+                                invalidatedWifiRelayRoutes.containsKey(
+                                    relayRouteKey
                                 )
                         val liveRelayedRoute =
                             !relayRouteInvalidated &&
@@ -2103,9 +2128,9 @@ class MainViewModel @Inject constructor(
     ): String = removedDeviceId + "|" + relayDeviceId
 
     private fun clearWifiRelayInvalidationsForPeer(deviceId: String) {
-        invalidatedWifiRelayRoutes.removeIf { key ->
-            key.startsWith(deviceId + "|")
-        }
+        invalidatedWifiRelayRoutes.keys
+            .filter { key -> key.startsWith(deviceId + "|") }
+            .forEach { key -> invalidatedWifiRelayRoutes.remove(key) }
     }
 
     private fun routeLinkText(
@@ -2151,6 +2176,7 @@ class MainViewModel @Inject constructor(
     }
     companion object {
         private const val MANUAL_SCAN_DISPLAY_MS = 5000L
+        private const val WIFI_ROUTE_RESTORE_GRACE_MS = 2000L
 
         private val SUPPORTED_SPEECH_LANGUAGE_CODES = setOf(
             "hi", "gu", "mr", "kn", "ml",
