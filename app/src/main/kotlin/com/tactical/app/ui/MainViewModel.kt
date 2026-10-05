@@ -218,6 +218,13 @@ class MainViewModel @Inject constructor(
     private val observedPeerIds = mutableSetOf<String>()
     private val recentlyRemovedFromSquadIds =
         ConcurrentHashMap.newKeySet<String>()
+
+    // A Wi-Fi head can remove a member whose only path to another squad
+    // member was head-relayed. Keep those relay paths invalid until a fresh
+    // Wi-Fi route is observed or the peer reconnects directly. This state is
+    // deliberately separate from BLE, so an independent BLE link remains live.
+    private val invalidatedWifiRelayRoutes =
+        ConcurrentHashMap.newKeySet<String>()
     // Tracks membership across the whole app lifecycle so a remote REMOVE is
     // treated the same as a locally initiated removal for Home-screen retention.
     private var lastObservedSquadIds =
@@ -552,6 +559,34 @@ class MainViewModel @Inject constructor(
         }
 
         viewModelScope.launch {
+            meshSquadControlCoordinator.wifiRemovalNotices.collect { notice ->
+                invalidatedWifiRelayRoutes.add(
+                    wifiRelayRouteKey(
+                        removedDeviceId = notice.removedDeviceId,
+                        relayDeviceId = notice.removedByDeviceId
+                    )
+                )
+
+                val message =
+                    notice.removedCallsign +
+                        " REMOVED FROM WI-FI GROUP BY " +
+                        notice.removedByCallsign
+
+                _uiState.update { it.copy(squadNotification = message) }
+                refreshSquadConnectionStates()
+
+                delay(5000L)
+                _uiState.update { state ->
+                    if (state.squadNotification == message) {
+                        state.copy(squadNotification = null)
+                    } else {
+                        state
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
             refreshSquadConnectionStates()
         }
 
@@ -613,6 +648,13 @@ class MainViewModel @Inject constructor(
                         val liveBleConnected = id in liveBleIds
                         val liveWifiConnected = id in liveWifiIds
 
+                        // A direct Wi-Fi rejoin is authoritative proof that
+                        // the previously invalidated Wi-Fi route is alive
+                        // again. BLE state is intentionally not used here.
+                        if (liveWifiConnected) {
+                            clearWifiRelayInvalidationsForPeer(id)
+                        }
+
                         val routeText = routeLinkText(
                             device = device,
                             knownCallsigns = knownCallsigns
@@ -661,8 +703,17 @@ class MainViewModel @Inject constructor(
 
                         val immediateRelayId =
                             device.path.lastOrNull()?.value
-                        val liveRelayedRoute =
+                        val relayRouteInvalidated =
                             immediateRelayId != null &&
+                                invalidatedWifiRelayRoutes.contains(
+                                    wifiRelayRouteKey(
+                                        removedDeviceId = id,
+                                        relayDeviceId = immediateRelayId
+                                    )
+                                )
+                        val liveRelayedRoute =
+                            !relayRouteInvalidated &&
+                                immediateRelayId != null &&
                                 (
                                     immediateRelayId in liveBleIds ||
                                         immediateRelayId in liveWifiIds
@@ -811,8 +862,17 @@ class MainViewModel @Inject constructor(
                 // hop is the immediate relay that must have a live physical
                 // bearer on this device.
                 val immediateRelayId = peer.path.lastOrNull()
+                val relayRouteInvalidated =
+                    immediateRelayId != null &&
+                        invalidatedWifiRelayRoutes.contains(
+                            wifiRelayRouteKey(
+                                removedDeviceId = peer.deviceAddress,
+                                relayDeviceId = immediateRelayId
+                            )
+                        )
                 val isRelayedReachable =
                     !isDirectlyConnected &&
+                        !relayRouteInvalidated &&
                         immediateRelayId != null &&
                         immediateRelayId in connectedIds
 
@@ -914,6 +974,7 @@ class MainViewModel @Inject constructor(
         val wasRecentlyRemoved =
             deviceAddress in recentlyRemovedFromSquadIds
         recentlyRemovedFromSquadIds.remove(deviceAddress)
+        clearWifiRelayInvalidationsForPeer(deviceAddress)
         radioTransport.allowPeer(deviceAddress)
 
         val peer = _uiState.value.availablePeers
@@ -2033,6 +2094,17 @@ class MainViewModel @Inject constructor(
             "DIRECT"
         } else {
             "DIRECT • " + transports.joinToString(" + ")
+        }
+    }
+
+    private fun wifiRelayRouteKey(
+        removedDeviceId: String,
+        relayDeviceId: String
+    ): String = removedDeviceId + "|" + relayDeviceId
+
+    private fun clearWifiRelayInvalidationsForPeer(deviceId: String) {
+        invalidatedWifiRelayRoutes.removeIf { key ->
+            key.startsWith(deviceId + "|")
         }
     }
 
