@@ -765,6 +765,7 @@ class MainViewModel @Inject constructor(
                                     "DIRECT"
                                 }
                             }
+                            relayRouteInvalidated -> "STALE"
                             else -> stableRouteText
                         }
 
@@ -920,6 +921,7 @@ class MainViewModel @Inject constructor(
                             )
                         )
                     }
+                    relayRouteInvalidated -> "STALE"
                     else -> peer.linkText
                 }
 
