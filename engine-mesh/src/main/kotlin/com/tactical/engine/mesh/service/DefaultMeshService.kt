@@ -44,7 +44,19 @@ class DefaultMeshService(
             .launchIn(scope)
     }
 
-    override suspend fun send(packet: Packet): TacticalResult<Unit> {
+    override suspend fun send(packet: Packet): TacticalResult<Unit> =
+        sendInternal(packet, null)
+
+    override suspend fun sendOnTransport(
+        packet: Packet,
+        transport: com.tactical.domain.identity.RadioType
+    ): TacticalResult<Unit> =
+        sendInternal(packet, transport)
+
+    private suspend fun sendInternal(
+        packet: Packet,
+        preferredTransport: com.tactical.domain.identity.RadioType?
+    ): TacticalResult<Unit> {
         val relayPacket = MeshRelayPacket(
             originalSender = localDeviceId,
             immediateSender = localDeviceId,
@@ -64,6 +76,8 @@ class DefaultMeshService(
         val targetDeviceIds = when (packet) {
             is com.tactical.domain.packet.TextPacket -> squadDeviceIdsProvider()
             is com.tactical.domain.packet.SquadControlPacket -> setOf(packet.target.value)
+            is com.tactical.domain.packet.WifiGroupRemovalNoticePacket ->
+                setOf(packet.target.value)
             is com.tactical.domain.packet.EmergencyPacket -> null
             else -> null
         }
@@ -71,7 +85,10 @@ class DefaultMeshService(
         val routedRelayPacket = relayPacket.copy(
             targetDeviceIds = targetDeviceIds
         )
-        return broadcastRelay(routedRelayPacket)
+        return broadcastRelay(
+            relayPacket = routedRelayPacket,
+            preferredTransport = preferredTransport
+        )
     }
 
     override fun receive(): Flow<Packet> = _incomingPackets.asSharedFlow()
@@ -106,14 +123,15 @@ class DefaultMeshService(
 
     private suspend fun broadcastRelay(
         relayPacket: MeshRelayPacket,
-        targetDeviceIds: Set<String>? = null
+        preferredTransport: com.tactical.domain.identity.RadioType? = null
     ): TacticalResult<Unit> {
         val bytes = serializer.serializeRelay(relayPacket)
         val raw = RawPacket(
             data = bytes,
             rssi = 0,
             timestamp = System.currentTimeMillis(),
-            targetDeviceIds = targetDeviceIds
+            transport = preferredTransport,
+            targetDeviceIds = relayPacket.targetDeviceIds
         )
         return transport.broadcast(raw)
     }
