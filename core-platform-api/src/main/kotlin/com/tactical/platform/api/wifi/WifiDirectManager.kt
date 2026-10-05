@@ -45,4 +45,18 @@ interface WifiDirectManager {
      */
     suspend fun connectByAppDeviceId(deviceId: String): TacticalResult<Unit> =
         TacticalResult.Failure("Wi-Fi Direct app-device lookup is unsupported")
+
+    /**
+     * Prevent the background Wi-Fi reconnect loop from recreating a relationship
+     * that was explicitly invalidated by a Wi-Fi group removal.
+     *
+     * This does not affect BLE and does not prevent an explicit user initiated
+     * connect/add operation.
+     */
+    fun suppressAutoReconnectTo(deviceId: String) {}
+
+    /**
+     * Explicit user re-add clears the Wi-Fi-only reconnect suppression.
+     */
+    fun allowAutoReconnectTo(deviceId: String) {}
 }
