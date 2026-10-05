@@ -1624,6 +1624,22 @@ class AndroidWifiDirectManager(
         return connect(resolvedAddress)
     }
 
+    override fun noteGroupOwnerAppDeviceId(deviceId: String) {
+        if (deviceId.isBlank()) return
+
+        val info = _connectionInfo.value
+        if (info.groupFormed && !info.isGroupOwner) {
+            _connectionInfo.value = info.copy(
+                groupOwnerAppDeviceId = deviceId
+            )
+            android.util.Log.d(
+                TAG,
+                "Resolved Wi-Fi group-owner app identity from transport hello: " +
+                    deviceId
+            )
+        }
+    }
+
     override fun suppressAutoReconnectTo(deviceId: String) {
         if (deviceId.isBlank() || deviceId == localDeviceId) return
         suppressedAutoReconnectPeerIds.add(deviceId)
