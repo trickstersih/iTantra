@@ -82,6 +82,25 @@ class CompositeRadioTransport(
         )
 
     override suspend fun broadcast(raw: RawPacket): TacticalResult<Unit> = coroutineScope {
+        // A non-null outgoing transport is an explicit bearer constraint.
+        // Normal packets keep transport == null and retain the existing
+        // concurrent BLE + Wi-Fi broadcast behavior.
+        when (raw.transport) {
+            RadioType.BLUETOOTH -> {
+                return@coroutineScope runCatching { bleTransport.broadcast(raw) }
+                    .getOrElse {
+                        TacticalResult.Failure("BLE broadcast threw: " + (it.message ?: "unknown"))
+                    }
+            }
+            RadioType.WIFI_DIRECT -> {
+                return@coroutineScope runCatching { wifiDirectTransport.broadcast(raw) }
+                    .getOrElse {
+                        TacticalResult.Failure("Wi-Fi Direct broadcast threw: " + (it.message ?: "unknown"))
+                    }
+            }
+            null -> Unit
+        }
+
         // Targeted packets can now traverse either bearer. BLE retains its
         // existing physical target filtering, while Wi-Fi forwards the mesh
         // packet to its connected group peers and lets FloodMeshRouter apply
