@@ -1054,29 +1054,22 @@ class MainViewModel @Inject constructor(
                         meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
                     }
 
-                    // If Wi-Fi Direct has discovered this peer and BLE is not
-                    // the live bearer, initiate the Wi-Fi Direct connection now.
-                    // Do not require a P2P group to already exist: connect() is
-                    // precisely what creates the first group.
-                    peer != null &&
-                        peer.bleState != BleLinkState.CONNECTED &&
-                        (
-                            peer.wifiDirectState != RadioLinkState.UNAVAILABLE ||
-                                wasRecentlyRemoved
-                            ) -> {
+                    // When Wi-Fi Direct is available, prefer it for an
+                    // explicit Add-to-Squad even if the UI catalog is currently
+                    // showing only the peer's BLE beacon. connectByAppDeviceId()
+                    // can recover the Wi-Fi MAC from the manager's persisted
+                    // identity cache and can wait for fresh P2P rediscovery.
+                    wifiDirectManager.state().value != RadioLinkState.UNAVAILABLE &&
+                        peer?.bleState != BleLinkState.CONNECTED -> {
                         val connectResult =
                             wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
                         if (connectResult is TacticalResult.Failure) {
-                            // A recently removed BLE-only peer can also be
-                            // re-added from Home. If it has no remembered
-                            // Wi-Fi identity, keep BLE as the fallback instead
-                            // of turning the UI into a Wi-Fi-only path.
-                            if (wasRecentlyRemoved) {
-                                bleConnectionManager.addToSquad(deviceAddress)
-                            } else {
-                                connectResult
-                            }
+                            // Do not silently switch back to BLE while Wi-Fi is
+                            // enabled. The explicit add should exercise the
+                            // requested Wi-Fi path and surface the real failure
+                            // when Wi-Fi identity/discovery is unavailable.
+                            connectResult
                         } else {
                             val ready = withTimeoutOrNull(5_000L) {
                                 while (deviceAddress !in radioTransport.connectedPeerIds()) {
