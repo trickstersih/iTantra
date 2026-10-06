@@ -237,15 +237,31 @@ class MeshSquadControlCoordinator @Inject constructor(
             timestamp = System.currentTimeMillis()
         )
 
-        val result = meshService.send(response)
+        // Prefer the physical bearer on which the requester is currently
+        // reachable. A direct BLE request must not be answered through the
+        // composite BLE+Wi-Fi broadcast path, because the unrelated Wi-Fi
+        // failure can turn a healthy BLE response into "both bearers failed".
+        val connectedByTransport = radioTransport.connectedPeerIdsByTransport()
+        val responseTransport = when {
+            request.deviceId in connectedByTransport[RadioType.BLUETOOTH].orEmpty() ->
+                RadioType.BLUETOOTH
+            request.deviceId in connectedByTransport[RadioType.WIFI_DIRECT].orEmpty() ->
+                RadioType.WIFI_DIRECT
+            else -> null
+        }
+
+        val result = if (responseTransport != null) {
+            meshService.sendOnTransport(response, responseTransport)
+        } else {
+            meshService.send(response)
+        }
+
         if (result is TacticalResult.Failure) {
-            // A rejection is a local authorization decision. Even if the
-            // acknowledgement cannot currently reach the requester, do not
-            // keep forcing the same request back into the UI forever.
-            if (!approve) {
-                pendingByRequestId.remove(request.requestId)
-                publishPending()
-            }
+            // The local authorization decision is complete even when its
+            // acknowledgement cannot currently be delivered. Clear the pending
+            // card so the same request cannot become an infinite UI loop.
+            pendingByRequestId.remove(request.requestId)
+            publishPending()
             return result
         }
 
