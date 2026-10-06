@@ -341,6 +341,9 @@ class AndroidBleConnectionManager(
 
         if (approve) {
             rememberSquadMember(request.deviceId, knownAddress)
+            // Approval completes the application-level authorization, so the
+            // existing BLE link may now be upgraded to Wi-Fi Direct.
+            wifiDirectManager.allowAutoReconnectTo(request.deviceId)
             setState(knownAddress, BleLinkState.CONNECTED)
         } else {
             setState(knownAddress, BleLinkState.AVAILABLE)
@@ -811,6 +814,10 @@ class AndroidBleConnectionManager(
                 rememberAddress(message.deviceId, address)
                 if (message.accepted) {
                     rememberSquadMember(message.deviceId, address)
+                    // The BLE response is the authorization event. Now that
+                    // the peer is back in the squad, allow the background Wi-Fi
+                    // transport upgrade to resume.
+                    wifiDirectManager.allowAutoReconnectTo(message.deviceId)
                     setState(address, BleLinkState.CONNECTED)
                 } else {
                     setState(address, BleLinkState.AVAILABLE)
