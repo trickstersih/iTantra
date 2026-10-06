@@ -127,7 +127,9 @@ class MeshSquadControlCoordinator @Inject constructor(
             return TacticalResult.Success(Unit)
         }
 
-        wifiDirectManager.allowAutoReconnectTo(deviceId)
+        // A re-add request is authorization only. Do not lift Wi-Fi removal
+        // suppression before the target accepts; doing so can immediately start
+        // a competing Wi-Fi reconnect while the request is still pending.
         radioTransport.allowPeer(deviceId)
 
         if (outgoingRequestIdsByDeviceId[deviceId]?.isNotEmpty() == true) {
@@ -192,6 +194,11 @@ class MeshSquadControlCoordinator @Inject constructor(
             return result
         }
 
+        // This relationship has now been authoritatively removed. Stop the
+        // background Wi-Fi upgrade/reconnect path before closing the bearer so
+        // a still-live BLE link cannot immediately resurrect the Wi-Fi group.
+        wifiDirectManager.suppressAutoReconnectTo(deviceId)
+
         // Only the Wi-Fi Direct group owner owns the physical links to all
         // group members. When the head removes one member, tell every other
         // squad member in that same Wi-Fi group so they can invalidate any
@@ -232,6 +239,13 @@ class MeshSquadControlCoordinator @Inject constructor(
 
         val result = meshService.send(response)
         if (result is TacticalResult.Failure) {
+            // A rejection is a local authorization decision. Even if the
+            // acknowledgement cannot currently reach the requester, do not
+            // keep forcing the same request back into the UI forever.
+            if (!approve) {
+                pendingByRequestId.remove(request.requestId)
+                publishPending()
+            }
             return result
         }
 
@@ -446,6 +460,9 @@ class MeshSquadControlCoordinator @Inject constructor(
         // even if local membership has already drifted, so a stale UI/store
         // cannot keep the peer in the squad after a valid REMOVE packet.
         squadMembershipStore.remove(packet.sender.value)
+        // A remote REMOVE is equally authoritative: suppress automatic Wi-Fi
+        // resurrection before closing the current physical relationship.
+        wifiDirectManager.suppressAutoReconnectTo(packet.sender.value)
 
         // The REMOVE packet itself may have arrived over the current Wi-Fi
         // socket. Close that link after applying the membership change and
