@@ -774,10 +774,6 @@ fun SquadScreen(
                             uiState.wifiDirectGroupOwnerAppDeviceId,
                             ignoreCase = true
                         ),
-                    removeWifiLink =
-                        uiState.wifiDirectMultiMemberHead &&
-                            peer.wifiDirectState ==
-                                com.tactical.domain.identity.RadioLinkState.CONNECTED,
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
                     onLongPress = { removeArmedDeviceId = peer.deviceAddress },
                     onRemove = {
