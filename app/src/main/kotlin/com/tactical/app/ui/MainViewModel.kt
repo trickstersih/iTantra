@@ -698,6 +698,11 @@ class MainViewModel @Inject constructor(
                         if (
                             invalidatedAt != null &&
                                 device.link == LinkType.RELAYED &&
+                                immediateRelayId != null &&
+                                (
+                                    immediateRelayId in liveBleIds ||
+                                        immediateRelayId in liveWifiIds
+                                    ) &&
                                 device.lastSeen.toEpochMilli() >
                                     invalidatedAt + WIFI_ROUTE_RESTORE_GRACE_MS
                         ) {
@@ -705,6 +710,10 @@ class MainViewModel @Inject constructor(
                                 relayRouteKey,
                                 invalidatedAt
                             )
+                            // The global peer invalidation was only needed
+                            // while no valid route existed. A fresh route
+                            // proves that the peer is reachable again.
+                            invalidatedWifiRelayPeerIds.remove(id)
                         }
 
                         val previousRelayedRoute =
@@ -1048,6 +1057,21 @@ class MainViewModel @Inject constructor(
                         }
                     } == BleLinkState.CONNECTED
 
+            val wifiInfo = wifiDirectManager.connectionInfo().value
+            val knownSameWifiGroupPeer =
+                wifiInfo.groupFormed &&
+                    (
+                        deviceAddress in _uiState.value.wifiDirectDiscoveredGroupMemberIds ||
+                            deviceAddress.equals(
+                                _uiState.value.wifiDirectGroupOwnerAppDeviceId,
+                                ignoreCase = true
+                            )
+                    )
+            val liveWifiConnected =
+                deviceAddress in radioTransport
+                    .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT].orEmpty()
+            val localAlreadyInWifiGroup = wifiInfo.groupFormed
+
             val result = runCatching {
                 when {
                     // A live BLE session always wins over stale UI topology or
@@ -1060,6 +1084,30 @@ class MainViewModel @Inject constructor(
                             "Adding peer through existing BLE transport: " + deviceAddress
                         )
                         meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
+                    // A peer that is already in this P2P group must
+                    // use the existing iTantra Wi-Fi data path. Never ask
+                    // Android to negotiate another P2P group from the head.
+                    knownSameWifiGroupPeer && liveWifiConnected -> {
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Adding same-group Wi-Fi peer through existing transport: " +
+                                deviceAddress
+                        )
+                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
+                    knownSameWifiGroupPeer && !liveWifiConnected -> {
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Same-group Wi-Fi peer has no ready data socket: " +
+                                deviceAddress
+                        )
+                        wifiDirectManager.allowAutoReconnectTo(deviceAddress)
+                        TacticalResult.Failure(
+                            "Wi-Fi peer is already in the current group but its data link is not ready"
+                        )
                     }
 
                     peer != null &&
@@ -1086,7 +1134,21 @@ class MainViewModel @Inject constructor(
                     // showing only the peer's BLE beacon. connectByAppDeviceId()
                     // can recover the Wi-Fi MAC from the manager's persisted
                     // identity cache and can wait for fresh P2P rediscovery.
+                    // A Wi-Fi head/member cannot create a second P2P
+                    // group while already attached to one. Do not tear down or
+                    // disturb the current group just because a nearby external
+                    // peer is discoverable. The external peer must initiate
+                    // joining this existing group (or use BLE).
+                    localAlreadyInWifiGroup &&
+                        !knownSameWifiGroupPeer &&
+                        !liveWifiConnected -> {
+                        TacticalResult.Failure(
+                            "Already connected to a Wi-Fi Direct group; peer must join the existing group"
+                        )
+                    }
+
                     wifiDirectManager.isWifiEnabled() &&
+                        !localAlreadyInWifiGroup &&
                         peer?.bleState != BleLinkState.CONNECTED -> {
                         // Wi-Fi suppression is cleared only when the user is
                         // actually attempting a Wi-Fi re-add.
