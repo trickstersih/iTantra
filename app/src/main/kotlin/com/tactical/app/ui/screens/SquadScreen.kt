@@ -731,6 +731,10 @@ fun SquadScreen(
                             uiState.wifiDirectGroupOwnerAppDeviceId,
                             ignoreCase = true
                         ),
+                    removeWifiLink =
+                        uiState.wifiDirectMultiMemberHead &&
+                            peer.wifiDirectState ==
+                                com.tactical.domain.identity.RadioLinkState.CONNECTED,
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
                     onLongPress = { removeArmedDeviceId = peer.deviceAddress },
                     onRemove = {
@@ -774,6 +778,10 @@ fun SquadScreen(
                             uiState.wifiDirectGroupOwnerAppDeviceId,
                             ignoreCase = true
                         ),
+                    removeWifiLink =
+                        uiState.wifiDirectMultiMemberHead &&
+                            peer.wifiDirectState ==
+                                com.tactical.domain.identity.RadioLinkState.CONNECTED,
                     removeArmed = removeArmedDeviceId == peer.deviceAddress,
                     onLongPress = { removeArmedDeviceId = peer.deviceAddress },
                     onRemove = {
@@ -1047,6 +1055,7 @@ fun PeerCard(
     ui: ResponsiveUi,
     peer: PeerNodeUi,
     isWifiGroupHead: Boolean = false,
+    removeWifiLink: Boolean = false,
     removeArmed: Boolean = false,
     onLongPress: () -> Unit = {},
     onRemove: () -> Unit = {},
@@ -1197,7 +1206,13 @@ fun PeerCard(
             DropdownMenuItem(
                 text = {
                     Text(
-                        LocalUiStrings.current.text(UiTextKey.REMOVE_FROM_SQUAD),
+                        LocalUiStrings.current.text(
+                            if (removeWifiLink) {
+                                UiTextKey.REMOVE_WIFI_LINK
+                            } else {
+                                UiTextKey.REMOVE_FROM_SQUAD
+                            }
+                        ),
                         color = SquadHoldRedGlow,
                         fontSize = ui.sp(10f),
                         fontWeight = FontWeight.ExtraBold,
