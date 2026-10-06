@@ -82,9 +82,6 @@ class AndroidWifiDirectManager(
     private val connectMutex = kotlinx.coroutines.sync.Mutex()
     private val suppressedAutoReconnectPeerIds =
         java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
-    /** Physical BLE peers that should be upgraded to Wi-Fi when possible. */
-    private val bleWifiUpgradePeerIds =
-        java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var activePresenceServiceInfo: WifiP2pDnsSdServiceInfo? = null
     private var connectTargetDeviceAddress: String? = null
     private var wifiP2pListenerRegistered = false
@@ -1228,15 +1225,17 @@ class AndroidWifiDirectManager(
         if (connectionAttemptInProgress) return
 
         val squadIds = squadMembershipStore.squadDeviceIds()
-        val candidateIds = (squadIds + bleWifiUpgradePeerIds)
+
+        // Automatic Wi-Fi reconnect is strictly membership-gated. A nearby BLE
+        // device that has not been approved (or was explicitly removed) must
+        // never resurrect a P2P group in the background.
+        val candidateIds = squadIds
             .filter { it != localDeviceId && it !in suppressedAutoReconnectPeerIds }
             .toSet()
         if (candidateIds.isEmpty()) return
 
         // Deterministic reconnect ownership: only one side initiates a given
         // pair's recovery. The other side remains discoverable and accepts it.
-        // This applies both to persistent squad members and to a live BLE peer
-        // waiting for a Wi-Fi link upgrade.
         val targetPeer = _peers.value
             .asSequence()
             .filter { peer ->
@@ -1692,10 +1691,23 @@ class AndroidWifiDirectManager(
 
     override fun noteBlePeerConnected(deviceId: String) {
         if (deviceId.isBlank() || deviceId == localDeviceId) return
-        bleWifiUpgradePeerIds.add(deviceId)
+
+        // BLE proximity alone must not create a Wi-Fi Direct group. Wi-Fi is
+        // an automatic transport upgrade for an already-authorized squad
+        // relationship; an unapproved/removed peer stays BLE-only until the
+        // squad decision is made.
+        if (deviceId !in squadMembershipStore.squadDeviceIds()) {
+            android.util.Log.d(
+                TAG,
+                "BLE peer is not in squad; deferring automatic Wi-Fi upgrade: " +
+                    deviceId
+            )
+            return
+        }
+
         android.util.Log.d(
             TAG,
-            "BLE peer registered for automatic Wi-Fi upgrade: " + deviceId
+            "BLE squad peer registered for automatic Wi-Fi upgrade: " + deviceId
         )
         if (started.get() && wifiManager.isWifiEnabled) {
             scheduleAutoReconnectAttempt()
