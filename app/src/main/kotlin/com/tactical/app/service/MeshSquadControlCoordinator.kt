@@ -166,63 +166,6 @@ class MeshSquadControlCoordinator @Inject constructor(
      * This uses the mesh control plane because the member may be reachable only
      * through Wi-Fi Direct or through a relay.
      */
-    /**
-     * Removes only the Wi-Fi relationship from a multi-member Wi-Fi group.
-     *
-     * This is intentionally different from removeFromSquad(): squad membership
-     * and BLE connectivity remain untouched. The head closes only its Wi-Fi
-     * socket to the selected member and tells the two affected member devices
-     * to invalidate their member-to-member relay relationship.
-     *
-     * The caller must already have established that this is a 3+ device group.
-     */
-    suspend fun removeFromWifiGroup(
-        deviceId: String
-    ): TacticalResult<Unit> {
-        if (deviceId.isBlank() || deviceId == identityStore.deviceIdValue) {
-            return TacticalResult.Failure("Invalid Wi-Fi group target")
-        }
-
-        val groupInfo = wifiDirectManager.connectionInfo().value
-        if (!groupInfo.groupFormed || !groupInfo.isGroupOwner) {
-            return TacticalResult.Failure("Only the Wi-Fi group head can remove a Wi-Fi link")
-        }
-
-        val wifiPeerIds = radioTransport
-            .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
-            .orEmpty()
-
-        if (deviceId !in wifiPeerIds) {
-            return TacticalResult.Failure("Peer is not currently connected over Wi-Fi Direct")
-        }
-
-        // Persist suppression at the head immediately so the background
-        // reconnect loop cannot recreate the link after the socket closes.
-        wifiDirectManager.suppressAutoReconnectTo(deviceId)
-
-        // Notify the selected member and every other Wi-Fi peer. These notices
-        // affect only the member-to-member Wi-Fi route and never touch BLE or
-        // squad membership.
-        sendWifiGroupRemovalNoticesIfHead(deviceId)
-
-        kotlinx.coroutines.delay(300L)
-
-        // Close only the head -> selected-member Wi-Fi socket. Because this is
-        // a 3+ member group, WifiDirectRadioTransport deliberately keeps the
-        // underlying P2P group alive. The existing two-device group teardown
-        // remains unchanged in disconnectPeer().
-        radioTransport.disconnectPeer(deviceId)
-
-        android.util.Log.d(
-            "MeshSquadControlCoordinator",
-            "Wi-Fi-only link removal applied for " +
-                deviceId +
-                "; squad membership preserved"
-        )
-
-        return TacticalResult.Success(Unit)
-    }
-
     suspend fun removeFromSquad(
         deviceId: String
     ): TacticalResult<Unit> {
