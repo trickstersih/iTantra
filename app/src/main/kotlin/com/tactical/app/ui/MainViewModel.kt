@@ -1077,13 +1077,17 @@ class MainViewModel @Inject constructor(
                     // A live BLE session always wins over stale UI topology or
                     // remembered Wi-Fi state. Wi-Fi is only an automatic upgrade
                     // performed by WifiDirectManager after BLE is already connected.
-                    liveBleConnected ||
-                        deviceAddress in radioTransport.connectedPeerIds() -> {
+                    liveBleConnected -> {
+                        // A direct BLE link must use the BLE squad-request control
+                        // protocol. Do not wrap it in a mesh packet: doing so sends
+                        // the response through CompositeRadioTransport and can fail
+                        // on the Wi-Fi bearer even though BLE is healthy.
                         android.util.Log.d(
                             "MainViewModel",
-                            "Adding peer through existing BLE transport: " + deviceAddress
+                            "Adding peer through existing BLE squad-request transport: " +
+                                deviceAddress
                         )
-                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                        bleConnectionManager.addToSquad(deviceAddress)
                     }
 
                     // A peer that is already in this P2P group must
@@ -1121,12 +1125,29 @@ class MainViewModel @Inject constructor(
                     // both BLE-only and Wi-Fi-only tests even when discovery state
                     // still contains an older/stale entry for the other bearer.
                     deviceAddress in radioTransport.connectedPeerIds() -> {
+                        // Prefer the actual connected bearer. Direct BLE requests
+                        // must stay on the BLE control plane; Wi-Fi Direct requests
+                        // use the mesh control plane so they can be relayed/targeted.
+                        val connectedWifi = deviceAddress in radioTransport
+                            .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
+                            .orEmpty()
+                        val connectedBle = deviceAddress in radioTransport
+                            .connectedPeerIdsByTransport()[RadioType.BLUETOOTH]
+                            .orEmpty()
+
                         android.util.Log.d(
                             "MainViewModel",
                             "Adding already-connected peer via existing transport: " +
-                                deviceAddress
+                                deviceAddress +
+                                " wifi=" + connectedWifi +
+                                " ble=" + connectedBle
                         )
-                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+
+                        if (connectedWifi && !connectedBle) {
+                            meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                        } else {
+                            bleConnectionManager.addToSquad(deviceAddress)
+                        }
                     }
 
                     // When Wi-Fi Direct is available, prefer it for an
@@ -1158,11 +1179,21 @@ class MainViewModel @Inject constructor(
                             wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
                         if (connectResult is TacticalResult.Failure) {
-                            // Do not silently switch back to BLE while Wi-Fi is
-                            // enabled. The explicit add should exercise the
-                            // requested Wi-Fi path and surface the real failure
-                            // when Wi-Fi identity/discovery is unavailable.
-                            connectResult
+                            // Wi-Fi identity/discovery can legitimately lag behind
+                            // the BLE discovery path during startup. Fall back to the
+                            // direct BLE squad-request path before reporting Add failed.
+                            val bleFallback = runCatching {
+                                bleConnectionManager.addToSquad(deviceAddress)
+                            }.getOrElse {
+                                TacticalResult.Failure(
+                                    it.message ?: it.javaClass.simpleName
+                                )
+                            }
+                            if (bleFallback is TacticalResult.Success) {
+                                bleFallback
+                            } else {
+                                connectResult
+                            }
                         } else {
                             val ready = withTimeoutOrNull(5_000L) {
                                 while (deviceAddress !in radioTransport.connectedPeerIds()) {
