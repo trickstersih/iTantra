@@ -154,7 +154,6 @@ data class MainUiState(
     val wifiDirectIsGroupOwner: Boolean = false,
     val wifiDirectGroupOwnerDeviceAddress: String? = null,
     val wifiDirectGroupOwnerAppDeviceId: String? = null,
-    val wifiDirectMultiMemberHead: Boolean = false,
     val wifiDirectDiscoveredGroupHeadIds: Set<String> = emptySet(),
     val wifiDirectDiscoveredGroupMemberIds: Set<String> = emptySet(),
     val respondingSquadRequestId: String? = null,
@@ -469,10 +468,6 @@ class MainViewModel @Inject constructor(
                         wifiDirectIsGroupOwner = info.isGroupOwner,
                         wifiDirectGroupOwnerDeviceAddress = info.groupOwnerDeviceAddress,
                         wifiDirectGroupOwnerAppDeviceId = info.groupOwnerAppDeviceId,
-                        wifiDirectMultiMemberHead =
-                            info.groupFormed &&
-                                info.isGroupOwner &&
-                                info.groupMemberDeviceAddresses.size >= 3,
                         showWifiMultipleRequestWarning =
                             requests > 1 &&
                                 info.groupFormed &&
@@ -502,8 +497,7 @@ class MainViewModel @Inject constructor(
                             it.copy(
                                 wifiDirectGroupFormed = false,
                                 wifiDirectGroupOwnerDeviceAddress = null,
-                                wifiDirectGroupOwnerAppDeviceId = null,
-                                wifiDirectMultiMemberHead = false
+                                wifiDirectGroupOwnerAppDeviceId = null
                             )
                         }
                     }
@@ -523,13 +517,7 @@ class MainViewModel @Inject constructor(
                     state.wifiDirectGroupOwnerDeviceAddress !=
                         info.groupOwnerDeviceAddress ||
                     state.wifiDirectGroupOwnerAppDeviceId !=
-                        resolvedOwnerAppDeviceId ||
-                    state.wifiDirectMultiMemberHead !=
-                        (
-                            info.groupFormed &&
-                                info.isGroupOwner &&
-                                info.groupMemberDeviceAddresses.size >= 3
-                        )
+                        resolvedOwnerAppDeviceId
                 ) {
                     _uiState.update {
                         it.copy(
@@ -538,11 +526,7 @@ class MainViewModel @Inject constructor(
                             wifiDirectGroupOwnerDeviceAddress =
                                 info.groupOwnerDeviceAddress,
                             wifiDirectGroupOwnerAppDeviceId =
-                                resolvedOwnerAppDeviceId,
-                            wifiDirectMultiMemberHead =
-                                info.groupFormed &&
-                                    info.isGroupOwner &&
-                                    info.groupMemberDeviceAddresses.size >= 3
+                                resolvedOwnerAppDeviceId
                         )
                     }
                 }
@@ -1229,28 +1213,12 @@ class MainViewModel @Inject constructor(
     }
     fun removePeerFromSquad(deviceAddress: String) {
         viewModelScope.launch {
-            val wifiInfo = wifiDirectManager.connectionInfo().value
-            val liveWifiPeerIds = radioTransport
-                .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
-                .orEmpty()
-
-            // In a 3+ phone Wi-Fi group, the head's "remove" action means
-            // remove only the Wi-Fi relationship to that member. This preserves
-            // squad membership and BLE. The existing 2-device squad-removal
-            // behavior is intentionally left untouched so the earlier
-            // two-phone fix cannot regress.
-            val isMultiMemberWifiHeadRemoval =
-                wifiInfo.groupFormed &&
-                    wifiInfo.isGroupOwner &&
-                    wifiInfo.groupMemberDeviceAddresses.size >= 3 &&
-                    deviceAddress in liveWifiPeerIds
-
             val result = runCatching {
-                if (isMultiMemberWifiHeadRemoval) {
-                    meshSquadControlCoordinator.removeFromWifiGroup(deviceAddress)
-                } else {
-                    meshSquadControlCoordinator.removeFromSquad(deviceAddress)
-                }
+                // The selected peer is a true squad-removal target. The
+                // Wi-Fi-head logic inside the coordinator separately notifies
+                // the target's other Wi-Fi peers so their relay route goes
+                // offline, without changing their squad membership.
+                meshSquadControlCoordinator.removeFromSquad(deviceAddress)
             }.getOrElse {
                 TacticalResult.Failure(
                     it.message ?: it.javaClass.simpleName
@@ -1258,27 +1226,18 @@ class MainViewModel @Inject constructor(
             }
 
             if (result is TacticalResult.Success) {
-                if (isMultiMemberWifiHeadRemoval) {
-                    // The peer is still a squad member. Do not add it to the
-                    // squad-removal tombstone or change membership state.
-                    refreshSquadConnectionStates()
-                } else {
-                    // Keep the peer's persisted identity so it immediately
-                    // remains available on Home after actual squad removal.
-                    recentlyRemovedFromSquadIds.add(deviceAddress)
-                    refreshSquadPeers()
-                }
+                recentlyRemovedFromSquadIds.add(deviceAddress)
+                refreshSquadPeers()
             } else {
                 val error = (result as TacticalResult.Failure).error
                 android.util.Log.w(
                     "MainViewModel",
-                    "Remove peer action failed for " + deviceAddress + ": " + error
+                    "Remove from squad failed for " + deviceAddress + ": " + error
                 )
                 _uiState.update { it.copy(squadRequestError = error) }
             }
         }
     }
-
     private fun refreshSquadPeers() {
         val squadIds = squadMembershipStore.squadDeviceIds()
         val storedById = localAppDataStore
