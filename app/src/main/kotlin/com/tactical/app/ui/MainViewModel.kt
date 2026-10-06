@@ -1213,8 +1213,28 @@ class MainViewModel @Inject constructor(
     }
     fun removePeerFromSquad(deviceAddress: String) {
         viewModelScope.launch {
+            val wifiInfo = wifiDirectManager.connectionInfo().value
+            val liveWifiPeerIds = radioTransport
+                .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
+                .orEmpty()
+
+            // In a 3+ phone Wi-Fi group, the head's "remove" action means
+            // remove only the Wi-Fi relationship to that member. This preserves
+            // squad membership and BLE. The existing 2-device squad-removal
+            // behavior is intentionally left untouched so the earlier
+            // two-phone fix cannot regress.
+            val isMultiMemberWifiHeadRemoval =
+                wifiInfo.groupFormed &&
+                    wifiInfo.isGroupOwner &&
+                    wifiInfo.groupMemberDeviceAddresses.size >= 3 &&
+                    deviceAddress in liveWifiPeerIds
+
             val result = runCatching {
-                meshSquadControlCoordinator.removeFromSquad(deviceAddress)
+                if (isMultiMemberWifiHeadRemoval) {
+                    meshSquadControlCoordinator.removeFromWifiGroup(deviceAddress)
+                } else {
+                    meshSquadControlCoordinator.removeFromSquad(deviceAddress)
+                }
             }.getOrElse {
                 TacticalResult.Failure(
                     it.message ?: it.javaClass.simpleName
@@ -1222,16 +1242,21 @@ class MainViewModel @Inject constructor(
             }
 
             if (result is TacticalResult.Success) {
-                // Keep the peer's persisted identity so it immediately remains
-                // available on Home after squad removal. The discovery pipeline
-                // will refresh/remove it normally based on physical presence.
-                recentlyRemovedFromSquadIds.add(deviceAddress)
-                refreshSquadPeers()
+                if (isMultiMemberWifiHeadRemoval) {
+                    // The peer is still a squad member. Do not add it to the
+                    // squad-removal tombstone or change membership state.
+                    refreshSquadConnectionStates()
+                } else {
+                    // Keep the peer's persisted identity so it immediately
+                    // remains available on Home after actual squad removal.
+                    recentlyRemovedFromSquadIds.add(deviceAddress)
+                    refreshSquadPeers()
+                }
             } else {
                 val error = (result as TacticalResult.Failure).error
                 android.util.Log.w(
                     "MainViewModel",
-                    "Remove from squad failed for " + deviceAddress + ": " + error
+                    "Remove peer action failed for " + deviceAddress + ": " + error
                 )
                 _uiState.update { it.copy(squadRequestError = error) }
             }
