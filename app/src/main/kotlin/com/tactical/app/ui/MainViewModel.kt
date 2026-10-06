@@ -154,6 +154,7 @@ data class MainUiState(
     val wifiDirectIsGroupOwner: Boolean = false,
     val wifiDirectGroupOwnerDeviceAddress: String? = null,
     val wifiDirectGroupOwnerAppDeviceId: String? = null,
+    val wifiDirectMultiMemberHead: Boolean = false,
     val wifiDirectDiscoveredGroupHeadIds: Set<String> = emptySet(),
     val wifiDirectDiscoveredGroupMemberIds: Set<String> = emptySet(),
     val respondingSquadRequestId: String? = null,
@@ -468,6 +469,10 @@ class MainViewModel @Inject constructor(
                         wifiDirectIsGroupOwner = info.isGroupOwner,
                         wifiDirectGroupOwnerDeviceAddress = info.groupOwnerDeviceAddress,
                         wifiDirectGroupOwnerAppDeviceId = info.groupOwnerAppDeviceId,
+                        wifiDirectMultiMemberHead =
+                            info.groupFormed &&
+                                info.isGroupOwner &&
+                                info.groupMemberDeviceAddresses.size >= 3,
                         showWifiMultipleRequestWarning =
                             requests > 1 &&
                                 info.groupFormed &&
@@ -497,7 +502,8 @@ class MainViewModel @Inject constructor(
                             it.copy(
                                 wifiDirectGroupFormed = false,
                                 wifiDirectGroupOwnerDeviceAddress = null,
-                                wifiDirectGroupOwnerAppDeviceId = null
+                                wifiDirectGroupOwnerAppDeviceId = null,
+                                wifiDirectMultiMemberHead = false
                             )
                         }
                     }
@@ -517,7 +523,13 @@ class MainViewModel @Inject constructor(
                     state.wifiDirectGroupOwnerDeviceAddress !=
                         info.groupOwnerDeviceAddress ||
                     state.wifiDirectGroupOwnerAppDeviceId !=
-                        resolvedOwnerAppDeviceId
+                        resolvedOwnerAppDeviceId ||
+                    state.wifiDirectMultiMemberHead !=
+                        (
+                            info.groupFormed &&
+                                info.isGroupOwner &&
+                                info.groupMemberDeviceAddresses.size >= 3
+                        )
                 ) {
                     _uiState.update {
                         it.copy(
@@ -526,7 +538,11 @@ class MainViewModel @Inject constructor(
                             wifiDirectGroupOwnerDeviceAddress =
                                 info.groupOwnerDeviceAddress,
                             wifiDirectGroupOwnerAppDeviceId =
-                                resolvedOwnerAppDeviceId
+                                resolvedOwnerAppDeviceId,
+                            wifiDirectMultiMemberHead =
+                                info.groupFormed &&
+                                    info.isGroupOwner &&
+                                    info.groupMemberDeviceAddresses.size >= 3
                         )
                     }
                 }
