@@ -41,7 +41,7 @@ class Andr2SttModelStore @Inject constructor(
                         }
 
                         val relative = normalized.removePrefix(prefix)
-                        if (relative !in REQUIRED_FILES) {
+                        if (relative !in REQUIRED_ARCHIVE_FILES) {
                             zip.closeEntry()
                             continue
                         }
@@ -100,6 +100,9 @@ class Andr2SttModelStore @Inject constructor(
         REQUIRED_FILES.all { relative ->
             val file = File(root, relative)
             file.isFile && file.length() > 0L
+        } && DECODER_FILENAMES.any { decoderName ->
+            val file = File(root, decoderName)
+            file.isFile && file.length() > 0L
         }
 
     companion object {
@@ -107,13 +110,20 @@ class Andr2SttModelStore @Inject constructor(
         private const val ZIP_ROOT = "andr2"
         private const val BUFFER_SIZE = 64 * 1024
 
+        private val DECODER_FILENAMES = listOf(
+            "decoder_int8.onnx",
+            "decoder_fp32.onnx"
+        )
+
         private val REQUIRED_FILES = setOf(
             "encoder_int8.onnx",
-            "decoder_fp32.onnx",
             "mel_filters_80x201.npy",
             "preprocess.json",
             "vocab_map.json",
             "tokenizer/vocab.json"
         )
+
+        private val REQUIRED_ARCHIVE_FILES =
+            REQUIRED_FILES + DECODER_FILENAMES
     }
 }

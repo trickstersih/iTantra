@@ -55,16 +55,13 @@ dependencies {
     implementation(libs.hilt.android)
     ksp(libs.hilt.compiler)
 
-    // Moonshine's AAR compiles against these runtime dependencies.
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.10.0")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("androidx.work:work-runtime:2.9.1")
+    // AndroidPermissionGateway uses ActivityResultLauncher directly.
+    // Keep this explicit rather than relying on an unrelated transitive dependency.
+    implementation("androidx.activity:activity:1.10.1")
 
     // On-device inference backends — `implementation`, never `api`, so
     // dependent modules (engine-speech, feature-ptt, app) never see these
     // types directly. SpeechBackendModule is the only seam.
-    implementation(libs.tensorflow.lite)
     implementation(libs.onnxruntime.android)
 
 //    testImplementation(kotlin("test"))
