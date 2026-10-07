@@ -140,6 +140,8 @@ data class MainUiState(
     val pttEnabled: Boolean = true,
     val pttContinuousSession: Boolean = false,
     val pttTransmissionHistory: List<PttTransmissionUi> = emptyList(),
+    val spokenPttName: String = "",
+    val spokenPttIdentityEnabled: Boolean = false,
     val unreadMessageCount: Int = 0,
     val emergencyComposerVisible: Boolean = false,
     val emergencyRecording: Boolean = false,
@@ -180,6 +182,7 @@ class MainViewModel @Inject constructor(
     private val routingSpeechToText: RoutingSpeechToText,
     private val localAppDataStore: LocalAppDataStore,
     private val pttModePreferences: PttModePreferences,
+    private val voiceIdentityPreferences: com.tactical.app.di.VoiceIdentityPreferences,
     private val uiLanguagePreferences: UiLanguagePreferences,
     private val mmsTtsPlaybackPreferences: com.tactical.platform.speech.mms.MmsTtsPlaybackPreferences,
     private val mmsTtsPlaybackCoordinator: com.tactical.platform.speech.mms.MmsTtsPlaybackCoordinator,
@@ -209,6 +212,8 @@ class MainViewModel @Inject constructor(
             sentMessages = localAppDataStore.loadSentMessages()
                 .map(::storedSentMessageToUi),
             pttEnabled = pttModePreferences.isPttEnabled,
+            spokenPttName = voiceIdentityPreferences.spokenName,
+            spokenPttIdentityEnabled = voiceIdentityPreferences.isEnabled,
             unreadMessageCount = localAppDataStore.unreadMessageCount(),
             ttsPlaybackMode = mmsTtsPlaybackPreferences.playbackMode
         )
@@ -236,7 +241,10 @@ class MainViewModel @Inject constructor(
         deviceId = DeviceId(identityStore.deviceIdValue),
         audioRecorder = audioRecorder,
         speechToText = speechToText,
-        packetBuilder = PttPacketBuilder(),
+        packetBuilder = PttPacketBuilder(
+            spokenNameProvider = { voiceIdentityPreferences.spokenName },
+            spokenNameEnabledProvider = { voiceIdentityPreferences.isEnabled }
+        ),
         meshDispatcher = PttMeshDispatcher(meshService),
         hapticFeedback = PatternedHapticFeedback(hapticEngine),
         scope = viewModelScope,
@@ -1666,6 +1674,17 @@ class MainViewModel @Inject constructor(
                 runCatching { pttController.startContinuous() }
             }
         }
+    }
+
+    fun setSpokenPttName(name: String) {
+        val cleaned = name.trim()
+        voiceIdentityPreferences.setSpokenName(cleaned)
+        _uiState.update { it.copy(spokenPttName = cleaned) }
+    }
+
+    fun setSpokenPttIdentityEnabled(enabled: Boolean) {
+        voiceIdentityPreferences.setEnabled(enabled)
+        _uiState.update { it.copy(spokenPttIdentityEnabled = enabled) }
     }
 
     fun setUsername(username: String): String? {
