@@ -133,7 +133,6 @@ def main() -> int:
             weight_type=QuantType.QInt8,
             per_channel=True,
             reduce_range=False,
-            optimize_model=False,
         )
 
         if not quantized_decoder.is_file() or quantized_decoder.stat().st_size == 0:
