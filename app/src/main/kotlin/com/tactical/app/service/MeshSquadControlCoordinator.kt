@@ -306,9 +306,6 @@ class MeshSquadControlCoordinator @Inject constructor(
         publishPending()
 
         if (approve) {
-            wifiDirectManager.allowAutoReconnectTo(request.deviceId)
-            radioTransport.allowPeer(request.deviceId)
-
             val membership = bleConnectionManager.addMeshSquadMember(
                 deviceId = request.deviceId,
                 callsign = request.callsign
@@ -316,6 +313,19 @@ class MeshSquadControlCoordinator @Inject constructor(
             if (membership is TacticalResult.Failure) {
                 return membership
             }
+
+            // Persist authorization before re-arming Wi-Fi. The Wi-Fi manager
+            // gates automatic upgrade strictly on squad membership; doing this
+            // in the opposite order creates a race where the peer is allowed
+            // but still invisible to the reconnect candidate filter.
+            wifiDirectManager.allowAutoReconnectTo(request.deviceId)
+            radioTransport.allowPeer(request.deviceId)
+
+            // The BLE link may already be ready, but note it again after the
+            // membership write so both the immediate authorization path and
+            // the periodic Wi-Fi scheduler see the freshly authorized peer.
+            wifiDirectManager.noteBlePeerConnected(request.deviceId)
+
             scope.launch {
                 runCatching {
                     bleConnectionManager.reconnectSquadMember(request.deviceId)
