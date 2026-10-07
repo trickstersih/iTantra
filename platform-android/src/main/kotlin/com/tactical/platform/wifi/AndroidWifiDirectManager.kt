@@ -90,8 +90,11 @@ class AndroidWifiDirectManager(
     // Automatic Wi-Fi upgrade needs to give Android's P2P state machine time
     // to settle after a group teardown/re-authorization. Failed attempts are
     // also backed off so we do not hammer WifiP2pManager and starve discovery.
+    @Volatile
     private var autoReconnectRetryAfterEpochMs = 0L
+    @Volatile
     private var autoReconnectFailureCount = 0
+    @Volatile
     private var autoReconnectFreshPeerAfterEpochMs = 0L
 
     /** True while Android is negotiating a P2P connection, including on the passive peer. */
