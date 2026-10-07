@@ -25,7 +25,11 @@ class PttPacketBuilder(
         ) {
             val name = spokenNameProvider().trim()
             val (inWord, outWord) = radioProcedureWords(chunk.languageCode)
-            "$name $inWord — $originalText — $name $outWord"
+            // Use punctuation as an intentional TTS pause. The framing
+            // words themselves are transliterated into the selected script
+            // so the receiving language-specific TTS model pronounces them
+            // as the radio words "in" and "out".
+            "$name, $inWord... $originalText ... $name, $outWord."
         } else {
             chunk.text
         }
@@ -46,15 +50,15 @@ class PttPacketBuilder(
      */
     private fun radioProcedureWords(languageCode: String): Pair<String, String> =
         when (languageCode.lowercase()) {
-            "hi" -> "अंदर" to "बाहर"
-            "gu" -> "અંદર" to "બહાર"
-            "mr" -> "आत" to "बाहेर"
-            "kn" -> "ಒಳಗೆ" to "ಹೊರಗೆ"
-            "ml" -> "അകത്ത്" to "പുറത്ത്"
-            "ta" -> "உள்ளே" to "வெளியே"
-            "te" -> "లోపల" to "బయట"
-            "or" -> "ଭିତରେ" to "ବାହାରେ"
-            "bn" -> "ভিতরে" to "বাইরে"
+            "hi" -> "इन" to "आउट"
+            "gu" -> "ઇન" to "આઉટ"
+            "mr" -> "इन" to "आउट"
+            "kn" -> "ಇನ್" to "ಔಟ್"
+            "ml" -> "ഇൻ" to "ഔട്ട്"
+            "ta" -> "இன்" to "அவுட்"
+            "te" -> "ఇన్" to "అవుట్"
+            "or" -> "ଇନ୍" to "ଆଉଟ୍"
+            "bn" -> "ইন" to "আউট"
             else -> "in" to "out"
         }
 }
