@@ -80,6 +80,7 @@ class AndroidWifiDirectManager(
     private var presenceRegistered = false
     private val managerScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val connectMutex = kotlinx.coroutines.sync.Mutex()
+    private val presenceRegistrationMutex = kotlinx.coroutines.sync.Mutex()
     private val suppressedAutoReconnectPeerIds =
         java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
     private var activePresenceServiceInfo: WifiP2pDnsSdServiceInfo? = null
@@ -518,6 +519,10 @@ class AndroidWifiDirectManager(
         advertisedDeviceId = deviceId
         advertisedCallsign = callsign
         if (identityChanged) {
+            // A retry from the previous identity must never re-advertise the
+            // old username after a rename.
+            presenceRetryJob?.cancel()
+            presenceRetryJob = null
             presenceRegistered = false
         }
         android.util.Log.d(
@@ -541,11 +546,16 @@ class AndroidWifiDirectManager(
         deviceId: String,
         callsign: String
     ) {
-        if (presenceRegistered || presenceRegistrationInProgress) return
+        if (presenceRegistered) return
 
         managerScope.launch {
+            // Resolve the identity at execution time because lifecycle callbacks
+            // can queue an older callsign immediately before a rename.
+            val currentDeviceId = advertisedDeviceId ?: deviceId
+            val currentCallsign = advertisedCallsign ?: callsign
+
             val result = runCatching {
-                registerPresenceServiceAwait(deviceId, callsign)
+                registerPresenceServiceAwait(currentDeviceId, currentCallsign)
             }.getOrElse {
                 android.util.Log.w(
                     TAG,
@@ -573,9 +583,6 @@ class AndroidWifiDirectManager(
             return
         }
 
-        val deviceId = advertisedDeviceId ?: return
-        val callsign = advertisedCallsign ?: return
-
         presenceRetryJob = managerScope.launch {
             while (
                 started.get() &&
@@ -594,6 +601,10 @@ class AndroidWifiDirectManager(
                     break
                 }
 
+                // Always use the current identity. A retry must never resurrect
+                // an obsolete username after a rename.
+                val deviceId = advertisedDeviceId ?: break
+                val callsign = advertisedCallsign ?: break
                 val result = registerPresenceServiceAwait(deviceId, callsign)
                 if (result is TacticalResult.Success) {
                     break
@@ -614,23 +625,19 @@ class AndroidWifiDirectManager(
             return TacticalResult.Failure("Wi-Fi Direct unavailable")
         }
 
-        synchronized(this) {
-            if (presenceRegistered) {
-                return TacticalResult.Success(Unit)
+        return presenceRegistrationMutex.withLock {
+            synchronized(this) {
+                if (presenceRegistered) {
+                    return@withLock TacticalResult.Success(Unit)
+                }
+                presenceRegistrationInProgress = true
             }
-            if (presenceRegistrationInProgress) {
-                // Another lifecycle callback is already registering the same
-                // service. Let the next discovery retry observe the result.
-                return TacticalResult.Success(Unit)
-            }
-            presenceRegistrationInProgress = true
-        }
 
-        return try {
-            // This is a suspend function body, so removing the previous
-            // service is performed here, outside the non-suspending Android
-            // callback used by addLocalService().
-            removeActivePresenceService()
+            try {
+                // This is a suspend function body, so removing the previous
+                // service is performed here, outside the non-suspending Android
+                // callback used by addLocalService().
+                removeActivePresenceService()
 
             val recordMap = mutableMapOf(
                 "app" to "itantra",
@@ -660,7 +667,9 @@ class AndroidWifiDirectManager(
                     synchronized(this) {
                         presenceRegistrationInProgress = false
                         if (result is TacticalResult.Success) {
-                            presenceRegistered = true
+                            presenceRegistered =
+                                advertisedDeviceId == deviceId &&
+                                    advertisedCallsign == callsign
                         }
                     }
 
@@ -721,14 +730,19 @@ class AndroidWifiDirectManager(
                     )
                 }
             }
-        } catch (e: Exception) {
-            synchronized(this) {
-                presenceRegistrationInProgress = false
+            } catch (e: Exception) {
+                synchronized(this) {
+                    presenceRegistrationInProgress = false
+                }
+                TacticalResult.Failure(
+                    "iTantra Wi-Fi service registration failed: " +
+                        (e.message ?: e.javaClass.simpleName)
+                )
+            } finally {
+                synchronized(this) {
+                    presenceRegistrationInProgress = false
+                }
             }
-            TacticalResult.Failure(
-                "iTantra Wi-Fi service registration failed: " +
-                    (e.message ?: e.javaClass.simpleName)
-            )
         }
     }
 
