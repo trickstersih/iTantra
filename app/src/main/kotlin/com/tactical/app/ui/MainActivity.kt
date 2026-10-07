@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -40,6 +41,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -66,6 +68,9 @@ class MainActivity : ComponentActivity() {
     private var runtimePermissionRequestInFlight = false
     private var meshServiceStarted = false
     private val wirelessWarning = mutableStateOf<String?>(null)
+    private val settingsHintPreferences by lazy {
+        getSharedPreferences(SETTINGS_HINT_PREFS, Context.MODE_PRIVATE)
+    }
     private val wirelessStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
@@ -121,11 +126,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        val settingsHintSeen = settingsHintPreferences.getBoolean(
+            SETTINGS_HINT_SEEN_KEY,
+            false
+        )
+
         setContent {
             RedTacticalTheme {
                 val state by viewModel.uiState.collectAsState()
                 var selectedTab by remember { mutableIntStateOf(0) }
                 var showSettings by remember { mutableStateOf(false) }
+                var showSettingsHint by remember { mutableStateOf(!settingsHintSeen) }
                 val blueTheme = true
                 val ui = com.tactical.app.ui.i18n.UiStrings.forCode(state.uiLanguageCode)
 
@@ -176,12 +187,63 @@ class MainActivity : ComponentActivity() {
                                 },
                                 actions = {
                                     if (!showSettings) {
-                                        IconButton(onClick = { showSettings = true }) {
-                                            Icon(
-                                                Icons.Default.Settings,
-                                                contentDescription = ui.text(UiTextKey.SETTINGS),
-                                                tint = Color.White
-                                            )
+                                        androidx.compose.foundation.layout.Row(
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            if (showSettingsHint) {
+                                                Surface(
+                                                    color = com.tactical.app.ui.theme.SquadBlueSurface,
+                                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                                                    border = androidx.compose.foundation.BorderStroke(
+                                                        1.dp,
+                                                        com.tactical.app.ui.theme.SquadBlueBorder
+                                                    )
+                                                ) {
+                                                    androidx.compose.foundation.layout.Row(
+                                                        modifier = Modifier
+                                                            .padding(
+                                                                horizontal = 9.dp,
+                                                                vertical = 6.dp
+                                                            ),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(
+                                                            text = ui.text(UiTextKey.SETTINGS_HINT),
+                                                            color = Color.White,
+                                                            fontSize = 11.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 2
+                                                        )
+                                                        Icon(
+                                                            imageVector = Icons.Default.ArrowForward,
+                                                            contentDescription = null,
+                                                            tint = com.tactical.app.ui.theme.SquadBlueGlow,
+                                                            modifier = Modifier
+                                                                .padding(start = 5.dp)
+                                                                .width(16.dp)
+                                                        )
+                                                    }
+                                                }
+                                            }
+
+                                            IconButton(
+                                                onClick = {
+                                                    showSettings = true
+                                                    showSettingsHint = false
+                                                    settingsHintPreferences.edit()
+                                                        .putBoolean(
+                                                            SETTINGS_HINT_SEEN_KEY,
+                                                            true
+                                                        )
+                                                        .apply()
+                                                }
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Settings,
+                                                    contentDescription = ui.text(UiTextKey.SETTINGS),
+                                                    tint = Color.White
+                                                )
+                                            }
                                         }
                                     }
                                 },
@@ -436,6 +498,11 @@ class MainActivity : ComponentActivity() {
     override fun onStop() {
         runCatching { unregisterReceiver(wirelessStateReceiver) }
         super.onStop()
+    }
+
+    companion object {
+        private const val SETTINGS_HINT_PREFS = "settings_hint_preferences"
+        private const val SETTINGS_HINT_SEEN_KEY = "settings_hint_seen"
     }
 
     private fun ensureVoiceModeIfPermissionGranted() {
