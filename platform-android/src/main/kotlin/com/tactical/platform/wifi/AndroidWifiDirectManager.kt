@@ -86,6 +86,14 @@ class AndroidWifiDirectManager(
     private var connectTargetDeviceAddress: String? = null
     private var wifiP2pListenerRegistered = false
     private var connectionAttemptInProgress = false
+
+    // Automatic Wi-Fi upgrade needs to give Android's P2P state machine time
+    // to settle after a group teardown/re-authorization. Failed attempts are
+    // also backed off so we do not hammer WifiP2pManager and starve discovery.
+    private var autoReconnectRetryAfterEpochMs = 0L
+    private var autoReconnectFailureCount = 0
+    private var autoReconnectFreshPeerAfterEpochMs = 0L
+
     /** True while Android is negotiating a P2P connection, including on the passive peer. */
     private var frameworkConnectionInProgress = false
     /** Monotonic terminal-failure signal for the currently waiting connect() call. */
@@ -1223,6 +1231,7 @@ class AndroidWifiDirectManager(
     private fun scheduleAutoReconnectAttempt() {
         if (reconnectAttemptJob?.isActive == true) return
         if (connectionAttemptInProgress) return
+        if (System.currentTimeMillis() < autoReconnectRetryAfterEpochMs) return
 
         val squadIds = squadMembershipStore.squadDeviceIds()
 
@@ -1236,6 +1245,10 @@ class AndroidWifiDirectManager(
 
         // Deterministic reconnect ownership: only one side initiates a given
         // pair's recovery. The other side remains discoverable and accepts it.
+        // After the first failed automatic attempt, require a freshly
+        // observed P2P peer before trying again. This prevents an old cached
+        // MAC from being retried while Android is still tearing down the
+        // previous group.
         val targetPeer = _peers.value
             .asSequence()
             .filter { peer ->
@@ -1243,14 +1256,21 @@ class AndroidWifiDirectManager(
                 id != null &&
                     id in candidateIds &&
                     localDeviceId.compareTo(id) < 0 &&
-                    peer.linkState != RadioLinkState.CONNECTING
+                    peer.linkState != RadioLinkState.CONNECTING &&
+                    (
+                        autoReconnectFailureCount == 0 ||
+                            peer.lastSeenEpochMs >= autoReconnectFreshPeerAfterEpochMs
+                        )
             }
             .maxByOrNull { it.lastSeenEpochMs }
 
-        // Wi-Fi can be toggled off/on faster than P2P service discovery can
-        // repopulate _peers. Reuse the persisted MAC -> iTantra-ID association
-        // as a short-lived reconnect hint; normal discovery will refresh it.
-        val fallback = if (targetPeer == null) {
+        // Only the very first automatic attempt may use the persisted address.
+        // Once Android rejects it, wait for a fresh discovery record instead of
+        // hammering the stale address.
+        val fallback = if (
+            targetPeer == null &&
+            autoReconnectFailureCount == 0
+        ) {
             candidateIds.asSequence()
                 .filter { id -> localDeviceId.compareTo(id) < 0 }
                 .mapNotNull { id ->
@@ -1266,7 +1286,8 @@ class AndroidWifiDirectManager(
         }
 
         val targetAddress = targetPeer?.deviceAddress ?: fallback?.second ?: return
-        val targetLabel = targetPeer?.callsign ?: targetPeer?.deviceName ?: fallback?.first ?: targetAddress
+        val targetLabel =
+            targetPeer?.callsign ?: targetPeer?.deviceName ?: fallback?.first ?: targetAddress
 
         reconnectAttemptJob = managerScope.launch {
             try {
@@ -1286,10 +1307,28 @@ class AndroidWifiDirectManager(
                 }
 
                 if (result is TacticalResult.Failure) {
+                    autoReconnectFailureCount = minOf(
+                        autoReconnectFailureCount + 1,
+                        AUTO_RECONNECT_MAX_FAILURES
+                    )
+                    autoReconnectRetryAfterEpochMs =
+                        System.currentTimeMillis() +
+                            autoReconnectBackoffMs(autoReconnectFailureCount)
+                    autoReconnectFreshPeerAfterEpochMs =
+                        System.currentTimeMillis()
+
                     android.util.Log.d(
                         TAG,
-                        "Wi-Fi Direct auto-reconnect failed: " + result.error
+                        "Wi-Fi Direct auto-reconnect failed: " +
+                            result.error +
+                            " retryBackoff=" +
+                            autoReconnectBackoffMs(autoReconnectFailureCount) +
+                            "ms"
                     )
+                } else {
+                    autoReconnectFailureCount = 0
+                    autoReconnectRetryAfterEpochMs = 0L
+                    autoReconnectFreshPeerAfterEpochMs = 0L
                 }
             } finally {
                 reconnectAttemptJob = null
@@ -1724,10 +1763,26 @@ class AndroidWifiDirectManager(
     }
 
     override fun allowAutoReconnectTo(deviceId: String) {
-        suppressedAutoReconnectPeerIds.remove(deviceId)
+        val wasSuppressed = suppressedAutoReconnectPeerIds.remove(deviceId)
+
+        // Re-authorization should not immediately reuse stale P2P state from
+        // the just-removed group. Only re-arm the cooldown when this call
+        // actually transitions the peer from suppressed -> allowed.
+        if (wasSuppressed) {
+            autoReconnectFailureCount = 0
+            autoReconnectFreshPeerAfterEpochMs = 0L
+            autoReconnectRetryAfterEpochMs =
+                System.currentTimeMillis() + AUTO_RECONNECT_REARM_DELAY_MS
+        }
+
         android.util.Log.d(
             TAG,
-            "Wi-Fi auto-reconnect allowed for " + deviceId
+            "Wi-Fi auto-reconnect allowed for " + deviceId +
+                if (wasSuppressed) {
+                    " (rearmed after cooldown)"
+                } else {
+                    ""
+                }
         )
     }
 
@@ -1758,6 +1813,13 @@ class AndroidWifiDirectManager(
                 it.equals(cleanedAddress, ignoreCase = true)
             }
         ) {
+            // Any successful P2P connection proves the Wi-Fi upgrade
+            // state machine has recovered. Clear automatic retry backoff so a
+            // later disconnect starts from a clean state.
+            autoReconnectFailureCount = 0
+            autoReconnectRetryAfterEpochMs = 0L
+            autoReconnectFreshPeerAfterEpochMs = 0L
+
             markPeerState(cleanedAddress, RadioLinkState.CONNECTED)
             return TacticalResult.Success(Unit)
         }
@@ -2073,8 +2135,17 @@ class AndroidWifiDirectManager(
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
         private const val AUTO_RECONNECT_INTERVAL_MS = 750L
+        private const val AUTO_RECONNECT_REARM_DELAY_MS = 2_000L
+        private const val AUTO_RECONNECT_MAX_FAILURES = 3
         private const val PEER_REFRESH_MS = 1_000L
         private const val MANUAL_ADD_DISCOVERY_TIMEOUT_MS = 6_000L
+
+        private fun autoReconnectBackoffMs(failureCount: Int): Long =
+            when (failureCount) {
+                1 -> 2_000L
+                2 -> 4_000L
+                else -> 8_000L
+            }
         private const val WIFI_IDENTITY_PREFIX = "app_id_"
     }
 }
