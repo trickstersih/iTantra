@@ -1683,10 +1683,19 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun setSpokenPttName(name: String) {
+    fun setSpokenPttName(name: String): String? {
         val cleaned = name.trim()
-        voiceIdentityPreferences.setSpokenName(cleaned)
-        _uiState.update { it.copy(spokenPttName = cleaned) }
+        if (cleaned.isBlank()) return "First name cannot be blank."
+
+        return runCatching {
+            voiceIdentityPreferences.setSpokenName(cleaned)
+        }.fold(
+            onSuccess = {
+                _uiState.update { it.copy(spokenPttName = cleaned) }
+                null
+            },
+            onFailure = { it.message ?: "Could not save first name." }
+        )
     }
 
     fun setSpokenPttIdentityEnabled(enabled: Boolean) {
