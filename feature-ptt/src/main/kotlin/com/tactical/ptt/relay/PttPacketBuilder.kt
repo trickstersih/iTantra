@@ -63,4 +63,17 @@ class PttPacketBuilder(
             "bn" -> "ইন" to "আউট"
             else -> "in" to "out"
         }
+
+    companion object {
+        const val PTT_PAUSE_MARKER = "\u2063"
+
+        /**
+         * Removes the internal pause marker for UI/storage text while keeping
+         * a normal word boundary where the marker was placed.
+         */
+        fun toDisplayText(text: String): String =
+            text.replace(PTT_PAUSE_MARKER, " ")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+    }
 }
