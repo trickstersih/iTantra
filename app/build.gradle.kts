@@ -18,11 +18,12 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Size experiment: this test APK targets modern 64-bit Android phones.
+        // Size experiment: keep both ARM ABIs so the app remains usable on
+        // both 32-bit and 64-bit ARM Android devices, including low-end hardware.
         // Google Play can later split ABIs from an AAB instead of shipping all
         // native architectures in one universal APK.
         ndk {
-            abiFilters += setOf("arm64-v8a")
+            abiFilters += setOf("armeabi-v7a", "arm64-v8a")
         }
     }
 
