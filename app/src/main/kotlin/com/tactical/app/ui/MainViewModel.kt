@@ -1063,14 +1063,24 @@ class MainViewModel @Inject constructor(
             .firstOrNull { it.deviceAddress == deviceAddress }
 
         viewModelScope.launch {
+            val connectedByTransport = radioTransport.connectedPeerIdsByTransport()
+            val liveWifiConnected =
+                deviceAddress in connectedByTransport[RadioType.WIFI_DIRECT].orEmpty()
+            val liveBleTransportConnected =
+                deviceAddress in connectedByTransport[RadioType.BLUETOOTH].orEmpty()
+
+            // Never wait on the BLE state flow when Wi-Fi is already carrying
+            // this peer. The live Wi-Fi socket is the authoritative fast path.
             val liveBleConnected =
-                deviceAddress in radioTransport
-                    .connectedPeerIdsByTransport()[RadioType.BLUETOOTH].orEmpty() ||
+                if (liveBleTransportConnected || liveWifiConnected) {
+                    liveBleTransportConnected
+                } else {
                     withTimeoutOrNull(500L) {
                         bleConnectionManager.state(deviceAddress).first {
                             it == BleLinkState.CONNECTED
                         }
                     } == BleLinkState.CONNECTED
+                }
 
             val wifiInfo = wifiDirectManager.connectionInfo().value
             val knownSameWifiGroupPeer =
@@ -1082,9 +1092,6 @@ class MainViewModel @Inject constructor(
                                 ignoreCase = true
                             )
                     )
-            val liveWifiConnected =
-                deviceAddress in radioTransport
-                    .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT].orEmpty()
             val localAlreadyInWifiGroup = wifiInfo.groupFormed
 
             val result = runCatching {
@@ -1170,39 +1177,25 @@ class MainViewModel @Inject constructor(
                         !peer.linkText.startsWith("VIA ") &&
                         peer.bleState != BleLinkState.DISCONNECTED &&
                         peer.bleState != BleLinkState.FAILED -> {
-                        // A directly discovered peer should use BLE for the
-                        // authorization request before we create a new Wi-Fi
-                        // Direct group. This keeps Add deterministic and prevents
-                        // an unapproved peer from being auto-upgraded over Wi-Fi.
-                        android.util.Log.d(
-                            "MainViewModel",
-                            "Trying direct BLE squad request before Wi-Fi: " +
-                                deviceAddress
-                        )
-                        val bleResult = withTimeoutOrNull(6_000L) {
-                            bleConnectionManager.addToSquad(deviceAddress)
-                        } ?: TacticalResult.Failure(
-                            "BLE squad request timed out"
-                        )
-
-                        if (bleResult is TacticalResult.Success) {
-                            bleResult
-                        } else if (
+                        // If Wi-Fi Direct is discoverable and there is no current
+                        // group, use Wi-Fi first for explicit Add-to-Squad. This
+                        // avoids making the user wait through the BLE reconnect
+                        // timeout when the Wi-Fi path is the available bearer.
+                        if (
                             wifiDirectManager.isWifiEnabled() &&
-                            !localAlreadyInWifiGroup
+                            !localAlreadyInWifiGroup &&
+                            peer.wifiDirectState != RadioLinkState.UNAVAILABLE
                         ) {
                             android.util.Log.d(
                                 "MainViewModel",
-                                "Direct BLE Add unavailable; falling back to Wi-Fi Direct: " +
+                                "Trying direct Wi-Fi squad request before BLE: " +
                                     deviceAddress
                             )
                             wifiDirectManager.allowAutoReconnectTo(deviceAddress)
                             val connectResult =
                                 wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
-                            if (connectResult is TacticalResult.Failure) {
-                                bleResult
-                            } else {
+                            if (connectResult is TacticalResult.Success) {
                                 val wifiReady = withTimeoutOrNull(12_000L) {
                                     while (
                                         deviceAddress !in radioTransport
@@ -1214,16 +1207,43 @@ class MainViewModel @Inject constructor(
                                     true
                                 } == true
 
-                                if (!wifiReady) {
-                                    TacticalResult.Failure(
-                                        "Wi-Fi Direct connected, but the data link did not become ready"
-                                    )
-                                } else {
+                                if (wifiReady) {
                                     meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                                } else {
+                                    android.util.Log.d(
+                                        "MainViewModel",
+                                        "Wi-Fi Direct group formed but TCP was not ready; falling back to BLE: " +
+                                            deviceAddress
+                                    )
+                                    withTimeoutOrNull(6_000L) {
+                                        bleConnectionManager.addToSquad(deviceAddress)
+                                    } ?: TacticalResult.Failure(
+                                        "BLE squad request timed out"
+                                    )
                                 }
+                            } else {
+                                android.util.Log.d(
+                                    "MainViewModel",
+                                    "Wi-Fi Direct Add unavailable; falling back to BLE: " +
+                                        deviceAddress
+                                )
+                                withTimeoutOrNull(6_000L) {
+                                    bleConnectionManager.addToSquad(deviceAddress)
+                                } ?: TacticalResult.Failure(
+                                    "BLE squad request timed out"
+                                )
                             }
                         } else {
-                            bleResult
+                            android.util.Log.d(
+                                "MainViewModel",
+                                "Trying direct BLE squad request: " +
+                                    deviceAddress
+                            )
+                            withTimeoutOrNull(6_000L) {
+                                bleConnectionManager.addToSquad(deviceAddress)
+                            } ?: TacticalResult.Failure(
+                                "BLE squad request timed out"
+                            )
                         }
                     }
 
@@ -1683,10 +1703,19 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun setSpokenPttName(name: String) {
+    fun setSpokenPttName(name: String): String? {
         val cleaned = name.trim()
-        voiceIdentityPreferences.setSpokenName(cleaned)
-        _uiState.update { it.copy(spokenPttName = cleaned) }
+        if (cleaned.isBlank()) return "First name cannot be blank."
+
+        return runCatching {
+            voiceIdentityPreferences.setSpokenName(cleaned)
+        }.fold(
+            onSuccess = {
+                _uiState.update { it.copy(spokenPttName = cleaned) }
+                null
+            },
+            onFailure = { it.message ?: "Could not save first name." }
+        )
     }
 
     fun setSpokenPttIdentityEnabled(enabled: Boolean) {
@@ -1706,8 +1735,10 @@ class MainViewModel @Inject constructor(
                     state.copy(username = cleaned)
                 }
                 viewModelScope.launch {
-                    runCatching { discoveryService.stop() }
-                    runCatching { discoveryService.start() }
+                    // Refresh the Wi-Fi presence record in place. Do not stop
+                    // and restart discovery: that unnecessarily disrupts an
+                    // already-established Wi-Fi Direct connection.
+                    runCatching { discoveryService.refreshLocalIdentity() }
                     runCatching { bleConnectionManager.announceLocalCallsign(cleaned) }
                 }
                 null

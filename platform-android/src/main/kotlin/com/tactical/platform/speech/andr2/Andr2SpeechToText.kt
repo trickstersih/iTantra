@@ -58,8 +58,18 @@ class Andr2SpeechToText @Inject constructor(
         val runtime = loadRuntime()
 
         val pcmBuffer = ByteArrayOutputStream()
+
+        // Do not feed ambient mic noise straight into andr2. The model is
+        // strong enough to turn low-energy noise into plausible words, so
+        // inference must only begin after a sustained, clearly audible onset.
+        val preSpeechFrames = ArrayDeque<AudioFrame>()
+        var preSpeechDurationMs = 0L
+        var preSpeechStrongDurationMs = 0L
+
+        var speechActive = false
         var accumulatedDurationMs = 0L
         var silenceDurationMs = 0L
+        var strongSpeechDurationMs = 0L
         var lastPartialAtMs = 0L
 
         suspend fun infer(bytes: ByteArray): String =
@@ -67,11 +77,106 @@ class Andr2SpeechToText @Inject constructor(
                 runtime.transcribe(bytes, selectedLanguage)
             }
 
+        fun resetSegment() {
+            pcmBuffer.reset()
+            preSpeechFrames.clear()
+            preSpeechDurationMs = 0L
+            preSpeechStrongDurationMs = 0L
+            speechActive = false
+            accumulatedDurationMs = 0L
+            silenceDurationMs = 0L
+            strongSpeechDurationMs = 0L
+            lastPartialAtMs = 0L
+        }
+
+        fun addPreSpeechFrame(frame: AudioFrame, strong: Boolean) {
+            preSpeechFrames.addLast(frame)
+            preSpeechDurationMs += frame.durationMs
+            if (strong) {
+                preSpeechStrongDurationMs += frame.durationMs
+            }
+
+            while (preSpeechDurationMs > PRE_SPEECH_MAX_MS) {
+                val removed = preSpeechFrames.removeFirst()
+                preSpeechDurationMs -= removed.durationMs
+                if (rmsAmplitude(removed.data) >= SPEECH_START_RMS_THRESHOLD) {
+                    preSpeechStrongDurationMs =
+                        (preSpeechStrongDurationMs - removed.durationMs).coerceAtLeast(0L)
+                }
+            }
+        }
+
+        fun startSpeechFromPreRoll() {
+            pcmBuffer.reset()
+            var durationMs = 0L
+            var strongMs = 0L
+
+            for (preSpeechFrame in preSpeechFrames) {
+                pcmBuffer.write(preSpeechFrame.data)
+                durationMs += preSpeechFrame.durationMs
+                if (rmsAmplitude(preSpeechFrame.data) >= SPEECH_START_RMS_THRESHOLD) {
+                    strongMs += preSpeechFrame.durationMs
+                }
+            }
+
+            speechActive = true
+            accumulatedDurationMs = durationMs
+            silenceDurationMs = 0L
+            strongSpeechDurationMs = strongMs
+            lastPartialAtMs = 0L
+
+            preSpeechFrames.clear()
+            preSpeechDurationMs = 0L
+            preSpeechStrongDurationMs = 0L
+        }
+
+        suspend fun finalizeSegment() {
+            if (
+                speechActive &&
+                pcmBuffer.size() > 0 &&
+                accumulatedDurationMs >= MIN_SEGMENT_MS &&
+                strongSpeechDurationMs >= MIN_STRONG_SPEECH_MS
+            ) {
+                val finalText = infer(pcmBuffer.toByteArray())
+                if (finalText.isNotBlank()) {
+                    emit(
+                        TranscriptionChunk(
+                            text = finalText,
+                            isFinal = true,
+                            languageCode = selectedLanguage
+                        )
+                    )
+                }
+            }
+
+            resetSegment()
+        }
+
         audio.collect { frame ->
+            val rms = rmsAmplitude(frame.data)
+            val strong = rms >= SPEECH_START_RMS_THRESHOLD
+            val silent = rms < SILENCE_RMS_THRESHOLD
+
+            if (!speechActive) {
+                addPreSpeechFrame(frame, strong)
+
+                if (strong) {
+                    preSpeechDurationMs =
+                        preSpeechDurationMs.coerceAtLeast(frame.durationMs)
+                    if (preSpeechStrongDurationMs >= SPEECH_START_CONFIRMATION_MS) {
+                        startSpeechFromPreRoll()
+                    }
+                }
+                return@collect
+            }
+
             pcmBuffer.write(frame.data)
             accumulatedDurationMs += frame.durationMs
 
-            val silent = rmsAmplitude(frame.data) < SILENCE_RMS_THRESHOLD
+            if (strong) {
+                strongSpeechDurationMs += frame.durationMs
+            }
+
             silenceDurationMs = if (silent) {
                 silenceDurationMs + frame.durationMs
             } else {
@@ -79,7 +184,7 @@ class Andr2SpeechToText @Inject constructor(
             }
 
             if (
-                !silent &&
+                strongSpeechDurationMs >= MIN_STRONG_SPEECH_MS &&
                 accumulatedDurationMs - lastPartialAtMs >= PARTIAL_INTERVAL_MS
             ) {
                 val partial = infer(pcmBuffer.toByteArray())
@@ -95,57 +200,22 @@ class Andr2SpeechToText @Inject constructor(
                 lastPartialAtMs = accumulatedDurationMs
             }
 
-            if (silenceDurationMs >= SILENCE_THRESHOLD_MS && pcmBuffer.size() > 0) {
-                val finalText = infer(pcmBuffer.toByteArray())
-                if (finalText.isNotBlank()) {
-                    emit(
-                        TranscriptionChunk(
-                            text = finalText,
-                            isFinal = true,
-                            languageCode = selectedLanguage
-                        )
-                    )
-                }
-
-                pcmBuffer.reset()
-                accumulatedDurationMs = 0L
-                silenceDurationMs = 0L
-                lastPartialAtMs = 0L
+            if (silenceDurationMs >= SILENCE_THRESHOLD_MS) {
+                finalizeSegment()
             }
 
             // Avoid silently dropping a long continuous utterance. andr2's
             // encoder is fixed at 10 seconds, so flush at 9 seconds when no
             // pause has occurred.
-            if (accumulatedDurationMs >= MAX_BUFFER_MS) {
-                val finalText = infer(pcmBuffer.toByteArray())
-                if (finalText.isNotBlank()) {
-                    emit(
-                        TranscriptionChunk(
-                            text = finalText,
-                            isFinal = true,
-                            languageCode = selectedLanguage
-                        )
-                    )
-                }
-
-                pcmBuffer.reset()
-                accumulatedDurationMs = 0L
-                silenceDurationMs = 0L
-                lastPartialAtMs = 0L
+            if (speechActive && accumulatedDurationMs >= MAX_BUFFER_MS) {
+                finalizeSegment()
             }
         }
 
-        if (pcmBuffer.size() > 0) {
-            val finalText = infer(pcmBuffer.toByteArray())
-            if (finalText.isNotBlank()) {
-                emit(
-                    TranscriptionChunk(
-                        text = finalText,
-                        isFinal = true,
-                        languageCode = selectedLanguage
-                    )
-                )
-            }
+        if (speechActive && pcmBuffer.size() > 0) {
+            finalizeSegment()
+        } else {
+            resetSegment()
         }
     }.flowOn(Dispatchers.Default)
 
@@ -559,8 +629,26 @@ class Andr2SpeechToText @Inject constructor(
     companion object {
         private const val SAMPLE_RATE = 16_000
         private const val FRAME_COUNT = 1_000
+
+        // 500 RMS was too permissive for the hand-trained multilingual
+        // checkpoint: mic/background noise could enter inference and produce
+        // plausible-looking hallucinations. Use a noticeably stronger onset
+        // threshold and require it to persist before declaring speech.
         private const val SILENCE_RMS_THRESHOLD = 500.0
-        private const val SILENCE_THRESHOLD_MS = 400L
+        private const val SPEECH_START_RMS_THRESHOLD = 1_200.0
+        private const val SPEECH_START_CONFIRMATION_MS = 160L
+
+        // Keep a small pre-roll so the first consonant/syllable is not cut off
+        // while still refusing to infer until the onset is sustained.
+        private const val PRE_SPEECH_MAX_MS = 220L
+
+        // Do not finalize/infer very short or barely-voiced segments.
+        private const val MIN_SEGMENT_MS = 450L
+        private const val MIN_STRONG_SPEECH_MS = 240L
+
+        // A longer silence boundary prevents ordinary intra-word / between-word
+        // pauses from turning into a stream of tiny call-mode transmissions.
+        private const val SILENCE_THRESHOLD_MS = 700L
         private const val PARTIAL_INTERVAL_MS = 1_000L
         private const val MAX_BUFFER_MS = 9_000L
         private const val MAX_OUTPUT_TOKENS = 192

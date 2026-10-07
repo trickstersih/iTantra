@@ -97,6 +97,20 @@ class DefaultDiscoveryService(
         startDiscovery()
     }
 
+    override suspend fun refreshLocalIdentity() {
+        // Callsign changes must not cycle discovery. Restarting the discovery
+        // service tears down the Wi-Fi Direct manager's lifecycle and causes
+        // an unnecessary 1–2 second disconnect/reconnect on active links.
+        if (!beaconingStarted) return
+
+        runCatching {
+            wifiDirectManager.advertisePresence(
+                localDeviceId,
+                localCallsignProvider()
+            )
+        }
+    }
+
     fun startDiscovery() {
         // Startup and permission callbacks can race. Guard job creation so
         // only one BLE scan loop and one Wi-Fi collector can exist at a time.

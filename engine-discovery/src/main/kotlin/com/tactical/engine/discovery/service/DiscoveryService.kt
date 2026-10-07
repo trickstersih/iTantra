@@ -12,4 +12,10 @@ interface DiscoveryService {
 
     /** Stops discovery and beaconing. */
     suspend fun stop()
+
+    /**
+     * Refreshes the local advertised identity without restarting discovery,
+     * BLE beaconing, or any active Wi-Fi Direct group.
+     */
+    suspend fun refreshLocalIdentity()
 }

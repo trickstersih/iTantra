@@ -152,7 +152,44 @@ class MeshSquadControlCoordinator @Inject constructor(
             timestamp = System.currentTimeMillis()
         )
 
-        val result = meshService.send(packet)
+        // Use the live physical bearer directly when one already carries
+        // this peer. The previous meshService.send() path broadcast the
+        // authorization packet to both bearers and could make Add-to-Squad
+        // wait behind an unrelated/offline radio.
+        val connectedByTransport = radioTransport.connectedPeerIdsByTransport()
+        val preferredTransport = when {
+            deviceId in connectedByTransport[RadioType.WIFI_DIRECT].orEmpty() ->
+                RadioType.WIFI_DIRECT
+            deviceId in connectedByTransport[RadioType.BLUETOOTH].orEmpty() ->
+                RadioType.BLUETOOTH
+            else -> null
+        }
+
+        val result = if (preferredTransport != null) {
+            android.util.Log.d(
+                "MeshSquadControlCoordinator",
+                "Sending squad request to " +
+                    deviceId +
+                    " directly over " +
+                    preferredTransport
+            )
+            val directResult = meshService.sendOnTransport(packet, preferredTransport)
+            if (directResult is TacticalResult.Failure) {
+                android.util.Log.d(
+                    "MeshSquadControlCoordinator",
+                    "Direct squad request failed over " +
+                        preferredTransport +
+                        "; falling back to normal mesh transport: " +
+                        directResult.error
+                )
+                meshService.send(packet)
+            } else {
+                directResult
+            }
+        } else {
+            meshService.send(packet)
+        }
+
         if (result is TacticalResult.Failure) {
             clearOutgoingRequest(requestId, deviceId)
         }
@@ -269,9 +306,6 @@ class MeshSquadControlCoordinator @Inject constructor(
         publishPending()
 
         if (approve) {
-            wifiDirectManager.allowAutoReconnectTo(request.deviceId)
-            radioTransport.allowPeer(request.deviceId)
-
             val membership = bleConnectionManager.addMeshSquadMember(
                 deviceId = request.deviceId,
                 callsign = request.callsign
@@ -279,6 +313,19 @@ class MeshSquadControlCoordinator @Inject constructor(
             if (membership is TacticalResult.Failure) {
                 return membership
             }
+
+            // Persist authorization before re-arming Wi-Fi. The Wi-Fi manager
+            // gates automatic upgrade strictly on squad membership; doing this
+            // in the opposite order creates a race where the peer is allowed
+            // but still invisible to the reconnect candidate filter.
+            wifiDirectManager.allowAutoReconnectTo(request.deviceId)
+            radioTransport.allowPeer(request.deviceId)
+
+            // The BLE link may already be ready, but note it again after the
+            // membership write so both the immediate authorization path and
+            // the periodic Wi-Fi scheduler see the freshly authorized peer.
+            wifiDirectManager.noteBlePeerConnected(request.deviceId)
+
             scope.launch {
                 runCatching {
                     bleConnectionManager.reconnectSquadMember(request.deviceId)
