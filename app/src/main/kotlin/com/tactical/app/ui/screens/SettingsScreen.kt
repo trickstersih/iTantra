@@ -86,6 +86,10 @@ fun SettingsScreen(
 ) {
     var usernameInput by remember(username) { mutableStateOf(username) }
     var usernameError by remember { mutableStateOf<String?>(null) }
+    var usernameSaved by remember { mutableStateOf(false) }
+    var spokenNameInput by remember(spokenName) { mutableStateOf(spokenName) }
+    var spokenNameError by remember { mutableStateOf<String?>(null) }
+    var spokenNameSaved by remember { mutableStateOf(false) }
     var uiLanguagePickerVisible by rememberSaveable { mutableStateOf(false) }
 
     ResponsiveScreen(
@@ -122,6 +126,7 @@ fun SettingsScreen(
                 onValueChange = {
                     usernameInput = it
                     usernameError = null
+                    usernameSaved = false
                 },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
@@ -150,8 +155,30 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(ui.dp(6.dp)))
 
+            if (usernameSaved) {
+                Text(
+                    LocalUiStrings.current.text(UiTextKey.SAVED),
+                    color = com.tactical.app.ui.theme.RedTacticalStatusGreen,
+                    fontSize = ui.sp(12f),
+                    fontWeight = FontWeight.Bold
+                )
+            } else if (usernameError != null) {
+                Text(
+                    usernameError.orEmpty(),
+                    color = Color(0xFFFF6B6B),
+                    fontSize = ui.sp(12f),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(Modifier.height(ui.dp(6.dp)))
+
             Button(
-                onClick = { usernameError = onUsernameSave(usernameInput) },
+                onClick = {
+                    val error = onUsernameSave(usernameInput)
+                    usernameError = error
+                    usernameSaved = error == null
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = SquadBluePrimary)
             ) {
                 Text(
@@ -180,11 +207,13 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(ui.sectionSpacing))
 
-            var spokenNameInput by remember(spokenName) { mutableStateOf(spokenName) }
-
             OutlinedTextField(
                 value = spokenNameInput,
-                onValueChange = { spokenNameInput = it },
+                onValueChange = {
+                    spokenNameInput = it
+                    spokenNameError = null
+                    spokenNameSaved = false
+                },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 label = { Text(LocalUiStrings.current.text(UiTextKey.FIRST_NAME)) },
@@ -203,11 +232,33 @@ fun SettingsScreen(
             Spacer(Modifier.height(ui.dp(6.dp)))
 
             Button(
-                onClick = { onSpokenNameSave(spokenNameInput) },
+                onClick = {
+                    val error = onSpokenNameSave(spokenNameInput)
+                    spokenNameError = error
+                    spokenNameSaved = error == null
+                },
                 colors = ButtonDefaults.buttonColors(containerColor = SquadBluePrimary)
             ) {
                 Text(
                     LocalUiStrings.current.text(UiTextKey.SAVE_SPOKEN_NAME),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(Modifier.height(ui.dp(6.dp)))
+
+            if (spokenNameSaved) {
+                Text(
+                    LocalUiStrings.current.text(UiTextKey.SAVED),
+                    color = com.tactical.app.ui.theme.RedTacticalStatusGreen,
+                    fontSize = ui.sp(12f),
+                    fontWeight = FontWeight.Bold
+                )
+            } else if (spokenNameError != null) {
+                Text(
+                    spokenNameError.orEmpty(),
+                    color = Color(0xFFFF6B6B),
+                    fontSize = ui.sp(12f),
                     fontWeight = FontWeight.Bold
                 )
             }
