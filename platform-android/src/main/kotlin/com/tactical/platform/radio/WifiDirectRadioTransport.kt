@@ -24,7 +24,6 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Wi-Fi Direct packet transport.
@@ -60,7 +59,6 @@ class WifiDirectRadioTransport(
 
     @Volatile
     private var serverSocket: ServerSocket? = null
-    private val serverStarting = AtomicBoolean(false)
 
     @Volatile
     private var activeGroupEndpoint: GroupEndpoint? = null
@@ -189,15 +187,12 @@ class WifiDirectRadioTransport(
         }
 
     private fun startServer() {
-        if (serverSocket != null || !serverStarting.compareAndSet(false, true)) {
-            return
-        }
+        if (serverSocket != null) return
 
         scope.launch {
             val server = try {
                 ServerSocket(TRANSPORT_PORT)
             } catch (e: IOException) {
-                serverStarting.set(false)
                 android.util.Log.w(
                     TAG,
                     "Wi-Fi Direct TCP server could not start: ${e.message}"
@@ -206,11 +201,6 @@ class WifiDirectRadioTransport(
             }
 
             serverSocket = server
-            serverStarting.set(false)
-            android.util.Log.d(
-                TAG,
-                "Wi-Fi Direct TCP server listening on port " + TRANSPORT_PORT
-            )
 
             try {
                 while (!server.isClosed) {
@@ -233,7 +223,6 @@ class WifiDirectRadioTransport(
                 if (serverSocket === server) {
                     serverSocket = null
                 }
-                serverStarting.set(false)
                 try {
                     server.close()
                 } catch (_: IOException) {
@@ -245,21 +234,12 @@ class WifiDirectRadioTransport(
     private fun connectToGroupOwner(groupOwnerAddress: String) {
         scope.launch {
             var attempt = 0
-            var consecutiveSocketFailures = 0
-            var hostUnreachableFailures = 0
 
             // Android can keep the Wi-Fi Direct group formed while the TCP
             // data socket is temporarily lost (range changes, OEM power
             // management, app restart, etc.). Keep repairing the socket for as
             // long as this is still the active group instead of giving up
-            // after a few disconnects.
-            //
-            // A repeated EHOSTUNREACH/"No route to host" is different: it means
-            // the local phone is holding a stale P2P route, commonly after the
-            // remote phone toggles Wi-Fi. In that case continuing to retry the
-            // same group owner address can leave us stuck forever because the
-            // manager still reports groupFormed=true and therefore will not
-            // enter its normal auto-reconnect path.
+            // after five disconnects.
             while (true) {
                 val info = wifiDirectManager.connectionInfo().value
                 if (
@@ -302,8 +282,6 @@ class WifiDirectRadioTransport(
                     )
                     registerSocket(socket)
                     sendHello(socket)
-                    consecutiveSocketFailures = 0
-                    hostUnreachableFailures = 0
                     android.util.Log.d(
                         TAG,
                         "Wi-Fi Direct group-owner socket connected on attempt " +
@@ -311,71 +289,13 @@ class WifiDirectRadioTransport(
                     )
                     readLoop(socket)
                 } catch (e: IOException) {
-                    val message = e.message ?: "I/O error"
-                    val hostUnreachable =
-                        message.contains("EHOSTUNREACH", ignoreCase = true) ||
-                            message.contains("No route to host", ignoreCase = true)
-                    val connectionRefused =
-                        message.contains("ECONNREFUSED", ignoreCase = true) ||
-                            message.contains("Connection refused", ignoreCase = true)
-                    val connectionTimedOut =
-                        message.contains("timed out", ignoreCase = true) ||
-                            message.contains("timeout", ignoreCase = true)
-
-                    consecutiveSocketFailures += 1
-                    if (hostUnreachable) {
-                        hostUnreachableFailures += 1
-                    } else {
-                        hostUnreachableFailures = 0
-                    }
-
                     android.util.Log.d(
                         TAG,
                         "Wi-Fi Direct group-owner socket attempt " +
                             attempt +
                             " failed: " +
-                            message +
-                            " consecutiveFailures=" +
-                            consecutiveSocketFailures +
-                            " hostUnreachableFailures=" +
-                            hostUnreachableFailures
+                            (e.message ?: "I/O error")
                     )
-
-                    val shouldRebuildGroup =
-                        hostUnreachableFailures >= STALE_GROUP_ROUTE_FAILURES ||
-                            (connectionRefused &&
-                                consecutiveSocketFailures >= CONNECTION_REFUSED_GROUP_FAILURES) ||
-                            (connectionTimedOut &&
-                                consecutiveSocketFailures >= CONNECTION_TIMEOUT_GROUP_FAILURES)
-
-                    if (shouldRebuildGroup) {
-                        val reason = when {
-                            hostUnreachable ->
-                                "repeated EHOSTUNREACH/No route to host"
-                            connectionRefused ->
-                                "repeated ECONNREFUSED/Connection refused"
-                            else ->
-                                "repeated TCP connection timeouts"
-                        }
-
-                        android.util.Log.w(
-                            TAG,
-                            "Wi-Fi Direct application transport appears unhealthy after " +
-                                reason +
-                                "; rebuilding the local P2P group"
-                        )
-
-                        runCatching {
-                            wifiDirectManager.disconnect()
-                        }.onFailure { error ->
-                            android.util.Log.w(
-                                TAG,
-                                "Wi-Fi Direct unhealthy-group recovery failed: " +
-                                    (error.message ?: error.javaClass.simpleName)
-                            )
-                        }
-                        return@launch
-                    }
                 } finally {
                     removeSocket(socket)
                 }
@@ -627,16 +547,6 @@ class WifiDirectRadioTransport(
 
     companion object {
         private const val TAG = "WifiDirectRadioTransport"
-        private const val STALE_GROUP_ROUTE_FAILURES = 3
-        // A freshly formed group can legitimately refuse the TCP socket several
-        // times while the group owner application finishes bringing up port 8988.
-        // Historical successful connections required up to 11 refusals, so keep
-        // this threshold just above that startup behavior before rebuilding the
-        // whole P2P group.
-        private const val CONNECTION_REFUSED_GROUP_FAILURES = 12
-        // A connect timeout already costs the full socket timeout, so three
-        // consecutive timeouts are enough evidence that the P2P group is unusable.
-        private const val CONNECTION_TIMEOUT_GROUP_FAILURES = 3
         private const val TRANSPORT_PORT = 8988
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val SOCKET_CONNECT_ATTEMPTS = 5
