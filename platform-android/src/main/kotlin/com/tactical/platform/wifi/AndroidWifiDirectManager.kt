@@ -1805,27 +1805,36 @@ class AndroidWifiDirectManager(
     }
 
     override fun allowAutoReconnectTo(deviceId: String) {
+        if (deviceId.isBlank() || deviceId == localDeviceId) return
+
         val wasSuppressed = suppressedAutoReconnectPeerIds.remove(deviceId)
 
-        // Re-authorization should not immediately reuse stale P2P state from
-        // the just-removed group. Only re-arm the cooldown when this call
-        // actually transitions the peer from suppressed -> allowed.
-        if (wasSuppressed) {
-            autoReconnectFailureCount = 0
-            autoReconnectFreshPeerAfterEpochMs = 0L
-            autoReconnectRetryAfterEpochMs =
-                System.currentTimeMillis() + AUTO_RECONNECT_REARM_DELAY_MS
-        }
+        // Every successful squad re-authorization is a fresh opportunity for
+        // Wi-Fi upgrade. Do not let a failed attempt from an older
+        // authorization/reconnection cycle poison the newly authorized peer
+        // with stale backoff or fresh-peer gates.
+        autoReconnectFailureCount = 0
+        autoReconnectFreshPeerAfterEpochMs = 0L
+        autoReconnectRetryAfterEpochMs =
+            System.currentTimeMillis() + AUTO_RECONNECT_REARM_DELAY_MS
 
         android.util.Log.d(
             TAG,
             "Wi-Fi auto-reconnect allowed for " + deviceId +
                 if (wasSuppressed) {
-                    " (rearmed after cooldown)"
+                    " (rearmed after authorization)"
                 } else {
-                    ""
+                    " (retry state reset after authorization)"
                 }
         )
+
+        // The authorization event can happen after the normal 750 ms loop has
+        // already checked for candidates. Kick the scheduler immediately;
+        // the two-second settle delay above still prevents an immediate
+        // connect() against a just-torn-down P2P group.
+        if (started.get() && wifiManager.isWifiEnabled) {
+            scheduleAutoReconnectAttempt()
+        }
     }
 
     override suspend fun connect(deviceAddress: String): TacticalResult<Unit> =
