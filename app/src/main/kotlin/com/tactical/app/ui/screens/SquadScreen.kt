@@ -64,6 +64,14 @@ fun SquadScreen(
     val connectedPeers = uiState.squadPeers.filter { it.isConnected }
     val squadOfflinePeers = uiState.squadPeers.filter { !it.isConnected }
     val hasConnection = connectedPeers.isNotEmpty()
+
+    // The global P2P group can linger briefly during teardown/reconnect even
+    // when every squad peer is currently reachable only over BLE. Wi-Fi-only
+    // topology UI must follow the peer's actual transport state, not the raw
+    // Android group flag.
+    val wifiUiActive = connectedPeers.any {
+        it.wifiDirectState == com.tactical.domain.identity.RadioLinkState.CONNECTED
+    }
     val pttButtonEnabled = uiState.pttEnabled &&
         hasConnection &&
         uiState.pttSessionState != SessionState.TRANSMITTING &&
@@ -618,7 +626,7 @@ fun SquadScreen(
             }
         }
 
-        if (uiState.wifiDirectGroupFormed) {
+        if (wifiUiActive) {
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -726,7 +734,10 @@ fun SquadScreen(
                 PeerCard(
                     ui = ui,
                     peer = peer,
-                    isWifiGroupHead = uiState.wifiDirectGroupFormed &&
+                    isWifiGroupHead =
+                        wifiUiActive &&
+                        peer.wifiDirectState ==
+                            com.tactical.domain.identity.RadioLinkState.CONNECTED &&
                         peer.deviceAddress.equals(
                             uiState.wifiDirectGroupOwnerAppDeviceId,
                             ignoreCase = true
@@ -1197,7 +1208,9 @@ fun PeerCard(
             DropdownMenuItem(
                 text = {
                     Text(
-                        LocalUiStrings.current.text(UiTextKey.REMOVE_FROM_SQUAD),
+                        LocalUiStrings.current.text(
+                            UiTextKey.REMOVE_FROM_SQUAD
+                        ),
                         color = SquadHoldRedGlow,
                         fontSize = ui.sp(10f),
                         fontWeight = FontWeight.ExtraBold,

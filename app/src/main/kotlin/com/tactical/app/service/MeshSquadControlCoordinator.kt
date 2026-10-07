@@ -127,7 +127,9 @@ class MeshSquadControlCoordinator @Inject constructor(
             return TacticalResult.Success(Unit)
         }
 
-        wifiDirectManager.allowAutoReconnectTo(deviceId)
+        // A re-add request is authorization only. Do not lift Wi-Fi removal
+        // suppression before the target accepts; doing so can immediately start
+        // a competing Wi-Fi reconnect while the request is still pending.
         radioTransport.allowPeer(deviceId)
 
         if (outgoingRequestIdsByDeviceId[deviceId]?.isNotEmpty() == true) {
@@ -192,6 +194,11 @@ class MeshSquadControlCoordinator @Inject constructor(
             return result
         }
 
+        // This relationship has now been authoritatively removed. Stop the
+        // background Wi-Fi upgrade/reconnect path before closing the bearer so
+        // a still-live BLE link cannot immediately resurrect the Wi-Fi group.
+        wifiDirectManager.suppressAutoReconnectTo(deviceId)
+
         // Only the Wi-Fi Direct group owner owns the physical links to all
         // group members. When the head removes one member, tell every other
         // squad member in that same Wi-Fi group so they can invalidate any
@@ -230,8 +237,31 @@ class MeshSquadControlCoordinator @Inject constructor(
             timestamp = System.currentTimeMillis()
         )
 
-        val result = meshService.send(response)
+        // Prefer the physical bearer on which the requester is currently
+        // reachable. A direct BLE request must not be answered through the
+        // composite BLE+Wi-Fi broadcast path, because the unrelated Wi-Fi
+        // failure can turn a healthy BLE response into "both bearers failed".
+        val connectedByTransport = radioTransport.connectedPeerIdsByTransport()
+        val responseTransport = when {
+            request.deviceId in connectedByTransport[RadioType.BLUETOOTH].orEmpty() ->
+                RadioType.BLUETOOTH
+            request.deviceId in connectedByTransport[RadioType.WIFI_DIRECT].orEmpty() ->
+                RadioType.WIFI_DIRECT
+            else -> null
+        }
+
+        val result = if (responseTransport != null) {
+            meshService.sendOnTransport(response, responseTransport)
+        } else {
+            meshService.send(response)
+        }
+
         if (result is TacticalResult.Failure) {
+            // The local authorization decision is complete even when its
+            // acknowledgement cannot currently be delivered. Clear the pending
+            // card so the same request cannot become an infinite UI loop.
+            pendingByRequestId.remove(request.requestId)
+            publishPending()
             return result
         }
 
@@ -446,6 +476,9 @@ class MeshSquadControlCoordinator @Inject constructor(
         // even if local membership has already drifted, so a stale UI/store
         // cannot keep the peer in the squad after a valid REMOVE packet.
         squadMembershipStore.remove(packet.sender.value)
+        // A remote REMOVE is equally authoritative: suppress automatic Wi-Fi
+        // resurrection before closing the current physical relationship.
+        wifiDirectManager.suppressAutoReconnectTo(packet.sender.value)
 
         // The REMOVE packet itself may have arrived over the current Wi-Fi
         // socket. Close that link after applying the membership change and

@@ -698,6 +698,11 @@ class MainViewModel @Inject constructor(
                         if (
                             invalidatedAt != null &&
                                 device.link == LinkType.RELAYED &&
+                                immediateRelayId != null &&
+                                (
+                                    immediateRelayId in liveBleIds ||
+                                        immediateRelayId in liveWifiIds
+                                    ) &&
                                 device.lastSeen.toEpochMilli() >
                                     invalidatedAt + WIFI_ROUTE_RESTORE_GRACE_MS
                         ) {
@@ -705,6 +710,10 @@ class MainViewModel @Inject constructor(
                                 relayRouteKey,
                                 invalidatedAt
                             )
+                            // The global peer invalidation was only needed
+                            // while no valid route existed. A fresh route
+                            // proves that the peer is reachable again.
+                            invalidatedWifiRelayPeerIds.remove(id)
                         }
 
                         val previousRelayedRoute =
@@ -1048,18 +1057,90 @@ class MainViewModel @Inject constructor(
                         }
                     } == BleLinkState.CONNECTED
 
+            val wifiInfo = wifiDirectManager.connectionInfo().value
+            val knownSameWifiGroupPeer =
+                wifiInfo.groupFormed &&
+                    (
+                        deviceAddress in _uiState.value.wifiDirectDiscoveredGroupMemberIds ||
+                            deviceAddress.equals(
+                                _uiState.value.wifiDirectGroupOwnerAppDeviceId,
+                                ignoreCase = true
+                            )
+                    )
+            val liveWifiConnected =
+                deviceAddress in radioTransport
+                    .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT].orEmpty()
+            val localAlreadyInWifiGroup = wifiInfo.groupFormed
+
             val result = runCatching {
                 when {
                     // A live BLE session always wins over stale UI topology or
                     // remembered Wi-Fi state. Wi-Fi is only an automatic upgrade
                     // performed by WifiDirectManager after BLE is already connected.
-                    liveBleConnected ||
-                        deviceAddress in radioTransport.connectedPeerIds() -> {
+                    liveBleConnected -> {
+                        // A direct BLE link must use the BLE squad-request control
+                        // protocol. Do not wrap it in a mesh packet: doing so sends
+                        // the response through CompositeRadioTransport and can fail
+                        // on the Wi-Fi bearer even though BLE is healthy.
                         android.util.Log.d(
                             "MainViewModel",
-                            "Adding peer through existing BLE transport: " + deviceAddress
+                            "Adding peer through existing BLE squad-request transport: " +
+                                deviceAddress
+                        )
+                        bleConnectionManager.addToSquad(deviceAddress)
+                    }
+
+                    // A peer that is already in this P2P group must
+                    // use the existing iTantra Wi-Fi data path. Never ask
+                    // Android to negotiate another P2P group from the head.
+                    knownSameWifiGroupPeer && liveWifiConnected -> {
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Adding same-group Wi-Fi peer through existing transport: " +
+                                deviceAddress
                         )
                         meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
+                    liveWifiConnected -> {
+                        // The P2P/TCP path is already live. The discovery UI may
+                        // still be one beacon behind, so physical reachability
+                        // wins and the request is sent immediately.
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Adding peer through existing Wi-Fi squad-request transport: " +
+                                deviceAddress
+                        )
+                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                    }
+
+                    knownSameWifiGroupPeer && !liveWifiConnected -> {
+                        // Android can report the group before WifiDirectRadioTransport
+                        // has completed its TCP hello. Wait for the actual data link
+                        // instead of forcing the user to tap Add a second time.
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Waiting for same-group Wi-Fi data link before squad request: " +
+                                deviceAddress
+                        )
+                        val ready = withTimeoutOrNull(10_000L) {
+                            while (
+                                deviceAddress !in radioTransport
+                                    .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
+                                    .orEmpty()
+                            ) {
+                                delay(100L)
+                            }
+                            true
+                        } == true
+
+                        if (ready) {
+                            meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                        } else {
+                            TacticalResult.Failure(
+                                "Wi-Fi peer is already in the current group but its data link did not become ready"
+                            )
+                        }
                     }
 
                     peer != null &&
@@ -1069,16 +1150,95 @@ class MainViewModel @Inject constructor(
                         meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
                     }
 
+                    peer != null &&
+                        peer.linkText != "RELAYED" &&
+                        !peer.linkText.startsWith("VIA ") &&
+                        peer.bleState != BleLinkState.DISCONNECTED &&
+                        peer.bleState != BleLinkState.FAILED -> {
+                        // A directly discovered peer should use BLE for the
+                        // authorization request before we create a new Wi-Fi
+                        // Direct group. This keeps Add deterministic and prevents
+                        // an unapproved peer from being auto-upgraded over Wi-Fi.
+                        android.util.Log.d(
+                            "MainViewModel",
+                            "Trying direct BLE squad request before Wi-Fi: " +
+                                deviceAddress
+                        )
+                        val bleResult = withTimeoutOrNull(6_000L) {
+                            bleConnectionManager.addToSquad(deviceAddress)
+                        } ?: TacticalResult.Failure(
+                            "BLE squad request timed out"
+                        )
+
+                        if (bleResult is TacticalResult.Success) {
+                            bleResult
+                        } else if (
+                            wifiDirectManager.isWifiEnabled() &&
+                            !localAlreadyInWifiGroup
+                        ) {
+                            android.util.Log.d(
+                                "MainViewModel",
+                                "Direct BLE Add unavailable; falling back to Wi-Fi Direct: " +
+                                    deviceAddress
+                            )
+                            wifiDirectManager.allowAutoReconnectTo(deviceAddress)
+                            val connectResult =
+                                wifiDirectManager.connectByAppDeviceId(deviceAddress)
+
+                            if (connectResult is TacticalResult.Failure) {
+                                bleResult
+                            } else {
+                                val wifiReady = withTimeoutOrNull(12_000L) {
+                                    while (
+                                        deviceAddress !in radioTransport
+                                            .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
+                                            .orEmpty()
+                                    ) {
+                                        delay(100L)
+                                    }
+                                    true
+                                } == true
+
+                                if (!wifiReady) {
+                                    TacticalResult.Failure(
+                                        "Wi-Fi Direct connected, but the data link did not become ready"
+                                    )
+                                } else {
+                                    meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                                }
+                            }
+                        } else {
+                            bleResult
+                        }
+                    }
+
                     // A live physical bearer is authoritative. This is used for
                     // both BLE-only and Wi-Fi-only tests even when discovery state
                     // still contains an older/stale entry for the other bearer.
                     deviceAddress in radioTransport.connectedPeerIds() -> {
+                        // Prefer the actual connected bearer. Direct BLE requests
+                        // must stay on the BLE control plane; Wi-Fi Direct requests
+                        // use the mesh control plane so they can be relayed/targeted.
+                        val connectedWifi = deviceAddress in radioTransport
+                            .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
+                            .orEmpty()
+                        val connectedBle = deviceAddress in radioTransport
+                            .connectedPeerIdsByTransport()[RadioType.BLUETOOTH]
+                            .orEmpty()
+
                         android.util.Log.d(
                             "MainViewModel",
                             "Adding already-connected peer via existing transport: " +
-                                deviceAddress
+                                deviceAddress +
+                                " wifi=" + connectedWifi +
+                                " ble=" + connectedBle
                         )
-                        meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+
+                        if (connectedWifi && !connectedBle) {
+                            meshSquadControlCoordinator.requestAddToSquad(deviceAddress)
+                        } else {
+                            bleConnectionManager.addToSquad(deviceAddress)
+                        }
                     }
 
                     // When Wi-Fi Direct is available, prefer it for an
@@ -1086,8 +1246,21 @@ class MainViewModel @Inject constructor(
                     // showing only the peer's BLE beacon. connectByAppDeviceId()
                     // can recover the Wi-Fi MAC from the manager's persisted
                     // identity cache and can wait for fresh P2P rediscovery.
+                    // A Wi-Fi head/member cannot create a second P2P
+                    // group while already attached to one. Do not tear down or
+                    // disturb the current group just because a nearby external
+                    // peer is discoverable. The external peer must initiate
+                    // joining this existing group (or use BLE).
+                    localAlreadyInWifiGroup &&
+                        !knownSameWifiGroupPeer &&
+                        !liveWifiConnected -> {
+                        TacticalResult.Failure(
+                            "Already connected to a Wi-Fi Direct group; peer must join the existing group"
+                        )
+                    }
+
                     wifiDirectManager.isWifiEnabled() &&
-                        peer?.bleState != BleLinkState.CONNECTED -> {
+                        !localAlreadyInWifiGroup -> {
                         // Wi-Fi suppression is cleared only when the user is
                         // actually attempting a Wi-Fi re-add.
                         wifiDirectManager.allowAutoReconnectTo(deviceAddress)
@@ -1096,14 +1269,28 @@ class MainViewModel @Inject constructor(
                             wifiDirectManager.connectByAppDeviceId(deviceAddress)
 
                         if (connectResult is TacticalResult.Failure) {
-                            // Do not silently switch back to BLE while Wi-Fi is
-                            // enabled. The explicit add should exercise the
-                            // requested Wi-Fi path and surface the real failure
-                            // when Wi-Fi identity/discovery is unavailable.
-                            connectResult
+                            // Wi-Fi identity/discovery can legitimately lag behind
+                            // the BLE discovery path during startup. Fall back to the
+                            // direct BLE squad-request path before reporting Add failed.
+                            val bleFallback = runCatching {
+                                bleConnectionManager.addToSquad(deviceAddress)
+                            }.getOrElse {
+                                TacticalResult.Failure(
+                                    it.message ?: it.javaClass.simpleName
+                                )
+                            }
+                            if (bleFallback is TacticalResult.Success) {
+                                bleFallback
+                            } else {
+                                connectResult
+                            }
                         } else {
-                            val ready = withTimeoutOrNull(5_000L) {
-                                while (deviceAddress !in radioTransport.connectedPeerIds()) {
+                            val ready = withTimeoutOrNull(12_000L) {
+                                while (
+                                    deviceAddress !in radioTransport
+                                        .connectedPeerIdsByTransport()[RadioType.WIFI_DIRECT]
+                                        .orEmpty()
+                                ) {
                                     delay(100L)
                                 }
                                 true
@@ -1214,6 +1401,10 @@ class MainViewModel @Inject constructor(
     fun removePeerFromSquad(deviceAddress: String) {
         viewModelScope.launch {
             val result = runCatching {
+                // The selected peer is a true squad-removal target. The
+                // Wi-Fi-head logic inside the coordinator separately notifies
+                // the target's other Wi-Fi peers so their relay route goes
+                // offline, without changing their squad membership.
                 meshSquadControlCoordinator.removeFromSquad(deviceAddress)
             }.getOrElse {
                 TacticalResult.Failure(
@@ -1222,9 +1413,6 @@ class MainViewModel @Inject constructor(
             }
 
             if (result is TacticalResult.Success) {
-                // Keep the peer's persisted identity so it immediately remains
-                // available on Home after squad removal. The discovery pipeline
-                // will refresh/remove it normally based on physical presence.
                 recentlyRemovedFromSquadIds.add(deviceAddress)
                 refreshSquadPeers()
             } else {
@@ -1237,7 +1425,6 @@ class MainViewModel @Inject constructor(
             }
         }
     }
-
     private fun refreshSquadPeers() {
         val squadIds = squadMembershipStore.squadDeviceIds()
         val storedById = localAppDataStore

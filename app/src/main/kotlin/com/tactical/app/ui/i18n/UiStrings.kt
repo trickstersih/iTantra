@@ -99,6 +99,7 @@ class UiStrings private constructor(
         UiTextKey.IN_SQUAD_DOT to "In squad • ",
         UiTextKey.SIGNAL to "Signal",
         UiTextKey.REMOVE_FROM_SQUAD to "REMOVE FROM SQUAD",
+
         UiTextKey.UNKNOWN to "Unknown",
         UiTextKey.SENT to "Sent",
         UiTextKey.SENDING_DOT to "Sending…",
@@ -224,6 +225,7 @@ class UiStrings private constructor(
         UiTextKey.IN_SQUAD_DOT to "स्क्वाड में • ",
         UiTextKey.SIGNAL to "सिग्नल",
         UiTextKey.REMOVE_FROM_SQUAD to "स्क्वाड से हटाएँ",
+
         UiTextKey.UNKNOWN to "अज्ञात",
         UiTextKey.SENT to "भेजा गया",
         UiTextKey.SENDING_DOT to "भेजा जा रहा है…",
@@ -332,6 +334,7 @@ class UiStrings private constructor(
         UiTextKey.ALL_SQUAD_CONNECTED to "બધા સ્ક્વોડ સભ્યો કનેક્ટેડ છે",
         UiTextKey.SIGNAL to "સિગ્નલ",
         UiTextKey.REMOVE_FROM_SQUAD to "સ્ક્વોડમાંથી દૂર કરો",
+
         UiTextKey.UNKNOWN to "અજ્ઞાત",
         UiTextKey.SENT to "મોકલાયું",
         UiTextKey.SENDING_DOT to "મોકલાઈ રહ્યું છે…",
@@ -421,6 +424,7 @@ class UiStrings private constructor(
         UiTextKey.ALL_SQUAD_CONNECTED to "सर्व स्क्वाड सदस्य कनेक्टेड आहेत",
         UiTextKey.SIGNAL to "सिग्नल",
         UiTextKey.REMOVE_FROM_SQUAD to "स्क्वाडमधून काढा",
+
         UiTextKey.UNKNOWN to "अज्ञात",
         UiTextKey.SENT to "पाठवले",
         UiTextKey.SENDING_DOT to "पाठवत आहे…",
@@ -510,6 +514,7 @@ class UiStrings private constructor(
         UiTextKey.ALL_SQUAD_CONNECTED to "ಎಲ್ಲಾ ಸ್ಕ್ವಾಡ್ ಸದಸ್ಯರು ಸಂಪರ್ಕಿತರಾಗಿದ್ದಾರೆ",
         UiTextKey.SIGNAL to "ಸಿಗ್ನಲ್",
         UiTextKey.REMOVE_FROM_SQUAD to "ಸ್ಕ್ವಾಡ್‌ನಿಂದ ತೆಗೆದುಹಾಕಿ",
+
         UiTextKey.UNKNOWN to "ಅಜ್ಞಾತ",
         UiTextKey.SENT to "ಕಳುಹಿಸಲಾಗಿದೆ",
         UiTextKey.SENDING_DOT to "ಕಳುಹಿಸಲಾಗುತ್ತಿದೆ…",
@@ -599,6 +604,7 @@ class UiStrings private constructor(
         UiTextKey.ALL_SQUAD_CONNECTED to "എല്ലാ സ്ക്വാഡ് അംഗങ്ങളും കണക്റ്റുചെയ്തിരിക്കുന്നു",
         UiTextKey.SIGNAL to "സിഗ്നൽ",
         UiTextKey.REMOVE_FROM_SQUAD to "സ്ക്വാഡിൽ നിന്ന് നീക്കംചെയ്യുക",
+
         UiTextKey.UNKNOWN to "അജ്ഞാതം",
         UiTextKey.SENT to "അയച്ചു",
         UiTextKey.SENDING_DOT to "അയയ്ക്കുന്നു…",
@@ -688,6 +694,7 @@ class UiStrings private constructor(
         UiTextKey.ALL_SQUAD_CONNECTED to "அனைத்து ஸ்க்வாட் உறுப்பினர்களும் இணைக்கப்பட்டுள்ளனர்",
         UiTextKey.SIGNAL to "சிக்னல்",
         UiTextKey.REMOVE_FROM_SQUAD to "ஸ்க்வாடிலிருந்து அகற்றவும்",
+
         UiTextKey.UNKNOWN to "தெரியவில்லை",
         UiTextKey.SENT to "அனுப்பப்பட்டது",
         UiTextKey.SENDING_DOT to "அனுப்புகிறது…",
@@ -777,6 +784,7 @@ class UiStrings private constructor(
         UiTextKey.ALL_SQUAD_CONNECTED to "అన్ని స్క్వాడ్ సభ్యులు కనెక్ట్ అయ్యారు",
         UiTextKey.SIGNAL to "సిగ్నల్",
         UiTextKey.REMOVE_FROM_SQUAD to "స్క్వాడ్ నుండి తొలగించండి",
+
         UiTextKey.UNKNOWN to "తెలియదు",
         UiTextKey.SENT to "పంపబడింది",
         UiTextKey.SENDING_DOT to "పంపుతోంది…",
@@ -866,6 +874,7 @@ class UiStrings private constructor(
         UiTextKey.ALL_SQUAD_CONNECTED to "ସମସ୍ତ ସ୍କ୍ୱାଡ୍ ସଦସ୍ୟ ସଂଯୁକ୍ତ",
         UiTextKey.SIGNAL to "ସିଗ୍ନାଲ୍",
         UiTextKey.REMOVE_FROM_SQUAD to "ସ୍କ୍ୱାଡ୍‌ରୁ ହଟାନ୍ତୁ",
+
         UiTextKey.UNKNOWN to "ଅଜ୍ଞାତ",
         UiTextKey.SENT to "ପଠାଯାଇଛି",
         UiTextKey.SENDING_DOT to "ପଠାଉଛି…",
@@ -955,6 +964,7 @@ class UiStrings private constructor(
         UiTextKey.ALL_SQUAD_CONNECTED to "সব স্কোয়াড সদস্য সংযুক্ত",
         UiTextKey.SIGNAL to "সিগন্যাল",
         UiTextKey.REMOVE_FROM_SQUAD to "স্কোয়াড থেকে সরান",
+
         UiTextKey.UNKNOWN to "অজানা",
         UiTextKey.SENT to "পাঠানো হয়েছে",
         UiTextKey.SENDING_DOT to "পাঠানো হচ্ছে…",

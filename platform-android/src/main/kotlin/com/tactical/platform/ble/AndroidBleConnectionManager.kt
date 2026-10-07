@@ -27,6 +27,7 @@ import com.tactical.platform.api.squad.SquadMembershipStore
 import com.tactical.platform.api.wifi.WifiDirectManager
 import com.tactical.platform.radio.BleConnectionRegistry
 import com.tactical.platform.radio.BleRadioTransport
+import com.tactical.platform.api.radio.RadioTransport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,7 +52,8 @@ class AndroidBleConnectionManager(
     private val registry: BleConnectionRegistry,
     private val localDeviceId: String,
     private val squadMembershipStore: SquadMembershipStore,
-    private val wifiDirectManager: WifiDirectManager
+    private val wifiDirectManager: WifiDirectManager,
+    private val radioTransport: RadioTransport
 ) : BleConnectionManager, BleConnectionRegistry.ConnectionListener {
 
     private val states = ConcurrentHashMap<String, MutableStateFlow<BleLinkState>>()
@@ -341,6 +343,16 @@ class AndroidBleConnectionManager(
 
         if (approve) {
             rememberSquadMember(request.deviceId, knownAddress)
+            // Approval completes the application-level authorization. Clear
+            // both the Wi-Fi manager reconnect gate and the Wi-Fi TCP
+            // intentional-disconnect latch before the automatic upgrade runs.
+            wifiDirectManager.allowAutoReconnectTo(request.deviceId)
+            radioTransport.allowPeer(request.deviceId)
+            android.util.Log.d(
+                TAG,
+                "BLE squad request approved; Wi-Fi transport re-enabled for " +
+                    request.deviceId
+            )
             setState(knownAddress, BleLinkState.CONNECTED)
         } else {
             setState(knownAddress, BleLinkState.AVAILABLE)
@@ -786,6 +798,10 @@ class AndroidBleConnectionManager(
                 if (message.deviceId == localDeviceId) return
                 rememberAddress(message.deviceId, address)
                 if (message.deviceId in squadDeviceIds()) {
+                    // This is an implicit authorization for an already-authorized
+                    // squad peer. Re-enable the Wi-Fi TCP transport too, otherwise
+                    // a previous REMOVE can leave its socket-level suppression latched.
+                    radioTransport.allowPeer(message.deviceId)
                     reconnectScope.launch {
                         sendControlWithRetry(
                             address,
@@ -811,6 +827,16 @@ class AndroidBleConnectionManager(
                 rememberAddress(message.deviceId, address)
                 if (message.accepted) {
                     rememberSquadMember(message.deviceId, address)
+                    // The BLE response is the authorization event. Clear BOTH
+                    // Wi-Fi manager reconnect suppression and the Wi-Fi TCP
+                    // transport's intentional-disconnect latch.
+                    wifiDirectManager.allowAutoReconnectTo(message.deviceId)
+                    radioTransport.allowPeer(message.deviceId)
+                    android.util.Log.d(
+                        TAG,
+                        "BLE squad authorization accepted; Wi-Fi transport re-enabled for " +
+                            message.deviceId
+                    )
                     setState(address, BleLinkState.CONNECTED)
                 } else {
                     setState(address, BleLinkState.AVAILABLE)

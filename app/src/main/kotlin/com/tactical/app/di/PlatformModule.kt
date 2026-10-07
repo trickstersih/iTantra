@@ -92,14 +92,16 @@ object PlatformModule {
         registry: com.tactical.platform.radio.BleConnectionRegistry,
         identityStore: DeviceIdentityStore,
         squadMembershipStore: SquadMembershipStore,
-        wifiDirectManager: WifiDirectManager
+        wifiDirectManager: WifiDirectManager,
+        radioTransport: com.tactical.platform.api.radio.RadioTransport
     ): BleConnectionManager =
         AndroidBleConnectionManager(
             context = context,
             registry = registry,
             localDeviceId = identityStore.deviceIdValue,
             squadMembershipStore = squadMembershipStore,
-            wifiDirectManager = wifiDirectManager
+            wifiDirectManager = wifiDirectManager,
+            radioTransport = radioTransport
         )
 
     @Provides
