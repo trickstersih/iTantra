@@ -17,6 +17,7 @@ import com.tactical.emergency.squelch.SquelchBreaker
 import com.tactical.engine.discovery.service.DiscoveryService
 import com.tactical.engine.mesh.service.MeshService
 import com.tactical.platform.speech.mms.MmsTtsLanguage
+import com.tactical.ptt.relay.PttPacketBuilder
 import com.tactical.platform.speech.mms.MmsTtsPlaybackCoordinator
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -167,12 +168,13 @@ class TacticalMeshService : Service() {
                             localAppDataStore.callsignForPeer(packet.sender.value)
                                 ?: packet.sender.value.take(8)
                         val isVoiceMessage = packet.languageCode != "und"
+                        val displayText = PttPacketBuilder.toDisplayText(packet.text)
 
                         val isNewMessage = localAppDataStore.saveReceivedMessage(
                             com.tactical.app.di.StoredReceivedMessage(
                                 senderId = packet.sender.value,
                                 senderName = senderName,
-                                text = packet.text,
+                                text = displayText,
                                 timestampEpochMs = packet.timestamp,
                                 isVoice = isVoiceMessage,
                                 isCallMode = packet.isCallMode
@@ -182,7 +184,7 @@ class TacticalMeshService : Service() {
                         if (isNewMessage) {
                             messageNotificationNotifier.show(
                                 senderName = senderName,
-                                message = packet.text,
+                                message = displayText,
                                 isVoice = isVoiceMessage
                             )
                         }
