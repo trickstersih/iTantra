@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.tactical.app.di.DeviceIdentityStore
 import com.tactical.app.di.LocalAppDataStore
 import com.tactical.app.di.PttModePreferences
+import com.tactical.app.di.VoiceNameLocalizer
 import com.tactical.app.di.UiLanguagePreferences
 import com.tactical.app.di.StoredPairedDevice
 import com.tactical.app.di.StoredReceivedMessage
@@ -183,6 +184,7 @@ class MainViewModel @Inject constructor(
     private val localAppDataStore: LocalAppDataStore,
     private val pttModePreferences: PttModePreferences,
     private val voiceIdentityPreferences: com.tactical.app.di.VoiceIdentityPreferences,
+    private val voiceNameLocalizer: VoiceNameLocalizer,
     private val uiLanguagePreferences: UiLanguagePreferences,
     private val mmsTtsPlaybackPreferences: com.tactical.platform.speech.mms.MmsTtsPlaybackPreferences,
     private val mmsTtsPlaybackCoordinator: com.tactical.platform.speech.mms.MmsTtsPlaybackCoordinator,
@@ -242,7 +244,12 @@ class MainViewModel @Inject constructor(
         audioRecorder = audioRecorder,
         speechToText = speechToText,
         packetBuilder = PttPacketBuilder(
-            spokenNameProvider = { voiceIdentityPreferences.spokenName },
+            spokenNameProvider = { languageCode ->
+                voiceNameLocalizer.toSpeechName(
+                    voiceIdentityPreferences.spokenName,
+                    languageCode
+                )
+            },
             spokenNameEnabledProvider = { voiceIdentityPreferences.isEnabled }
         ),
         meshDispatcher = PttMeshDispatcher(meshService),
