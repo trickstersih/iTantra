@@ -249,7 +249,10 @@ class AndroidWifiDirectManager(
 
                     if (enabled && wifiManager.isWifiEnabled) {
                         _state.value = RadioLinkState.AVAILABLE
+                        resetAutoReconnectRecoveryState()
                         ensureAutoReconnectLoop()
+                        kickPeerDiscovery("P2P enabled")
+                        scheduleAutoReconnectAfterRadioRecovery("P2P enabled")
                         advertisedDeviceId?.let { id ->
                             advertisedCallsign?.let { callsign ->
                                 registerPresenceServiceAsync(id, callsign)
@@ -270,7 +273,10 @@ class AndroidWifiDirectManager(
                     if (wifiState == WifiManager.WIFI_STATE_ENABLED) {
                         if (started.get()) {
                             _state.value = RadioLinkState.AVAILABLE
+                            resetAutoReconnectRecoveryState()
                             ensureAutoReconnectLoop()
+                            kickPeerDiscovery("Wi-Fi enabled")
+                            scheduleAutoReconnectAfterRadioRecovery("Wi-Fi enabled")
                             advertisedDeviceId?.let { id ->
                                 advertisedCallsign?.let { callsign ->
                                     registerPresenceServiceAsync(id, callsign)
@@ -327,8 +333,11 @@ class AndroidWifiDirectManager(
                         !connectionAttemptInProgress &&
                         !_connectionInfo.value.groupFormed
                     ) {
+                        resetAutoReconnectRecoveryState()
+                        kickPeerDiscovery("P2P disconnected")
+                        scheduleAutoReconnectAfterRadioRecovery("P2P disconnected")
                         managerScope.launch {
-                            delay(300L)
+                            delay(100L)
                             startServiceDiscoveryInternal()
                         }
                     }
@@ -1218,35 +1227,91 @@ class AndroidWifiDirectManager(
 
         autoReconnectJob = managerScope.launch {
             while (started.get()) {
-                if (
-                    wifiManager.isWifiEnabled &&
-                    hasWifiDirectPermission() &&
-                    isLocationModeEnabled() &&
-                    !_connectionInfo.value.groupFormed
-                ) {
-                    // Keep the normal peer/service discovery session alive.
-                    // Do not call discoverPeers() on every reconnect tick:
-                    // repeatedly restarting the P2P discovery operation can
-                    // starve DNS-SD service callbacks on some OEM stacks.
+                try {
                     if (
-                        !serviceDiscoveryStarted &&
-                        serviceRequest == null &&
-                        !serviceDiscoveryStarting.get() &&
-                        !connectionAttemptInProgress &&
-                        !frameworkConnectionInProgress
+                        wifiManager.isWifiEnabled &&
+                        hasWifiDirectPermission() &&
+                        isLocationModeEnabled() &&
+                        !_connectionInfo.value.groupFormed
                     ) {
-                        startServiceDiscoveryInternal()
-                    }
+                        // Keep the normal peer/service discovery session alive.
+                        // Do not call discoverPeers() on every reconnect tick:
+                        // repeatedly restarting the P2P discovery operation can
+                        // starve DNS-SD service callbacks on some OEM stacks.
+                        if (
+                            !serviceDiscoveryStarted &&
+                            serviceRequest == null &&
+                            !serviceDiscoveryStarting.get() &&
+                            !connectionAttemptInProgress &&
+                            !frameworkConnectionInProgress
+                        ) {
+                            startServiceDiscoveryInternal()
+                        }
 
-                    // Reconnect checks stay fast, but discovery itself is
-                    // started/stopped only when its lifecycle actually needs it.
-                    scheduleAutoReconnectAttempt()
+                        // Reconnect checks stay fast. The explicit radio/group
+                        // recovery callbacks also schedule an immediate attempt,
+                        // so a recovery never has to wait for the next maintenance
+                        // cycle to notice that the link is gone.
+                        scheduleAutoReconnectAttempt()
+                    }
+                } catch (t: Throwable) {
+                    android.util.Log.w(
+                        TAG,
+                        "Wi-Fi Direct auto-reconnect loop recovered from an exception: " +
+                            (t.message ?: t.javaClass.simpleName)
+                    )
                 }
 
                 delay(AUTO_RECONNECT_INTERVAL_MS)
             }
 
             autoReconnectJob = null
+        }
+    }
+
+    /**
+     * Clear retry/backoff state after the underlying Wi-Fi radio or P2P group
+     * has been torn down. A new group is a new recovery attempt; do not carry
+     * an old failed-connect cooldown into it.
+     */
+    private fun resetAutoReconnectRecoveryState() {
+        autoReconnectFailureCount = 0
+        autoReconnectRetryAfterEpochMs = 0L
+        autoReconnectFreshPeerAfterEpochMs = 0L
+    }
+
+    /**
+     * Fast recovery path used directly by radio/group lifecycle callbacks.
+     * Reuse the persisted MAC immediately when DNS-SD has not repopulated the
+     * peer list yet, while still keeping the normal deterministic UUID owner.
+     */
+    private fun scheduleAutoReconnectAfterRadioRecovery(reason: String) {
+        if (
+            !started.get() ||
+            !wifiManager.isWifiEnabled ||
+            !hasWifiDirectPermission() ||
+            !isLocationModeEnabled() ||
+            _connectionInfo.value.groupFormed ||
+            connectionAttemptInProgress
+        ) {
+            return
+        }
+
+        managerScope.launch {
+            delay(100L)
+            if (
+                !started.get() ||
+                !wifiManager.isWifiEnabled ||
+                !hasWifiDirectPermission() ||
+                !isLocationModeEnabled() ||
+                _connectionInfo.value.groupFormed ||
+                connectionAttemptInProgress
+            ) {
+                return@launch
+            }
+
+            kickPeerDiscovery("fast reconnect: " + reason)
+            scheduleAutoReconnectAttempt()
         }
     }
 
@@ -1502,12 +1567,20 @@ class AndroidWifiDirectManager(
                         !connectionAttemptInProgress &&
                         !frameworkConnectionInProgress
                     ) {
+                        // A lost group starts a completely new recovery cycle.
+                        // Clear any previous failed-attempt backoff so the known
+                        // squad peer can be retried immediately after discovery
+                        // or from its persisted Wi-Fi address.
+                        resetAutoReconnectRecoveryState()
+                        kickPeerDiscovery("group lost")
+                        scheduleAutoReconnectAfterRadioRecovery("group lost")
+
                         // Some OEM stacks drop the P2P discovery engine together
                         // with the group without sending a discovery-changed
                         // broadcast. Rebuild our discovery bookkeeping explicitly.
                         removeServiceRequest()
                         managerScope.launch {
-                            delay(250L)
+                            delay(100L)
                             startServiceDiscoveryInternal()
                         }
                     }
@@ -2009,6 +2082,7 @@ class AndroidWifiDirectManager(
                 )
             }
 
+            resetAutoReconnectRecoveryState()
             markPeerState(cleanedAddress, RadioLinkState.CONNECTED)
             return TacticalResult.Success(Unit)
         } finally {
