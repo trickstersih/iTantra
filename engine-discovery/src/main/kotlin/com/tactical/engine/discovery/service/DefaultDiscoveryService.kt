@@ -126,11 +126,16 @@ class DefaultDiscoveryService(
                                 val appDeviceId = peer.appDeviceId ?: return@forEach
                                 if (appDeviceId == localDeviceId) return@forEach
 
+                                val callsign = peer.callsign
+                                    ?.trim()
+                                    ?.takeIf { it.isNotBlank() }
+                                    ?: return@forEach
+
                                 runCatching {
                                     catalog.upsert(
                                         DeviceNode(
                                             id = DeviceId(appDeviceId),
-                                            callsign = peer.callsign ?: peer.deviceName,
+                                            callsign = callsign,
                                             rssi = 0,
                                             lastSeen = java.time.Instant.ofEpochMilli(
                                                 peer.lastSeenEpochMs.takeIf { it > 0L }
