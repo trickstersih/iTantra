@@ -526,8 +526,14 @@ class Andr2SpeechToText @Inject constructor(
             File(root, "encoder_int8.onnx").absolutePath,
             OrtSession.SessionOptions()
         )
+        val decoderFile = listOf("decoder_int8.onnx", "decoder_fp32.onnx")
+            .asSequence()
+            .map { File(root, it) }
+            .firstOrNull { it.isFile && it.length() > 0L }
+            ?: error("andr2 decoder model is missing")
+
         val loadedDecoder = environment.createSession(
-            File(root, "decoder_fp32.onnx").absolutePath,
+            decoderFile.absolutePath,
             OrtSession.SessionOptions()
         )
 
