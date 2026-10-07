@@ -78,6 +78,10 @@ fun SettingsScreen(
     onTtsPlaybackModeSelected: (com.tactical.platform.speech.mms.MmsTtsPlaybackMode) -> Unit,
     username: String,
     onUsernameSave: (String) -> String?,
+    spokenName: String,
+    spokenNameEnabled: Boolean,
+    onSpokenNameSave: (String) -> Unit,
+    onSpokenNameEnabledChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var usernameInput by remember(username) { mutableStateOf(username) }
@@ -153,6 +157,86 @@ fun SettingsScreen(
                 Text(
                     LocalUiStrings.current.text(UiTextKey.SAVE_USERNAME),
                     fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(Modifier.height(ui.dp(24.dp)))
+
+            Text(
+                LocalUiStrings.current.text(UiTextKey.SPOKEN_PTT_IDENTITY),
+                color = Color.White,
+                fontSize = ui.sp(22f),
+                fontWeight = FontWeight.ExtraBold,
+                letterSpacing = ui.sp(1f)
+            )
+
+            Spacer(Modifier.height(ui.dp(6.dp)))
+
+            Text(
+                LocalUiStrings.current.text(UiTextKey.SPOKEN_PTT_IDENTITY_DESC),
+                color = RedTacticalTextSecondary,
+                fontSize = ui.sp(12f)
+            )
+
+            Spacer(Modifier.height(ui.sectionSpacing))
+
+            var spokenNameInput by remember(spokenName) { mutableStateOf(spokenName) }
+
+            OutlinedTextField(
+                value = spokenNameInput,
+                onValueChange = { spokenNameInput = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text(LocalUiStrings.current.text(UiTextKey.FIRST_NAME)) },
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedContainerColor = SquadBlueSurface,
+                    unfocusedContainerColor = SquadBlueSurface,
+                    focusedTextColor = Color.White,
+                    unfocusedTextColor = Color.White,
+                    focusedLabelColor = SquadBluePrimary,
+                    unfocusedLabelColor = RedTacticalTextSecondary,
+                    focusedBorderColor = SquadBluePrimary,
+                    unfocusedBorderColor = SquadBlueBorder
+                )
+            )
+
+            Spacer(Modifier.height(ui.dp(6.dp)))
+
+            Button(
+                onClick = { onSpokenNameSave(spokenNameInput) },
+                colors = ButtonDefaults.buttonColors(containerColor = SquadBluePrimary)
+            ) {
+                Text(
+                    LocalUiStrings.current.text(UiTextKey.SAVE_SPOKEN_NAME),
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(Modifier.height(ui.dp(6.dp)))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.SPOKEN_PTT_IDENTITY_TOGGLE),
+                        color = Color.White,
+                        fontSize = ui.sp(14f),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(Modifier.height(ui.dp(2.dp)))
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.SPOKEN_PTT_IDENTITY_TOGGLE_DESC),
+                        color = RedTacticalTextSecondary,
+                        fontSize = ui.sp(11f)
+                    )
+                }
+
+                androidx.compose.material3.Switch(
+                    checked = spokenNameEnabled,
+                    onCheckedChange = onSpokenNameEnabledChange
                 )
             }
 
