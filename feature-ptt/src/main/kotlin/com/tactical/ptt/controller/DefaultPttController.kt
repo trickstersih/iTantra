@@ -374,6 +374,15 @@ class DefaultPttController(
 
     private suspend fun transmit(session: PttSession, chunk: TranscriptionChunk) {
         val packet = packetBuilder.build(session, chunk)
+
+        // Show the exact framed text the user is sending, not only the raw
+        // transcription. The internal pause marker stays hidden from the UI.
+        _state.update {
+            it.copy(
+                lastTranscription = PttPacketBuilder.toDisplayText(packet.text)
+            )
+        }
+
         val result = meshDispatcher.dispatch(packet)
         _state.update { it.copy(lastResult = result) }
 

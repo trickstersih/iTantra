@@ -8,6 +8,7 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import com.tactical.domain.audio.AudioFrame
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -244,6 +245,19 @@ class MmsTtsEngine @Inject constructor(
                     }
                     offset += written
                 }
+
+                // write() only guarantees that samples were accepted by
+                // AudioTrack; stopping immediately can cut off the buffered
+                // tail. This became especially noticeable when a framed PTT
+                // message was synthesized as three separate audio segments.
+                val totalFrames = frame.data.size / 2
+                while (
+                    track.playState == AudioTrack.PLAYSTATE_PLAYING &&
+                    track.playbackHeadPosition < totalFrames
+                ) {
+                    delay(10L)
+                }
+
                 track.stop()
             } finally {
                 track.release()

@@ -47,10 +47,15 @@ class MmsTtsPlaybackCoordinator @Inject constructor(
         val text: String
     )
 
+    private data class SynthesizedPart(
+        val frame: AudioFrame,
+        val sampleRate: Int,
+        val pauseAfterMs: Long = 0L
+    )
+
     private data class Synthesized(
         val senderId: String,
-        val frame: AudioFrame,
-        val sampleRate: Int
+        val parts: List<SynthesizedPart>
     )
 
     private val requestQueue = Channel<Request>(Channel.UNLIMITED)
@@ -106,16 +111,34 @@ class MmsTtsPlaybackCoordinator @Inject constructor(
     private suspend fun synthesizeLoop() {
         for (request in requestQueue) {
             try {
-                val (frame, result) = ttsEngine.synthesize(
-                    request.language,
-                    request.text
-                )
+                val segments = request.text.split(PTT_PAUSE_MARKER)
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+
+                val parts = buildList {
+                    segments.forEachIndexed { index, segment ->
+                        val (frame, result) = ttsEngine.synthesize(
+                            request.language,
+                            segment
+                        )
+                        add(
+                            SynthesizedPart(
+                                frame = frame,
+                                sampleRate = result.sampleRate,
+                                pauseAfterMs = if (index < segments.lastIndex) {
+                                    PTT_PAUSE_MS
+                                } else {
+                                    0L
+                                }
+                            )
+                        )
+                    }
+                }
 
                 synthesizedQueue.send(
                     Synthesized(
                         senderId = request.senderId,
-                        frame = frame,
-                        sampleRate = result.sampleRate
+                        parts = parts
                     )
                 )
             } catch (error: kotlinx.coroutines.CancellationException) {
@@ -161,10 +184,15 @@ class MmsTtsPlaybackCoordinator @Inject constructor(
 
     private suspend fun runPlaybackSafely(synthesized: Synthesized) {
         try {
-            ttsEngine.play(
-                synthesized.frame,
-                synthesized.sampleRate
-            )
+            synthesized.parts.forEach { part ->
+                ttsEngine.play(
+                    part.frame,
+                    part.sampleRate
+                )
+                if (part.pauseAfterMs > 0L) {
+                    kotlinx.coroutines.delay(part.pauseAfterMs)
+                }
+            }
         } catch (error: kotlinx.coroutines.CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -179,5 +207,12 @@ class MmsTtsPlaybackCoordinator @Inject constructor(
     companion object {
         private const val TAG = "MmsTtsPlayback"
         private const val SYNTHESIZED_BUFFER_CAPACITY = 2
+
+        // Same invisible marker inserted by PttPacketBuilder. The TTS model
+        // never sees this marker because synthesis happens per segment.
+        private const val PTT_PAUSE_MARKER = "\u2063"
+
+        // Deliberate silence between "in", the message, and "out".
+        private const val PTT_PAUSE_MS = 400L
     }
 }
