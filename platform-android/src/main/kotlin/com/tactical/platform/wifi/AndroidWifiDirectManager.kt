@@ -2286,7 +2286,7 @@ class AndroidWifiDirectManager(
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
         private const val AUTO_RECONNECT_INTERVAL_MS = 750L
-        private const val FAST_RECONNECT_WINDOW_MS = 15_000L
+        private const val FAST_RECONNECT_WINDOW_MS = 30_000L
         private const val AUTO_RECONNECT_REARM_DELAY_MS = 2_000L
         private const val AUTO_RECONNECT_MAX_FAILURES = 3
         private const val PEER_REFRESH_MS = 1_000L
