@@ -59,6 +59,7 @@ class WifiDirectRadioTransport(
 
     @Volatile
     private var serverSocket: ServerSocket? = null
+    private val serverStarting = AtomicBoolean(false)
 
     @Volatile
     private var activeGroupEndpoint: GroupEndpoint? = null
@@ -187,12 +188,15 @@ class WifiDirectRadioTransport(
         }
 
     private fun startServer() {
-        if (serverSocket != null) return
+        if (serverSocket != null || !serverStarting.compareAndSet(false, true)) {
+            return
+        }
 
         scope.launch {
             val server = try {
                 ServerSocket(TRANSPORT_PORT)
             } catch (e: IOException) {
+                serverStarting.set(false)
                 android.util.Log.w(
                     TAG,
                     "Wi-Fi Direct TCP server could not start: ${e.message}"
@@ -201,6 +205,7 @@ class WifiDirectRadioTransport(
             }
 
             serverSocket = server
+            serverStarting.set(false)
             android.util.Log.d(
                 TAG,
                 "Wi-Fi Direct TCP server listening on port " + TRANSPORT_PORT
@@ -227,6 +232,7 @@ class WifiDirectRadioTransport(
                 if (serverSocket === server) {
                     serverSocket = null
                 }
+                serverStarting.set(false)
                 try {
                     server.close()
                 } catch (_: IOException) {
