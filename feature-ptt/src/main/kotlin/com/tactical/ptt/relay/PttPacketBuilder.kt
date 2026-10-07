@@ -13,7 +13,7 @@ import com.tactical.ptt.session.PttSession
  * isCallMode=true.
  */
 class PttPacketBuilder(
-    private val spokenNameProvider: () -> String = { "" },
+    private val spokenNameProvider: (languageCode: String) -> String = { "" },
     private val spokenNameEnabledProvider: () -> Boolean = { false }
 ) {
     fun build(session: PttSession, chunk: TranscriptionChunk): TextPacket {
@@ -23,13 +23,13 @@ class PttPacketBuilder(
             spokenNameEnabledProvider() &&
             spokenNameProvider().isNotBlank()
         ) {
-            val name = spokenNameProvider().trim()
+            val name = spokenNameProvider(chunk.languageCode).trim()
             val (inWord, outWord) = radioProcedureWords(chunk.languageCode)
-            // Use punctuation as an intentional TTS pause. The framing
-            // words themselves are transliterated into the selected script
-            // so the receiving language-specific TTS model pronounces them
-            // as the radio words "in" and "out".
-            "$name, $inWord... $originalText ... $name, $outWord."
+
+            // This invisible separator is consumed by the receiving TTS
+            // playback coordinator and becomes a real audio gap. It is
+            // intentionally invisible in the chat/notification UI.
+            "$name, $inWord$PTT_PAUSE_MARKER$originalText$PTT_PAUSE_MARKER$name, $outWord."
         } else {
             chunk.text
         }
