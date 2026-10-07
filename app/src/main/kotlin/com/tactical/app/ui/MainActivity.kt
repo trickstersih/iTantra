@@ -223,7 +223,11 @@ class MainActivity : ComponentActivity() {
                                     ttsPlaybackMode = state.ttsPlaybackMode,
                                     onTtsPlaybackModeSelected = viewModel::setTtsPlaybackMode,
                                     username = state.username,
-                                    onUsernameSave = viewModel::setUsername
+                                    onUsernameSave = viewModel::setUsername,
+                                    spokenName = state.spokenPttName,
+                                    spokenNameEnabled = state.spokenPttIdentityEnabled,
+                                    onSpokenNameSave = viewModel::setSpokenPttName,
+                                    onSpokenNameEnabledChange = viewModel::setSpokenPttIdentityEnabled
                                 )
                             } else {
                                 when (selectedTab) {
