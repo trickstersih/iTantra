@@ -152,7 +152,44 @@ class MeshSquadControlCoordinator @Inject constructor(
             timestamp = System.currentTimeMillis()
         )
 
-        val result = meshService.send(packet)
+        // Use the live physical bearer directly when one already carries
+        // this peer. The previous meshService.send() path broadcast the
+        // authorization packet to both bearers and could make Add-to-Squad
+        // wait behind an unrelated/offline radio.
+        val connectedByTransport = radioTransport.connectedPeerIdsByTransport()
+        val preferredTransport = when {
+            deviceId in connectedByTransport[RadioType.WIFI_DIRECT].orEmpty() ->
+                RadioType.WIFI_DIRECT
+            deviceId in connectedByTransport[RadioType.BLUETOOTH].orEmpty() ->
+                RadioType.BLUETOOTH
+            else -> null
+        }
+
+        val result = if (preferredTransport != null) {
+            android.util.Log.d(
+                "MeshSquadControlCoordinator",
+                "Sending squad request to " +
+                    deviceId +
+                    " directly over " +
+                    preferredTransport
+            )
+            val directResult = meshService.sendOnTransport(packet, preferredTransport)
+            if (directResult is TacticalResult.Failure) {
+                android.util.Log.d(
+                    "MeshSquadControlCoordinator",
+                    "Direct squad request failed over " +
+                        preferredTransport +
+                        "; falling back to normal mesh transport: " +
+                        directResult.error
+                )
+                meshService.send(packet)
+            } else {
+                directResult
+            }
+        } else {
+            meshService.send(packet)
+        }
+
         if (result is TacticalResult.Failure) {
             clearOutgoingRequest(requestId, deviceId)
         }
