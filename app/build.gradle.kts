@@ -17,6 +17,13 @@ android {
         versionName = "1.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // Size experiment: this test APK targets modern 64-bit Android phones.
+        // Google Play can later split ABIs from an AAB instead of shipping all
+        // native architectures in one universal APK.
+        ndk {
+            abiFilters += setOf("arm64-v8a")
+        }
     }
 
     buildTypes {
