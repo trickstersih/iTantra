@@ -133,12 +133,8 @@ fun SettingsScreen(
                 label = { Text(LocalUiStrings.current.text(UiTextKey.USERNAME)) },
                 supportingText = {
                     Text(
-                        usernameError ?: LocalUiStrings.current.text(UiTextKey.MAX_CALLSIGN),
-                        color = if (usernameError != null) {
-                            SquadBluePrimary
-                        } else {
-                            RedTacticalTextSecondary
-                        }
+                        LocalUiStrings.current.text(UiTextKey.MAX_CALLSIGN),
+                        color = RedTacticalTextSecondary
                     )
                 },
                 colors = OutlinedTextFieldDefaults.colors(
