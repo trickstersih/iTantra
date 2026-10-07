@@ -662,7 +662,7 @@ class AndroidWifiDirectManager(
                 recordMap.toMap()
             )
 
-            suspendCancellableCoroutine { continuation ->
+            suspendCancellableCoroutine<TacticalResult<Unit>> { continuation ->
                 fun finish(result: TacticalResult<Unit>) {
                     synchronized(this) {
                         presenceRegistrationInProgress = false
