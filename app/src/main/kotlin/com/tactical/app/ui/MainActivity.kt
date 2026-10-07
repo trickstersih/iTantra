@@ -68,9 +68,6 @@ class MainActivity : ComponentActivity() {
     private var runtimePermissionRequestInFlight = false
     private var meshServiceStarted = false
     private val wirelessWarning = mutableStateOf<String?>(null)
-    private val settingsHintPreferences by lazy {
-        getSharedPreferences(SETTINGS_HINT_PREFS, Context.MODE_PRIVATE)
-    }
     private val wirelessStateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
@@ -126,23 +123,26 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val settingsHintSeen = settingsHintPreferences.getBoolean(
-            SETTINGS_HINT_SEEN_KEY,
-            false
-        )
-
         setContent {
             RedTacticalTheme {
                 val state by viewModel.uiState.collectAsState()
                 var selectedTab by remember { mutableIntStateOf(0) }
                 var showSettings by remember { mutableStateOf(false) }
-                var showSettingsHint by remember { mutableStateOf(!settingsHintSeen) }
+                var showSettingsHint by remember { mutableStateOf(true) }
                 val blueTheme = true
+
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(10_000L)
+                    showSettingsHint = false
+                }
                 val ui = com.tactical.app.ui.i18n.UiStrings.forCode(state.uiLanguageCode)
 
                 CompositionLocalProvider(LocalUiStrings provides ui) {
                 Scaffold(
                         topBar = {
+                            Box(
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
                             TopAppBar(
                                 navigationIcon = {
                                     if (showSettings) {
@@ -187,63 +187,17 @@ class MainActivity : ComponentActivity() {
                                 },
                                 actions = {
                                     if (!showSettings) {
-                                        androidx.compose.foundation.layout.Row(
-                                            verticalAlignment = Alignment.CenterVertically
+                                        IconButton(
+                                            onClick = {
+                                                showSettings = true
+                                                showSettingsHint = false
+                                            }
                                         ) {
-                                            if (showSettingsHint) {
-                                                Surface(
-                                                    color = com.tactical.app.ui.theme.SquadBlueSurface,
-                                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
-                                                    border = androidx.compose.foundation.BorderStroke(
-                                                        1.dp,
-                                                        com.tactical.app.ui.theme.SquadBlueBorder
-                                                    )
-                                                ) {
-                                                    androidx.compose.foundation.layout.Row(
-                                                        modifier = Modifier
-                                                            .padding(
-                                                                horizontal = 9.dp,
-                                                                vertical = 6.dp
-                                                            ),
-                                                        verticalAlignment = Alignment.CenterVertically
-                                                    ) {
-                                                        Text(
-                                                            text = ui.text(UiTextKey.SETTINGS_HINT),
-                                                            color = Color.White,
-                                                            fontSize = 11.sp,
-                                                            fontWeight = FontWeight.SemiBold,
-                                                            maxLines = 2
-                                                        )
-                                                        Icon(
-                                                            imageVector = Icons.Default.ArrowForward,
-                                                            contentDescription = null,
-                                                            tint = com.tactical.app.ui.theme.SquadBlueGlow,
-                                                            modifier = Modifier
-                                                                .padding(start = 5.dp)
-                                                                .width(16.dp)
-                                                        )
-                                                    }
-                                                }
-                                            }
-
-                                            IconButton(
-                                                onClick = {
-                                                    showSettings = true
-                                                    showSettingsHint = false
-                                                    settingsHintPreferences.edit()
-                                                        .putBoolean(
-                                                            SETTINGS_HINT_SEEN_KEY,
-                                                            true
-                                                        )
-                                                        .apply()
-                                                }
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.Settings,
-                                                    contentDescription = ui.text(UiTextKey.SETTINGS),
-                                                    tint = Color.White
-                                                )
-                                            }
+                                            Icon(
+                                                Icons.Default.Settings,
+                                                contentDescription = ui.text(UiTextKey.SETTINGS),
+                                                tint = Color.White
+                                            )
                                         }
                                     }
                                 },
@@ -256,6 +210,45 @@ class MainActivity : ComponentActivity() {
                                     titleContentColor = Color.White
                                 )
                             )
+
+                            if (!showSettings && showSettingsHint) {
+                                Surface(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .padding(top = 6.dp, end = 58.dp),
+                                    color = com.tactical.app.ui.theme.SquadBlueSurface,
+                                    shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                                    border = androidx.compose.foundation.BorderStroke(
+                                        1.dp,
+                                        com.tactical.app.ui.theme.SquadBlueBorder
+                                    )
+                                ) {
+                                    androidx.compose.foundation.layout.Row(
+                                        modifier = Modifier.padding(
+                                            horizontal = 9.dp,
+                                            vertical = 6.dp
+                                        ),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = ui.text(UiTextKey.SETTINGS_HINT),
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 2
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Default.ArrowForward,
+                                            contentDescription = null,
+                                            tint = com.tactical.app.ui.theme.SquadBlueGlow,
+                                            modifier = Modifier
+                                                .padding(start = 5.dp)
+                                                .width(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            }
                         },
                         bottomBar = {
                             if (!showSettings) {
@@ -501,8 +494,6 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        private const val SETTINGS_HINT_PREFS = "settings_hint_preferences"
-        private const val SETTINGS_HINT_SEEN_KEY = "settings_hint_seen"
     }
 
     private fun ensureVoiceModeIfPermissionGranted() {
