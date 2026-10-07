@@ -242,25 +242,43 @@ class DefaultPttController(
 
                     if (chunk.isFinal) {
                         if (partial.isNotBlank()) {
-                            val transmission = PttTransmission(
-                                id = UUID.randomUUID().toString(),
-                                text = partial,
-                                languageCode = chunk.languageCode.ifBlank {
-                                    session.languageTag.isoCode
-                                },
-                                timestampEpochMs = System.currentTimeMillis()
-                            )
-
-                            _state.update {
-                                it.copy(
-                                    lastTranscription = partial,
-                                    transmissions = (
-                                        it.transmissions + transmission
-                                    ).takeLast(MAX_TRANSMISSION_HISTORY)
-                                )
+                            val languageCode = chunk.languageCode.ifBlank {
+                                session.languageTag.isoCode
                             }
 
-                            sendQueue.send(transmission)
+                            // The multilingual andr2 checkpoint is much more
+                            // prone to tiny hallucinated finals than English.
+                            // Do not let Call Mode flood the mesh with short
+                            // non-English outputs faster than a human can
+                            // reasonably produce separate utterances.
+                            if (
+                                !shouldSuppressNoisyCallFinal(
+                                    text = partial,
+                                    languageCode = languageCode
+                                )
+                            ) {
+                                val transmission = PttTransmission(
+                                    id = UUID.randomUUID().toString(),
+                                    text = partial,
+                                    languageCode = languageCode,
+                                    timestampEpochMs = System.currentTimeMillis()
+                                )
+
+                                _state.update {
+                                    it.copy(
+                                        lastTranscription = partial,
+                                        transmissions = (
+                                            it.transmissions + transmission
+                                        ).takeLast(MAX_TRANSMISSION_HISTORY)
+                                    )
+                                }
+
+                                sendQueue.send(transmission)
+                            } else {
+                                _state.update {
+                                    it.copy(lastTranscription = partial)
+                                }
+                            }
                         }
                     } else if (partial.isNotBlank()) {
                         _state.update {
@@ -365,11 +383,44 @@ class DefaultPttController(
         }
     }
 
+    private var lastShortNonEnglishCallFinalAtMs = 0L
+
     private fun appendTranscript(existing: String, next: String): String {
         if (next.isBlank()) return existing
         if (existing.isBlank()) return next.trim()
         if (existing == next.trim()) return existing
         return existing.trim() + " " + next.trim()
+    }
+
+    private fun shouldSuppressNoisyCallFinal(
+        text: String,
+        languageCode: String
+    ): Boolean {
+        if (languageCode.equals("en", ignoreCase = true)) return false
+
+        val normalized = text
+            .trim()
+            .lowercase()
+            .replace(Regex("\\s+"), " ")
+
+        val wordCount = normalized
+            .split(" ")
+            .count { it.isNotBlank() }
+
+        val contentLength = normalized.count { it.isLetterOrDigit() }
+        val isShortFinal = wordCount <= 2 && contentLength < SHORT_FINAL_MAX_CHARS
+
+        if (!isShortFinal) return false
+
+        val now = System.currentTimeMillis()
+        val tooSoon = now - lastShortNonEnglishCallFinalAtMs <
+            SHORT_FINAL_MIN_GAP_MS
+
+        if (!tooSoon) {
+            lastShortNonEnglishCallFinalAtMs = now
+        }
+
+        return tooSoon
     }
 
     private suspend fun transmit(session: PttSession, chunk: TranscriptionChunk) {
@@ -394,5 +445,10 @@ class DefaultPttController(
 
     companion object {
         private const val MAX_TRANSMISSION_HISTORY = 20
+
+        // Conservative Call Mode guard for the hand-trained multilingual
+        // models. English is deliberately excluded from this filter.
+        private const val SHORT_FINAL_MAX_CHARS = 10
+        private const val SHORT_FINAL_MIN_GAP_MS = 1_200L
     }
 }
