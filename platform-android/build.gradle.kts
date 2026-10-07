@@ -64,7 +64,6 @@ dependencies {
     // On-device inference backends — `implementation`, never `api`, so
     // dependent modules (engine-speech, feature-ptt, app) never see these
     // types directly. SpeechBackendModule is the only seam.
-    implementation(libs.tensorflow.lite)
     implementation(libs.onnxruntime.android)
 
 //    testImplementation(kotlin("test"))
