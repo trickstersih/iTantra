@@ -4,6 +4,8 @@ import com.tactical.domain.packet.TextPacket
 import com.tactical.domain.speech.TranscriptionChunk
 import com.tactical.ptt.session.PttSession
 
+private const val PTT_PAUSE_MARKER = "\u2063"
+
 /**
  * Constructs a TextPacket from session metadata and a finalized
  * transcription chunk.
