@@ -201,6 +201,10 @@ class WifiDirectRadioTransport(
             }
 
             serverSocket = server
+            android.util.Log.d(
+                TAG,
+                "Wi-Fi Direct TCP server listening on port " + TRANSPORT_PORT
+            )
 
             try {
                 while (!server.isClosed) {
@@ -234,6 +238,7 @@ class WifiDirectRadioTransport(
     private fun connectToGroupOwner(groupOwnerAddress: String) {
         scope.launch {
             var attempt = 0
+            var consecutiveSocketFailures = 0
             var hostUnreachableFailures = 0
 
             // Android can keep the Wi-Fi Direct group formed while the TCP
@@ -290,6 +295,7 @@ class WifiDirectRadioTransport(
                     )
                     registerSocket(socket)
                     sendHello(socket)
+                    consecutiveSocketFailures = 0
                     hostUnreachableFailures = 0
                     android.util.Log.d(
                         TAG,
@@ -302,7 +308,14 @@ class WifiDirectRadioTransport(
                     val hostUnreachable =
                         message.contains("EHOSTUNREACH", ignoreCase = true) ||
                             message.contains("No route to host", ignoreCase = true)
+                    val connectionRefused =
+                        message.contains("ECONNREFUSED", ignoreCase = true) ||
+                            message.contains("Connection refused", ignoreCase = true)
+                    val connectionTimedOut =
+                        message.contains("timed out", ignoreCase = true) ||
+                            message.contains("timeout", ignoreCase = true)
 
+                    consecutiveSocketFailures += 1
                     if (hostUnreachable) {
                         hostUnreachableFailures += 1
                     } else {
@@ -315,22 +328,42 @@ class WifiDirectRadioTransport(
                             attempt +
                             " failed: " +
                             message +
+                            " consecutiveFailures=" +
+                            consecutiveSocketFailures +
                             " hostUnreachableFailures=" +
                             hostUnreachableFailures
                     )
 
-                    if (hostUnreachableFailures >= STALE_GROUP_ROUTE_FAILURES) {
+                    val shouldRebuildGroup =
+                        hostUnreachableFailures >= STALE_GROUP_ROUTE_FAILURES ||
+                            (connectionRefused &&
+                                consecutiveSocketFailures >= CONNECTION_REFUSED_GROUP_FAILURES) ||
+                            (connectionTimedOut &&
+                                consecutiveSocketFailures >= CONNECTION_TIMEOUT_GROUP_FAILURES)
+
+                    if (shouldRebuildGroup) {
+                        val reason = when {
+                            hostUnreachable ->
+                                "repeated EHOSTUNREACH/No route to host"
+                            connectionRefused ->
+                                "repeated ECONNREFUSED/Connection refused"
+                            else ->
+                                "repeated TCP connection timeouts"
+                        }
+
                         android.util.Log.w(
                             TAG,
-                            "Wi-Fi Direct route appears stale after repeated " +
-                                "EHOSTUNREACH; rebuilding the local P2P group"
+                            "Wi-Fi Direct application transport appears unhealthy after " +
+                                reason +
+                                "; rebuilding the local P2P group"
                         )
+
                         runCatching {
                             wifiDirectManager.disconnect()
                         }.onFailure { error ->
                             android.util.Log.w(
                                 TAG,
-                                "Wi-Fi Direct stale-group recovery failed: " +
+                                "Wi-Fi Direct unhealthy-group recovery failed: " +
                                     (error.message ?: error.javaClass.simpleName)
                             )
                         }
@@ -588,6 +621,15 @@ class WifiDirectRadioTransport(
     companion object {
         private const val TAG = "WifiDirectRadioTransport"
         private const val STALE_GROUP_ROUTE_FAILURES = 3
+        // A freshly formed group can legitimately refuse the TCP socket several
+        // times while the group owner application finishes bringing up port 8988.
+        // Historical successful connections required up to 11 refusals, so keep
+        // this threshold just above that startup behavior before rebuilding the
+        // whole P2P group.
+        private const val CONNECTION_REFUSED_GROUP_FAILURES = 12
+        // A connect timeout already costs the full socket timeout, so three
+        // consecutive timeouts are enough evidence that the P2P group is unusable.
+        private const val CONNECTION_TIMEOUT_GROUP_FAILURES = 3
         private const val TRANSPORT_PORT = 8988
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val SOCKET_CONNECT_ATTEMPTS = 5
