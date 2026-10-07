@@ -234,12 +234,20 @@ class WifiDirectRadioTransport(
     private fun connectToGroupOwner(groupOwnerAddress: String) {
         scope.launch {
             var attempt = 0
+            var hostUnreachableFailures = 0
 
             // Android can keep the Wi-Fi Direct group formed while the TCP
             // data socket is temporarily lost (range changes, OEM power
             // management, app restart, etc.). Keep repairing the socket for as
             // long as this is still the active group instead of giving up
-            // after five disconnects.
+            // after a few disconnects.
+            //
+            // A repeated EHOSTUNREACH/"No route to host" is different: it means
+            // the local phone is holding a stale P2P route, commonly after the
+            // remote phone toggles Wi-Fi. In that case continuing to retry the
+            // same group owner address can leave us stuck forever because the
+            // manager still reports groupFormed=true and therefore will not
+            // enter its normal auto-reconnect path.
             while (true) {
                 val info = wifiDirectManager.connectionInfo().value
                 if (
@@ -282,6 +290,7 @@ class WifiDirectRadioTransport(
                     )
                     registerSocket(socket)
                     sendHello(socket)
+                    hostUnreachableFailures = 0
                     android.util.Log.d(
                         TAG,
                         "Wi-Fi Direct group-owner socket connected on attempt " +
@@ -289,13 +298,44 @@ class WifiDirectRadioTransport(
                     )
                     readLoop(socket)
                 } catch (e: IOException) {
+                    val message = e.message ?: "I/O error"
+                    val hostUnreachable =
+                        message.contains("EHOSTUNREACH", ignoreCase = true) ||
+                            message.contains("No route to host", ignoreCase = true)
+
+                    if (hostUnreachable) {
+                        hostUnreachableFailures += 1
+                    } else {
+                        hostUnreachableFailures = 0
+                    }
+
                     android.util.Log.d(
                         TAG,
                         "Wi-Fi Direct group-owner socket attempt " +
                             attempt +
                             " failed: " +
-                            (e.message ?: "I/O error")
+                            message +
+                            " hostUnreachableFailures=" +
+                            hostUnreachableFailures
                     )
+
+                    if (hostUnreachableFailures >= STALE_GROUP_ROUTE_FAILURES) {
+                        android.util.Log.w(
+                            TAG,
+                            "Wi-Fi Direct route appears stale after repeated " +
+                                "EHOSTUNREACH; rebuilding the local P2P group"
+                        )
+                        runCatching {
+                            wifiDirectManager.disconnect()
+                        }.onFailure { error ->
+                            android.util.Log.w(
+                                TAG,
+                                "Wi-Fi Direct stale-group recovery failed: " +
+                                    (error.message ?: error.javaClass.simpleName)
+                            )
+                        }
+                        return@launch
+                    }
                 } finally {
                     removeSocket(socket)
                 }
@@ -547,6 +587,7 @@ class WifiDirectRadioTransport(
 
     companion object {
         private const val TAG = "WifiDirectRadioTransport"
+        private const val STALE_GROUP_ROUTE_FAILURES = 3
         private const val TRANSPORT_PORT = 8988
         private const val CONNECT_TIMEOUT_MS = 10_000
         private const val SOCKET_CONNECT_ATTEMPTS = 5
