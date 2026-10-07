@@ -80,7 +80,7 @@ fun SettingsScreen(
     onUsernameSave: (String) -> String?,
     spokenName: String,
     spokenNameEnabled: Boolean,
-    onSpokenNameSave: (String) -> Unit,
+    onSpokenNameSave: (String) -> String?,
     onSpokenNameEnabledChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
