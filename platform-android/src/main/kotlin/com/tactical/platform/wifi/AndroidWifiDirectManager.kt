@@ -96,8 +96,6 @@ class AndroidWifiDirectManager(
     private var autoReconnectFailureCount = 0
     @Volatile
     private var autoReconnectFreshPeerAfterEpochMs = 0L
-    @Volatile
-    private var fastReconnectUntilEpochMs = 0L
 
     /** True while Android is negotiating a P2P connection, including on the passive peer. */
     private var frameworkConnectionInProgress = false
@@ -251,11 +249,7 @@ class AndroidWifiDirectManager(
 
                     if (enabled && wifiManager.isWifiEnabled) {
                         _state.value = RadioLinkState.AVAILABLE
-                        resetAutoReconnectRecoveryState()
-                        armFastReconnectRecovery("P2P enabled")
                         ensureAutoReconnectLoop()
-                        kickPeerDiscovery("P2P enabled")
-                        scheduleAutoReconnectAfterRadioRecovery("P2P enabled")
                         advertisedDeviceId?.let { id ->
                             advertisedCallsign?.let { callsign ->
                                 registerPresenceServiceAsync(id, callsign)
@@ -276,11 +270,7 @@ class AndroidWifiDirectManager(
                     if (wifiState == WifiManager.WIFI_STATE_ENABLED) {
                         if (started.get()) {
                             _state.value = RadioLinkState.AVAILABLE
-                            resetAutoReconnectRecoveryState()
-                            armFastReconnectRecovery("Wi-Fi enabled")
                             ensureAutoReconnectLoop()
-                            kickPeerDiscovery("Wi-Fi enabled")
-                            scheduleAutoReconnectAfterRadioRecovery("Wi-Fi enabled")
                             advertisedDeviceId?.let { id ->
                                 advertisedCallsign?.let { callsign ->
                                     registerPresenceServiceAsync(id, callsign)
@@ -337,12 +327,8 @@ class AndroidWifiDirectManager(
                         !connectionAttemptInProgress &&
                         !_connectionInfo.value.groupFormed
                     ) {
-                        resetAutoReconnectRecoveryState()
-                        armFastReconnectRecovery("P2P disconnected")
-                        kickPeerDiscovery("P2P disconnected")
-                        scheduleAutoReconnectAfterRadioRecovery("P2P disconnected")
                         managerScope.launch {
-                            delay(100L)
+                            delay(300L)
                             startServiceDiscoveryInternal()
                         }
                     }
@@ -1232,110 +1218,35 @@ class AndroidWifiDirectManager(
 
         autoReconnectJob = managerScope.launch {
             while (started.get()) {
-                try {
+                if (
+                    wifiManager.isWifiEnabled &&
+                    hasWifiDirectPermission() &&
+                    isLocationModeEnabled() &&
+                    !_connectionInfo.value.groupFormed
+                ) {
+                    // Keep the normal peer/service discovery session alive.
+                    // Do not call discoverPeers() on every reconnect tick:
+                    // repeatedly restarting the P2P discovery operation can
+                    // starve DNS-SD service callbacks on some OEM stacks.
                     if (
-                        wifiManager.isWifiEnabled &&
-                        hasWifiDirectPermission() &&
-                        isLocationModeEnabled() &&
-                        !_connectionInfo.value.groupFormed
+                        !serviceDiscoveryStarted &&
+                        serviceRequest == null &&
+                        !serviceDiscoveryStarting.get() &&
+                        !connectionAttemptInProgress &&
+                        !frameworkConnectionInProgress
                     ) {
-                        // Keep the normal peer/service discovery session alive.
-                        // Do not call discoverPeers() on every reconnect tick:
-                        // repeatedly restarting the P2P discovery operation can
-                        // starve DNS-SD service callbacks on some OEM stacks.
-                        if (
-                            !serviceDiscoveryStarted &&
-                            serviceRequest == null &&
-                            !serviceDiscoveryStarting.get() &&
-                            !connectionAttemptInProgress &&
-                            !frameworkConnectionInProgress
-                        ) {
-                            startServiceDiscoveryInternal()
-                        }
-
-                        // Reconnect checks stay fast. The explicit radio/group
-                        // recovery callbacks also schedule an immediate attempt,
-                        // so a recovery never has to wait for the next maintenance
-                        // cycle to notice that the link is gone.
-                        scheduleAutoReconnectAttempt()
+                        startServiceDiscoveryInternal()
                     }
-                } catch (t: Throwable) {
-                    android.util.Log.w(
-                        TAG,
-                        "Wi-Fi Direct auto-reconnect loop recovered from an exception: " +
-                            (t.message ?: t.javaClass.simpleName)
-                    )
+
+                    // Reconnect checks stay fast, but discovery itself is
+                    // started/stopped only when its lifecycle actually needs it.
+                    scheduleAutoReconnectAttempt()
                 }
 
                 delay(AUTO_RECONNECT_INTERVAL_MS)
             }
 
             autoReconnectJob = null
-        }
-    }
-
-    /**
-     * Clear retry/backoff state after the underlying Wi-Fi radio or P2P group
-     * has been torn down. A new group is a new recovery attempt; do not carry
-     * an old failed-connect cooldown into it.
-     */
-    private fun resetAutoReconnectRecoveryState() {
-        autoReconnectFailureCount = 0
-        autoReconnectRetryAfterEpochMs = 0L
-        autoReconnectFreshPeerAfterEpochMs = 0L
-        fastReconnectUntilEpochMs = 0L
-    }
-
-    /**
-     * Keep a short aggressive reconnect window after Wi-Fi/P2P recovery.
-     * During this window we may reuse the persisted Wi-Fi address even before
-     * Android repopulates the P2P peer list.
-     */
-    private fun armFastReconnectRecovery(reason: String) {
-        fastReconnectUntilEpochMs =
-            System.currentTimeMillis() + FAST_RECONNECT_WINDOW_MS
-        android.util.Log.d(
-            TAG,
-            "Wi-Fi Direct fast-recovery window armed: " +
-                reason +
-                " for " +
-                FAST_RECONNECT_WINDOW_MS +
-                "ms"
-        )
-    }
-
-    /**
-     * Fast recovery path used directly by radio/group lifecycle callbacks.
-     * Reuse the persisted MAC immediately when DNS-SD has not repopulated the
-     * peer list yet, while still keeping the normal deterministic UUID owner.
-     */
-    private fun scheduleAutoReconnectAfterRadioRecovery(reason: String) {
-        if (
-            !started.get() ||
-            !wifiManager.isWifiEnabled ||
-            !hasWifiDirectPermission() ||
-            !isLocationModeEnabled() ||
-            _connectionInfo.value.groupFormed ||
-            connectionAttemptInProgress
-        ) {
-            return
-        }
-
-        managerScope.launch {
-            delay(100L)
-            if (
-                !started.get() ||
-                !wifiManager.isWifiEnabled ||
-                !hasWifiDirectPermission() ||
-                !isLocationModeEnabled() ||
-                _connectionInfo.value.groupFormed ||
-                connectionAttemptInProgress
-            ) {
-                return@launch
-            }
-
-            kickPeerDiscovery("fast reconnect: " + reason)
-            scheduleAutoReconnectAttempt()
         }
     }
 
@@ -1348,15 +1259,7 @@ class AndroidWifiDirectManager(
     private fun scheduleAutoReconnectAttempt() {
         if (reconnectAttemptJob?.isActive == true) return
         if (connectionAttemptInProgress) return
-
-        val fastRecoveryActive =
-            System.currentTimeMillis() < fastReconnectUntilEpochMs
-        if (
-            !fastRecoveryActive &&
-            System.currentTimeMillis() < autoReconnectRetryAfterEpochMs
-        ) {
-            return
-        }
+        if (System.currentTimeMillis() < autoReconnectRetryAfterEpochMs) return
 
         val squadIds = squadMembershipStore.squadDeviceIds()
 
@@ -1383,8 +1286,7 @@ class AndroidWifiDirectManager(
                     localDeviceId.compareTo(id) < 0 &&
                     peer.linkState != RadioLinkState.CONNECTING &&
                     (
-                        fastRecoveryActive ||
-                            autoReconnectFailureCount == 0 ||
+                        autoReconnectFailureCount == 0 ||
                             peer.lastSeenEpochMs >= autoReconnectFreshPeerAfterEpochMs
                         )
             }
@@ -1395,7 +1297,7 @@ class AndroidWifiDirectManager(
         // hammering the stale address.
         val fallback = if (
             targetPeer == null &&
-            (fastRecoveryActive || autoReconnectFailureCount == 0)
+            autoReconnectFailureCount == 0
         ) {
             candidateIds.asSequence()
                 .filter { id -> localDeviceId.compareTo(id) < 0 }
@@ -1433,37 +1335,28 @@ class AndroidWifiDirectManager(
                 }
 
                 if (result is TacticalResult.Failure) {
-                    if (fastRecoveryActive) {
-                        autoReconnectRetryAfterEpochMs = 0L
-                        autoReconnectFreshPeerAfterEpochMs = 0L
-                        android.util.Log.d(
-                            TAG,
-                            "Wi-Fi Direct fast-reconnect attempt failed: " +
-                                result.error +
-                                " (fast recovery still active)"
-                        )
-                    } else {
-                        autoReconnectFailureCount = minOf(
-                            autoReconnectFailureCount + 1,
-                            AUTO_RECONNECT_MAX_FAILURES
-                        )
-                        autoReconnectRetryAfterEpochMs =
-                            System.currentTimeMillis() +
-                                autoReconnectBackoffMs(autoReconnectFailureCount)
-                        autoReconnectFreshPeerAfterEpochMs =
-                            System.currentTimeMillis()
+                    autoReconnectFailureCount = minOf(
+                        autoReconnectFailureCount + 1,
+                        AUTO_RECONNECT_MAX_FAILURES
+                    )
+                    autoReconnectRetryAfterEpochMs =
+                        System.currentTimeMillis() +
+                            autoReconnectBackoffMs(autoReconnectFailureCount)
+                    autoReconnectFreshPeerAfterEpochMs =
+                        System.currentTimeMillis()
 
-                        android.util.Log.d(
-                            TAG,
-                            "Wi-Fi Direct auto-reconnect failed: " +
-                                result.error +
-                                " retryBackoff=" +
-                                autoReconnectBackoffMs(autoReconnectFailureCount) +
-                                "ms"
-                        )
-                    }
+                    android.util.Log.d(
+                        TAG,
+                        "Wi-Fi Direct auto-reconnect failed: " +
+                            result.error +
+                            " retryBackoff=" +
+                            autoReconnectBackoffMs(autoReconnectFailureCount) +
+                            "ms"
+                    )
                 } else {
-                    resetAutoReconnectRecoveryState()
+                    autoReconnectFailureCount = 0
+                    autoReconnectRetryAfterEpochMs = 0L
+                    autoReconnectFreshPeerAfterEpochMs = 0L
                 }
             } finally {
                 reconnectAttemptJob = null
@@ -1609,21 +1502,12 @@ class AndroidWifiDirectManager(
                         !connectionAttemptInProgress &&
                         !frameworkConnectionInProgress
                     ) {
-                        // A lost group starts a completely new recovery cycle.
-                        // Clear any previous failed-attempt backoff so the known
-                        // squad peer can be retried immediately after discovery
-                        // or from its persisted Wi-Fi address.
-                        resetAutoReconnectRecoveryState()
-                        armFastReconnectRecovery("group lost")
-                        kickPeerDiscovery("group lost")
-                        scheduleAutoReconnectAfterRadioRecovery("group lost")
-
                         // Some OEM stacks drop the P2P discovery engine together
                         // with the group without sending a discovery-changed
                         // broadcast. Rebuild our discovery bookkeeping explicitly.
                         removeServiceRequest()
                         managerScope.launch {
-                            delay(100L)
+                            delay(250L)
                             startServiceDiscoveryInternal()
                         }
                     }
@@ -1892,13 +1776,7 @@ class AndroidWifiDirectManager(
             TAG,
             "BLE squad peer registered for automatic Wi-Fi upgrade: " + deviceId
         )
-        if (
-            started.get() &&
-            wifiManager.isWifiEnabled &&
-            !_connectionInfo.value.groupFormed
-        ) {
-            armFastReconnectRecovery("BLE squad peer")
-            kickPeerDiscovery("BLE squad peer")
+        if (started.get() && wifiManager.isWifiEnabled) {
             scheduleAutoReconnectAttempt()
         }
     }
@@ -2131,7 +2009,6 @@ class AndroidWifiDirectManager(
                 )
             }
 
-            resetAutoReconnectRecoveryState()
             markPeerState(cleanedAddress, RadioLinkState.CONNECTED)
             return TacticalResult.Success(Unit)
         } finally {
@@ -2286,7 +2163,6 @@ class AndroidWifiDirectManager(
         private const val SERVICE_DISCOVERY_RETRY_MS = 5_000L
         private const val PRESENCE_RETRY_MS = 5_000L
         private const val AUTO_RECONNECT_INTERVAL_MS = 750L
-        private const val FAST_RECONNECT_WINDOW_MS = 30_000L
         private const val AUTO_RECONNECT_REARM_DELAY_MS = 2_000L
         private const val AUTO_RECONNECT_MAX_FAILURES = 3
         private const val PEER_REFRESH_MS = 1_000L
