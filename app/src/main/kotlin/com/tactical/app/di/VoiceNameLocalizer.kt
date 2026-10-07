@@ -31,7 +31,7 @@ class VoiceNameLocalizer @Inject constructor() {
         }
 
         return runCatching {
-            Transliterator.createInstance(transliteratorId)
+            Transliterator.getInstance(transliteratorId)
                 .transliterate(cleaned)
                 .trim()
                 .ifBlank { cleaned }
