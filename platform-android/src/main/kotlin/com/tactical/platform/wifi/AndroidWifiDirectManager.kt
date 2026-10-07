@@ -951,7 +951,9 @@ class AndroidWifiDirectManager(
                     if (record["app"] != "itantra") return@DnsSdTxtRecordListener
 
                     val id = record["id"] ?: return@DnsSdTxtRecordListener
-                    val callsign = record["callsign"] ?: device.deviceName
+                    val callsign = record["callsign"]
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
 
                     if (runCatching { UUID.fromString(id) }.isFailure) {
                         return@DnsSdTxtRecordListener
@@ -986,11 +988,20 @@ class AndroidWifiDirectManager(
                         appDeviceId = id
                     )
 
+                    val knownCallsign = _peers.value
+                        .firstOrNull {
+                            it.deviceAddress.equals(
+                                device.deviceAddress,
+                                ignoreCase = true
+                            )
+                        }
+                        ?.callsign
+
                     val peer = WifiDirectPeer(
                         deviceAddress = device.deviceAddress,
                         deviceName = device.deviceName,
                         appDeviceId = id,
-                        callsign = callsign,
+                        callsign = callsign ?: knownCallsign,
                         isGroupOwner = groupRole,
                         linkState = RadioLinkState.AVAILABLE,
                         lastSeenEpochMs = Instant.now().toEpochMilli()
@@ -1152,11 +1163,25 @@ class AndroidWifiDirectManager(
                                 refreshed.removeAll {
                                     it.deviceAddress.equals(address, ignoreCase = true)
                                 }
+
+                                // The Android P2P name is hardware/device metadata,
+                                // not the user's iTantra callsign. Preserve a previously
+                                // learned callsign, but never manufacture one from the
+                                // phone model/name while waiting for DNS-SD TXT.
+                                val knownCallsign = _peers.value
+                                    .firstOrNull {
+                                        it.appDeviceId.equals(
+                                            cachedId,
+                                            ignoreCase = true
+                                        )
+                                    }
+                                    ?.callsign
+
                                 refreshed += WifiDirectPeer(
                                     deviceAddress = address,
                                     deviceName = androidPeer.deviceName,
                                     appDeviceId = cachedId,
-                                    callsign = androidPeer.deviceName,
+                                    callsign = knownCallsign,
                                     isGroupOwner = null,
                                     linkState = RadioLinkState.AVAILABLE,
                                     lastSeenEpochMs = now
