@@ -21,7 +21,7 @@ class PttPacketBuilder(
         val text = if (
             !session.isCallMode &&
             spokenNameEnabledProvider() &&
-            spokenNameProvider().isNotBlank()
+            spokenNameProvider(chunk.languageCode).isNotBlank()
         ) {
             val name = spokenNameProvider(chunk.languageCode).trim()
             val (inWord, outWord) = radioProcedureWords(chunk.languageCode)
