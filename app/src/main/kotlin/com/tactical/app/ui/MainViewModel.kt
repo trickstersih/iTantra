@@ -1715,8 +1715,10 @@ class MainViewModel @Inject constructor(
                     state.copy(username = cleaned)
                 }
                 viewModelScope.launch {
-                    runCatching { discoveryService.stop() }
-                    runCatching { discoveryService.start() }
+                    // Refresh the Wi-Fi presence record in place. Do not stop
+                    // and restart discovery: that unnecessarily disrupts an
+                    // already-established Wi-Fi Direct connection.
+                    runCatching { discoveryService.refreshLocalIdentity() }
                     runCatching { bleConnectionManager.announceLocalCallsign(cleaned) }
                 }
                 null
