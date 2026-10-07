@@ -18,13 +18,9 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Size experiment: keep both ARM ABIs so the app remains usable on
-        // both 32-bit and 64-bit ARM Android devices, including low-end hardware.
-        // Google Play can later split ABIs from an AAB instead of shipping all
-        // native architectures in one universal APK.
-        ndk {
-            abiFilters += setOf("armeabi-v7a", "arm64-v8a")
-        }
+        // Do not restrict ABIs here. Keep every architecture provided by
+        // the native dependencies so iTantra remains broadly compatible,
+        // including with low-power and older Android hardware.
     }
 
     buildTypes {
