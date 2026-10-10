@@ -9,9 +9,10 @@ import kotlin.math.sqrt
  * Conservative cleanup for the new mixed-precision multilingual VITS outputs.
  *
  * This is deliberately not a neural denoiser: it removes DC offset, attenuates
- * sub-bass/high-frequency hiss, avoids hard clipping, and softens the final
- * samples so AudioTrack does not end on a discontinuity. It does not modify
- * the source ONNX model or the legacy English/Hindi output path.
+ * sub-bass, applies a stronger high-frequency roll-off to languages with
+ * reported hiss, avoids hard clipping, and preserves final phonemes by not
+ * applying a fixed fade to the generated waveform. It does not modify the
+ * source ONNX model or the legacy English/Hindi output path.
  */
 internal object ItantraVitsAudioPostProcessor {
     data class Stats(
