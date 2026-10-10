@@ -4,6 +4,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.IOException
 import java.util.LinkedHashSet
+import java.util.Locale
 
 /**
  * Character-level tokenizer for the multilingual iTantra VITS export.
@@ -66,19 +67,34 @@ class ItantraVitsTokenizer(
     fun tokenize(text: String): TokenizedText {
         require(text.isNotBlank()) { "text must not be blank" }
 
-        // Keep the model's character vocabulary authoritative; do not apply
-        // unverified language-independent lowercasing or Unicode rewriting.
+        // Hugging Face VitsTokenizer defaults to normalize=true for MMS:
+        // preserve exact vocabulary symbols, lowercase unmatched characters,
+        // then discard characters outside the vocabulary (e.g. punctuation).
         val input = text.replace('\r', ' ').replace('\n', ' ').trim()
-        val characterIds = ArrayList<Long>()
-        val acceptedText = StringBuilder()
+        val normalized = StringBuilder()
         val dropped = LinkedHashSet<String>()
 
         var offset = 0
         while (offset < input.length) {
             val codePoint = input.codePointAt(offset)
             val symbol = String(Character.toChars(codePoint))
-            val tokenId = tokenIds[symbol]
+            if (tokenIds.containsKey(symbol)) {
+                normalized.append(symbol)
+            } else {
+                val lower = symbol.lowercase(Locale.ROOT)
+                normalized.append(lower)
+            }
+            offset += Character.charCount(codePoint)
+        }
 
+        val normalizedInput = normalized.toString()
+        val characterIds = ArrayList<Long>()
+        val acceptedText = StringBuilder()
+        offset = 0
+        while (offset < normalizedInput.length) {
+            val codePoint = normalizedInput.codePointAt(offset)
+            val symbol = String(Character.toChars(codePoint))
+            val tokenId = tokenIds[symbol]
             if (tokenId != null) {
                 characterIds.add(tokenId.toLong())
                 acceptedText.append(symbol)
