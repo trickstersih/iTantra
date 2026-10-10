@@ -143,9 +143,24 @@ class MmsTtsEngine @Inject constructor(
 
                     require(samples.isNotEmpty()) { "MMS-TTS returned empty waveform" }
 
+                    val playbackSamples = if (useItantraModel) {
+                        val processed = ItantraVitsAudioPostProcessor.process(
+                            samples,
+                            sampleRate
+                        )
+                        android.util.Log.i(
+                            TAG,
+                            "iTantra VITS waveform " + language.isoCode + ": " +
+                                processed.stats.toString()
+                        )
+                        processed.samples
+                    } else {
+                        samples
+                    }
+
                     val inferenceMs = (System.nanoTime() - startNs) / 1_000_000L
                     val frame = floatArrayToAudioFrame(
-                        samples = samples,
+                        samples = playbackSamples,
                         sampleRate = sampleRate,
                         timestamp = System.currentTimeMillis()
                     )
