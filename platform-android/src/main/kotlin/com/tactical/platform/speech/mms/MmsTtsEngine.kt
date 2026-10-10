@@ -14,10 +14,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.LongBuffer
 import javax.inject.Inject
+import kotlin.math.abs
+import kotlin.math.sqrt
 import javax.inject.Singleton
 
 @Singleton
@@ -154,6 +157,19 @@ class MmsTtsEngine @Inject constructor(
                         samples = playbackSamples,
                         sampleRate = sampleRate,
                         timestamp = System.currentTimeMillis()
+                    )
+
+                    // Opt-in diagnostics only: create a WAV from the exact PCM
+                    // sent to AudioTrack, plus the exact tokenizer IDs. Enable
+                    // locally with a marker file in app-private files/.
+                    writeDiagnosticsIfEnabled(
+                        language = language,
+                        requestedText = text,
+                        normalizedText = normalizedText,
+                        tokenizedIds = tokenizedIds,
+                        samples = samples,
+                        frame = frame,
+                        sampleRate = sampleRate
                     )
 
                     frame to MmsTtsTestResult(
@@ -365,6 +381,91 @@ class MmsTtsEngine @Inject constructor(
         )
     }
 
+    /**
+     * Captures the precise Android tokenizer output and pre-playback PCM only
+     * when app-private files/tts_debug_enabled exists. This avoids recording
+     * ordinary incoming messages unless a developer explicitly opts in.
+     */
+    private suspend fun writeDiagnosticsIfEnabled(
+        language: MmsTtsLanguage,
+        requestedText: String,
+        normalizedText: String,
+        tokenizedIds: LongArray,
+        samples: FloatArray,
+        frame: AudioFrame,
+        sampleRate: Int
+    ) {
+        val filesDirectory = modelStore.rootDirectory.parentFile ?: return
+        if (!File(filesDirectory, DEBUG_MARKER_FILE).isFile) return
+
+        withContext(Dispatchers.IO) {
+            val debugDirectory = File(filesDirectory, DEBUG_DIRECTORY)
+            if (!debugDirectory.exists() && !debugDirectory.mkdirs()) {
+                android.util.Log.w(TAG, "Could not create TTS diagnostic directory")
+                return@withContext
+            }
+
+            val safeSamples = samples.filter { it.isFinite() }
+            val minSample = safeSamples.minOrNull() ?: 0f
+            val maxSample = safeSamples.maxOrNull() ?: 0f
+            val sumSquares = safeSamples.sumOf { it.toDouble() * it.toDouble() }
+            val rms = if (safeSamples.isEmpty()) 0.0 else sqrt(sumSquares / safeSamples.size)
+            val nonFiniteCount = samples.count { !it.isFinite() }
+            val nearFullScalePercent = if (samples.isEmpty()) 0.0 else {
+                100.0 * samples.count { it.isFinite() && abs(it) >= 0.999f } / samples.size
+            }
+
+            val baseName = "${language.isoCode}_latest"
+            val wavFile = File(debugDirectory, "${baseName}.wav")
+            val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
+            header.put("RIFF".toByteArray(Charsets.US_ASCII))
+            header.putInt(36 + frame.data.size)
+            header.put("WAVE".toByteArray(Charsets.US_ASCII))
+            header.put("fmt ".toByteArray(Charsets.US_ASCII))
+            header.putInt(16)
+            header.putShort(1.toShort()) // PCM
+            header.putShort(1.toShort()) // mono
+            header.putInt(sampleRate)
+            header.putInt(sampleRate * 2)
+            header.putShort(2.toShort()) // block align
+            header.putShort(16.toShort()) // bits per sample
+            header.put("data".toByteArray(Charsets.US_ASCII))
+            header.putInt(frame.data.size)
+            FileOutputStream(wavFile).use { output ->
+                output.write(header.array())
+                output.write(frame.data)
+            }
+
+            val reportFile = File(debugDirectory, "${baseName}.txt")
+            reportFile.writeText(
+                buildString {
+                    appendLine("language=${language.isoCode}")
+                    appendLine("requestedText=${requestedText.replace("\\n", "\\\\n").replace("\\r", "\\\\r")}")
+                    appendLine("normalizedText=${normalizedText}")
+                    appendLine("sampleRate=${sampleRate}")
+                    appendLine("sampleCount=${samples.size}")
+                    appendLine("durationMs=${(samples.size * 1000L) / sampleRate.coerceAtLeast(1)}")
+                    appendLine("min=${minSample}")
+                    appendLine("max=${maxSample}")
+                    appendLine("rms=${rms}")
+                    appendLine("nonFiniteCount=${nonFiniteCount}")
+                    appendLine("nearFullScalePercent=${nearFullScalePercent}")
+                    appendLine("tokenCount=${tokenizedIds.size}")
+                    appendLine("tokenIds=${tokenizedIds.joinToString(",")}")
+                },
+                Charsets.UTF_8
+            )
+
+            android.util.Log.i(
+                TAG,
+                "TTS diagnostic capture: ${wavFile.absolutePath}; " +
+                    "ids=${tokenizedIds.size}, sr=${sampleRate}, samples=${samples.size}, " +
+                    "min=${minSample}, max=${maxSample}, rms=${rms}, " +
+                    "nonFinite=${nonFiniteCount}, nearFullScalePct=${nearFullScalePercent}"
+            )
+        }
+    }
+
     private fun closeLoadedSession() {
         runCatching { session?.close() }
         session = null
@@ -376,6 +477,8 @@ class MmsTtsEngine @Inject constructor(
     companion object {
         private const val DEFAULT_SAMPLE_RATE = 16_000
         private const val TAG = "MmsTtsEngine"
+        private const val DEBUG_MARKER_FILE = "tts_debug_enabled"
+        private const val DEBUG_DIRECTORY = "tts_debug"
         private val LEGACY_MMS_CODES = setOf("eng", "hin")
     }
 }
