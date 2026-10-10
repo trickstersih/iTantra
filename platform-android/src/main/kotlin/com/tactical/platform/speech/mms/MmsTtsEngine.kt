@@ -30,6 +30,7 @@ class MmsTtsEngine @Inject constructor(
     private var loadedLanguage: MmsTtsLanguage? = null
     private var session: OrtSession? = null
     private var tokenizer: MmsVitsTokenizer? = null
+    private var itantTokenizer: ItantraVitsTokenizer? = null
     private var sampleRate: Int = DEFAULT_SAMPLE_RATE
 
     /**
@@ -55,29 +56,57 @@ class MmsTtsEngine @Inject constructor(
             val directory = modelStore.ensureBundledModelAvailable(language)
             ensureLoaded(language, directory)
 
-            val currentTokenizer = checkNotNull(tokenizer)
+            val useItantraModel = usesItantraVitsModel(language)
             val currentSession = checkNotNull(session)
-            val tokenized = currentTokenizer.tokenize(text)
+            val legacyTokenized = if (useItantraModel) null else {
+                checkNotNull(tokenizer).tokenize(text)
+            }
+            val itantTokenized = if (useItantraModel) {
+                checkNotNull(itantTokenizer).tokenize(text)
+            } else {
+                null
+            }
+            val tokenizedIds = legacyTokenized?.ids ?: checkNotNull(itantTokenized).ids
+            val normalizedText = legacyTokenized?.normalizedText
+                ?: checkNotNull(itantTokenized).normalizedText
+
+            itantTokenized?.droppedCharacters
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { dropped ->
+                    android.util.Log.w(
+                        TAG,
+                        "TTS ignored unsupported characters for " + language.isoCode +
+                            ": " + dropped.joinToString()
+                    )
+                }
 
             val startNs = System.nanoTime()
-            val inputIdsName = findInputName(currentSession, "input_ids")
-                ?: throw IllegalStateException("MMS-TTS input_ids tensor is missing")
-            val attentionMaskName = findInputName(
+            val inputIdsName = findInputName(
                 currentSession,
-                "attention_mask",
-                required = false
+                if (useItantraModel) "x" else "input_ids"
+            ) ?: throw IllegalStateException(
+                "TTS token input is missing for " + language.displayName
             )
+            val attentionMaskName = if (useItantraModel) {
+                null
+            } else {
+                findInputName(
+                    currentSession,
+                    "attention_mask",
+                    required = false
+                )
+            }
 
             val inputs = LinkedHashMap<String, OnnxTensor>()
             try {
                 inputs[inputIdsName] = OnnxTensor.createTensor(
                     environment,
-                    LongBuffer.wrap(tokenized.ids),
-                    longArrayOf(1L, tokenized.ids.size.toLong())
+                    LongBuffer.wrap(tokenizedIds),
+                    longArrayOf(1L, tokenizedIds.size.toLong())
                 )
 
                 if (attentionMaskName != null) {
-                    val mask = LongArray(tokenized.ids.size) { 1L }
+                    val mask = LongArray(tokenizedIds.size) { 1L }
                     inputs[attentionMaskName] = OnnxTensor.createTensor(
                         environment,
                         LongBuffer.wrap(mask),
@@ -96,8 +125,9 @@ class MmsTtsEngine @Inject constructor(
                             )
                         } else {
                             throw IllegalStateException(
-                                "Unsupported MMS-TTS input '" + name + "'. " +
-                                    "Expected input_ids/attention_mask (and optionally speaker_id)."
+                                "Unsupported TTS input '" + name + "'. " +
+                                    "Expected x for iTantra VITS, or input_ids/attention_mask " +
+                                    "(and optionally speaker_id) for legacy MMS."
                             )
                         }
                     }
@@ -123,8 +153,8 @@ class MmsTtsEngine @Inject constructor(
                     frame to MmsTtsTestResult(
                         language = language,
                         requestedText = text,
-                        normalizedText = tokenized.normalizedText,
-                        tokenCount = tokenized.ids.size,
+                        normalizedText = normalizedText,
+                        tokenCount = tokenizedIds.size,
                         inferenceMs = inferenceMs,
                         audioDurationMs = frame.durationMs,
                         sampleRate = sampleRate
@@ -150,11 +180,23 @@ class MmsTtsEngine @Inject constructor(
     }
 
     private fun ensureLoaded(language: MmsTtsLanguage, directory: File) {
-        if (loadedLanguage == language && session != null && tokenizer != null) return
+        val useItantraModel = usesItantraVitsModel(language)
+        val tokenizerLoaded = if (useItantraModel) {
+            itantTokenizer != null
+        } else {
+            tokenizer != null
+        }
+        if (loadedLanguage == language && session != null && tokenizerLoaded) return
 
         closeLoadedSession()
 
-        val modelFile = File(directory, "model.int8.onnx")
+        val modelFile = File(
+            directory,
+            if (useItantraModel) "model.int8.mixed.onnx" else "model.int8.onnx"
+        )
+        require(modelFile.isFile && modelFile.length() > 0L) {
+            "TTS ONNX model is missing: " + modelFile.absolutePath
+        }
 
         // Load directly from disk instead of first copying the entire ONNX
         // model into a Kotlin ByteArray. This lowers peak RAM during model
@@ -163,12 +205,31 @@ class MmsTtsEngine @Inject constructor(
             modelFile.absolutePath,
             OrtSession.SessionOptions()
         )
-        tokenizer = MmsVitsTokenizer(directory)
-        sampleRate = JSONObject(
+
+        if (useItantraModel) {
+            tokenizer = null
+            itantTokenizer = ItantraVitsTokenizer(directory, language.isoCode)
+        } else {
+            tokenizer = MmsVitsTokenizer(directory)
+            itantTokenizer = null
+        }
+
+        val config = JSONObject(
             File(directory, "config.json").readText(Charsets.UTF_8)
-        ).optInt("sampling_rate", DEFAULT_SAMPLE_RATE)
+        )
+        sampleRate = if (useItantraModel) {
+            config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
+        } else {
+            config.optInt(
+                "sampling_rate",
+                config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
+            )
+        }
         loadedLanguage = language
     }
+
+    private fun usesItantraVitsModel(language: MmsTtsLanguage): Boolean =
+        language.modelCode !in LEGACY_MMS_CODES
 
     private fun findInputName(
         currentSession: OrtSession,
@@ -293,10 +354,13 @@ class MmsTtsEngine @Inject constructor(
         runCatching { session?.close() }
         session = null
         tokenizer = null
+        itantTokenizer = null
         loadedLanguage = null
     }
 
     companion object {
         private const val DEFAULT_SAMPLE_RATE = 16_000
+        private const val TAG = "MmsTtsEngine"
+        private val LEGACY_MMS_CODES = setOf("eng", "hin")
     }
 }
