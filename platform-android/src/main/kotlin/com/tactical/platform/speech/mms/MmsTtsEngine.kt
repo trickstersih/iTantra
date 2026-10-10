@@ -145,8 +145,9 @@ class MmsTtsEngine @Inject constructor(
 
                     val playbackSamples = if (useItantraModel) {
                         val processed = ItantraVitsAudioPostProcessor.process(
-                            samples,
-                            sampleRate
+                            input = samples,
+                            sampleRate = sampleRate,
+                            reduceHiss = language.isoCode != "gu"
                         )
                         android.util.Log.i(
                             TAG,
