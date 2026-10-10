@@ -228,6 +228,11 @@ def main() -> int:
                     ]))
                     print("Producer: " + repr(model.producer_name))
                     print("Graph: " + repr(model.graph.name))
+                    print("Model metadata properties: " + json.dumps(
+                        {item.key: item.value for item in model.metadata_props},
+                        ensure_ascii=True,
+                        sort_keys=True,
+                    ))
 
                     graph_list = list(recursive_graphs(model.graph, onnx))
                     op_counts = collections.Counter()
