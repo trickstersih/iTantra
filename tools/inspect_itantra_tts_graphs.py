@@ -92,15 +92,15 @@ def find_model_entry(archive: zipfile.ZipFile, code: str) -> str:
     return exact[0]
 
 
-def recursive_graphs(graph) -> Iterable:
+def recursive_graphs(graph, onnx) -> Iterable:
     yield graph
     for node in graph.node:
         for attribute in node.attribute:
-            if attribute.type == attribute.GRAPH:
-                yield from recursive_graphs(attribute.g)
-            elif attribute.type == attribute.GRAPHS:
+            if attribute.type == onnx.AttributeProto.GRAPH:
+                yield from recursive_graphs(attribute.g, onnx)
+            elif attribute.type == onnx.AttributeProto.GRAPHS:
                 for child in attribute.graphs:
-                    yield from recursive_graphs(child)
+                    yield from recursive_graphs(child, onnx)
 
 
 def tensor_payloads(graph):
@@ -229,7 +229,7 @@ def main() -> int:
                     print("Producer: " + repr(model.producer_name))
                     print("Graph: " + repr(model.graph.name))
 
-                    graph_list = list(recursive_graphs(model.graph))
+                    graph_list = list(recursive_graphs(model.graph, onnx))
                     op_counts = collections.Counter()
                     quant_counts = collections.Counter()
                     tensors = []
