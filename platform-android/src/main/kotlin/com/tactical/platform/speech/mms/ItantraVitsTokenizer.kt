@@ -8,14 +8,15 @@ import java.util.LinkedHashSet
 /**
  * Character-level tokenizer for the multilingual iTantra VITS export.
  *
- * Unlike the legacy MMS model, this model uses tokens.txt and an ONNX input
- * named "x". The blank token is a symbol in each language's vocabulary, not
- * necessarily token ID 0. The inspected bundle uses "_" for nine languages
- * and "|" for Gujarati.
+ * The token-to-ID map comes from tokens.txt. Special token IDs and the
+ * add_blank/use_eos_bos switches must come from ONNX model metadata, not from
+ * guessing that "_" or "|" is the blank token. Ordinary characters can have
+ * ID 0, so a vocabulary symbol cannot safely identify the blank ID.
  */
 class ItantraVitsTokenizer(
     modelDirectory: File,
-    private val languageCode: String
+    private val languageCode: String,
+    modelMetadata: Map<String, String>
 ) {
     private val config = JSONObject(
         File(modelDirectory, "config.json").readText(Charsets.UTF_8)
@@ -23,15 +24,21 @@ class ItantraVitsTokenizer(
     private val tokenIds: Map<String, Int> = readTokenIds(
         File(modelDirectory, "tokens.txt")
     )
+    private val metadata = modelMetadata
 
-    private val addBlank = config.optBoolean("add_blank", false)
+    private fun metadataFlag(key: String, fallback: Boolean): Boolean =
+        metadata[key]?.trim()?.let {
+            it == "1" || it.equals("true", ignoreCase = true)
+        } ?: fallback
 
-    private val blankSymbol: String = when (languageCode) {
-        "gu" -> "|"
-        else -> "_"
-    }
-
-    private val blankId: Int? = tokenIds[blankSymbol]
+    private val addBlank = metadataFlag(
+        "add_blank",
+        config.optBoolean("add_blank", false)
+    )
+    private val useEosBos = metadataFlag("use_eos_bos", false)
+    private val blankId = metadata["blank_id"]?.toIntOrNull()
+    private val bosId = metadata["bos_id"]?.toIntOrNull()
+    private val eosId = metadata["eos_id"]?.toIntOrNull()
 
     init {
         require(config.optString("language", languageCode) == languageCode) {
@@ -39,8 +46,13 @@ class ItantraVitsTokenizer(
         }
         require(tokenIds.isNotEmpty()) { "tokens.txt is empty for " + languageCode }
         require(!addBlank || blankId != null) {
-            "The add_blank setting is enabled, but blank symbol '" +
-                blankSymbol + "' is missing from " + languageCode + "/tokens.txt"
+            "ONNX metadata for " + languageCode +
+                " must provide a numeric blank_id when add_blank=true. Metadata keys: " +
+                metadata.keys.sorted().joinToString()
+        }
+        require(!useEosBos || (bosId != null && eosId != null)) {
+            "ONNX metadata for " + languageCode +
+                " enables use_eos_bos but does not provide numeric bos_id/eos_id"
         }
     }
 
@@ -53,8 +65,8 @@ class ItantraVitsTokenizer(
     fun tokenize(text: String): TokenizedText {
         require(text.isNotBlank()) { "text must not be blank" }
 
-        // Keep the model's character vocabulary authoritative. Do not apply
-        // language-independent lowercasing or Unicode normalization here.
+        // Keep the model's character vocabulary authoritative; do not apply
+        // unverified language-independent lowercasing or Unicode rewriting.
         val input = text.replace('\r', ' ').replace('\n', ' ').trim()
         val characterIds = ArrayList<Long>()
         val acceptedText = StringBuilder()
@@ -80,7 +92,9 @@ class ItantraVitsTokenizer(
                 languageCode + " tokens.txt vocabulary"
         }
 
-        val ids = if (addBlank) {
+        // Match the model's exported Coqui-style tokenizer order:
+        // map characters -> intersperse the model's declared blank ID -> BOS/EOS.
+        val withBlanks = if (addBlank) {
             val blank = checkNotNull(blankId).toLong()
             LongArray(characterIds.size * 2 + 1).also { output ->
                 characterIds.forEachIndexed { index, value ->
@@ -88,14 +102,22 @@ class ItantraVitsTokenizer(
                     output[index * 2 + 1] = value
                 }
                 output[output.lastIndex] = blank
-            }
+            }.toList()
         } else {
-            LongArray(characterIds.size) { index -> characterIds[index] }
+            characterIds
+        }
+
+        val finalIds = if (useEosBos) {
+            longArrayOf(checkNotNull(bosId).toLong()) +
+                withBlanks +
+                longArrayOf(checkNotNull(eosId).toLong())
+        } else {
+            withBlanks.toLongArray()
         }
 
         return TokenizedText(
             normalizedText = acceptedText.toString(),
-            ids = ids,
+            ids = finalIds,
             droppedCharacters = dropped.toList()
         )
     }
@@ -109,7 +131,7 @@ class ItantraVitsTokenizer(
         file.readLines(Charsets.UTF_8).forEachIndexed { index, rawLine ->
             if (rawLine.isEmpty()) return@forEachIndexed
 
-            // split at the final space so a literal space can itself be a token.
+            // Split at the final space so a literal space is itself a token.
             val separator = rawLine.lastIndexOf(' ')
             if (separator < 0 || separator == rawLine.lastIndex) {
                 throw IOException(
