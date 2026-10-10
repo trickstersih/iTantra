@@ -208,7 +208,16 @@ class MmsTtsEngine @Inject constructor(
 
         if (useItantraModel) {
             tokenizer = null
-            itantTokenizer = ItantraVitsTokenizer(directory, language.isoCode)
+            val customMetadata = checkNotNull(session).metadata.customMetadata
+            android.util.Log.i(
+                TAG,
+                "iTantra VITS metadata for " + language.isoCode + ": " + customMetadata
+            )
+            itantTokenizer = ItantraVitsTokenizer(
+                directory,
+                language.isoCode,
+                customMetadata
+            )
         } else {
             tokenizer = MmsVitsTokenizer(directory)
             itantTokenizer = null
