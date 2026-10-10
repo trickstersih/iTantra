@@ -31,7 +31,11 @@ internal object ItantraVitsAudioPostProcessor {
 
     data class Result(val samples: FloatArray, val stats: Stats)
 
-    fun process(input: FloatArray, sampleRate: Int): Result {
+    fun process(
+        input: FloatArray,
+        sampleRate: Int,
+        reduceHiss: Boolean
+    ): Result {
         require(input.isNotEmpty()) { "VITS returned an empty waveform" }
         require(sampleRate > 0) { "Invalid sample rate: $sampleRate" }
 
@@ -72,14 +76,26 @@ internal object ItantraVitsAudioPostProcessor {
             previousOutput = filtered
         }
 
-        // A mild low-pass reduces the very highest-band quantization hiss while
-        // retaining the frequency range carrying most speech intelligibility.
-        val lpCutoff = minOf(6_500.0, sampleRate * 0.42)
-        val lpAlpha = (1.0 - exp(-2.0 * Math.PI * lpCutoff / sampleRate)).toFloat()
-        var lowPassState = 0f
-        for (i in finiteInput.indices) {
-            lowPassState += lpAlpha * (finiteInput[i] - lowPassState)
-            finiteInput[i] = lowPassState
+        if (reduceHiss) {
+            // The first pass used a one-pole 6.5 kHz filter, which only very
+            // lightly attenuated the hiss reported for seven of the languages.
+            // Use a second-order Butterworth low-pass at 4.8 kHz for those
+            // outputs. This preserves most speech fundamentals/formants while
+            // attenuating more high-band hiss. Gujarati keeps the gentler
+            // original filter because it did not exhibit the reported static.
+            applyButterworthLowPass(
+                samples = finiteInput,
+                sampleRate = sampleRate,
+                cutoffHz = minOf(4_800.0, sampleRate * 0.30)
+            )
+        } else {
+            val lpCutoff = minOf(6_500.0, sampleRate * 0.42)
+            val lpAlpha = (1.0 - exp(-2.0 * Math.PI * lpCutoff / sampleRate)).toFloat()
+            var lowPassState = 0f
+            for (i in finiteInput.indices) {
+                lowPassState += lpAlpha * (finiteInput[i] - lowPassState)
+                finiteInput[i] = lowPassState
+            }
         }
 
         // Scale down only if peaks approach/exceed full scale. Do not normalize
@@ -95,20 +111,10 @@ internal object ItantraVitsAudioPostProcessor {
             for (i in finiteInput.indices) finiteInput[i] *= gain
         }
 
-        // Apply a short fade to prevent a harsh terminal discontinuity, then
-        // allow the playback buffer to drain before AudioTrack is stopped.
-        val fadeSamples = minOf(
-            (sampleRate * 0.012).toInt(),
-            finiteInput.size / 4
-        ).coerceAtLeast(0)
-        if (fadeSamples > 1) {
-            val start = finiteInput.size - fadeSamples
-            for (i in 0 until fadeSamples) {
-                val gain = (fadeSamples - 1 - i).toFloat() / (fadeSamples - 1).toFloat()
-                finiteInput[start + i] *= gain
-            }
-        }
-
+        // Do not fade the final 12 ms of the generated waveform blindly:
+        // some VITS checkpoints end directly on the final phoneme, so doing so
+        // attenuates that phoneme and can sound like a clipped word. Append a
+        // quiet drain interval instead; AudioTrack waits for these frames too.
         val tailSamples = (sampleRate * TAIL_SILENCE_MS / 1000).toInt()
         val output = finiteInput.copyOf(finiteInput.size + tailSamples)
         var outputPeak = 0f
@@ -133,5 +139,41 @@ internal object ItantraVitsAudioPostProcessor {
         )
     }
 
-    private const val TAIL_SILENCE_MS = 100
+    /**
+     * In-place second-order low-pass Butterworth filter (biquad). Uses
+     * normalized coefficients and Direct Form I to remain stable at 16 kHz.
+     */
+    private fun applyButterworthLowPass(
+        samples: FloatArray,
+        sampleRate: Int,
+        cutoffHz: Double
+    ) {
+        val omega = 2.0 * Math.PI * cutoffHz / sampleRate
+        val cosine = kotlin.math.cos(omega)
+        val sine = kotlin.math.sin(omega)
+        val q = 1.0 / kotlin.math.sqrt(2.0)
+        val alpha = sine / (2.0 * q)
+        val a0 = 1.0 + alpha
+        val b0 = ((1.0 - cosine) / 2.0) / a0
+        val b1 = (1.0 - cosine) / a0
+        val b2 = ((1.0 - cosine) / 2.0) / a0
+        val a1 = (-2.0 * cosine) / a0
+        val a2 = (1.0 - alpha) / a0
+
+        var x1 = 0.0
+        var x2 = 0.0
+        var y1 = 0.0
+        var y2 = 0.0
+        for (i in samples.indices) {
+            val x0 = samples[i].toDouble()
+            val y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            samples[i] = y0.toFloat()
+            x2 = x1
+            x1 = x0
+            y2 = y1
+            y1 = y0
+        }
+    }
+
+    private const val TAIL_SILENCE_MS = 180
 }
