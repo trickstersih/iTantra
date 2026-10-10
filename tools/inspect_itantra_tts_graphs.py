@@ -208,7 +208,7 @@ def main() -> int:
                 config = json.loads(archive.read(config_matches[0]).decode("utf-8"))
                 token_summary = summarize_tokens(archive.read(token_matches[0]))
                 print("config.json: " + json.dumps(config, ensure_ascii=False, sort_keys=True))
-                print("tokens.txt summary: " + json.dumps(token_summary, ensure_ascii=False))
+                print("tokens.txt summary: " + json.dumps(token_summary, ensure_ascii=True))
                 if token_summary["malformed"]:
                     all_ok = False
 
