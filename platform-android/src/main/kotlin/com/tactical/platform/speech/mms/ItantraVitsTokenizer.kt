@@ -36,7 +36,10 @@ class ItantraVitsTokenizer(
         config.optBoolean("add_blank", false)
     )
     private val useEosBos = metadataFlag("use_eos_bos", false)
-    private val blankId = metadata["blank_id"]?.toIntOrNull()
+    // These exports omit blank_id from ONNX custom metadata. The Hugging Face
+    // VitsTokenizer configs use a pad_token whose vocabulary ID is 0; that ID
+    // is preserved by tokens.txt and is the blank inserted by add_blank.
+    private val blankId = metadata["blank_id"]?.toIntOrNull() ?: 0
     private val bosId = metadata["bos_id"]?.toIntOrNull()
     private val eosId = metadata["eos_id"]?.toIntOrNull()
 
@@ -45,10 +48,8 @@ class ItantraVitsTokenizer(
             "TTS config language does not match requested language " + languageCode
         }
         require(tokenIds.isNotEmpty()) { "tokens.txt is empty for " + languageCode }
-        require(!addBlank || blankId != null) {
-            "ONNX metadata for " + languageCode +
-                " must provide a numeric blank_id when add_blank=true. Metadata keys: " +
-                metadata.keys.sorted().joinToString()
+        require(!addBlank || tokenIds.values.any { it == checkNotNull(blankId) }) {
+            "Blank token ID " + blankId + " is absent from " + languageCode + "/tokens.txt"
         }
         require(!useEosBos || (bosId != null && eosId != null)) {
             "ONNX metadata for " + languageCode +
