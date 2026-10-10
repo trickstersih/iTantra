@@ -143,21 +143,11 @@ class MmsTtsEngine @Inject constructor(
 
                     require(samples.isNotEmpty()) { "MMS-TTS returned empty waveform" }
 
-                    val playbackSamples = if (useItantraModel) {
-                        val processed = ItantraVitsAudioPostProcessor.process(
-                            input = samples,
-                            sampleRate = sampleRate,
-                            reduceHiss = language.isoCode != "gu"
-                        )
-                        android.util.Log.i(
-                            TAG,
-                            "iTantra VITS waveform " + language.isoCode + ": " +
-                                processed.stats.toString()
-                        )
-                        processed.samples
-                    } else {
-                        samples
-                    }
+                    // Keep the new model waveform untouched while isolating
+                    // model/export quality. The previous post-filter did not
+                    // remove the reported hiss and could soften consonants.
+                    // Do not hide model defects with more DSP guesses.
+                    val playbackSamples = samples
 
                     val inferenceMs = (System.nanoTime() - startNs) / 1_000_000L
                     val frame = floatArrayToAudioFrame(
