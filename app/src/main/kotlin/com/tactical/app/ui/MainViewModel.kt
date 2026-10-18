@@ -91,8 +91,16 @@ data class ChatMessageUi(
     val timestampEpochMs: Long = 0L,
     // Local time used only for ordering messages in the conversation.
     // Unlike timestampEpochMs, this never comes from another device.
-    val conversationOrderEpochMs: Long = 0L
-)
+    val conversationOrderEpochMs: Long = 0L,
+    val languageCode: String = "und"
+) {
+    /** Stable UI key used to ensure only one user-requested message is playing. */
+    val playbackKey: String
+        get() = "$sender|$timestampEpochMs|$text|$isAlert|$isVoice|$isCallMode"
+}
+
+private fun ChatMessageUi.languageCodeFallbackFromEmergency(): String? =
+    emergencyData?.languageCode?.takeIf { it.isNotBlank() && it != "und" }
 
 data class EmergencyAlertData(
     val sender: String,
@@ -162,6 +170,7 @@ data class MainUiState(
     val respondingSquadRequestId: String? = null,
     val squadRequestError: String? = null,
     val squadNotification: String? = null,
+    val playingMessageKey: String? = null,
     val ttsPlaybackMode: com.tactical.platform.speech.mms.MmsTtsPlaybackMode =
         com.tactical.platform.speech.mms.MmsTtsPlaybackMode.OVERLAPPING
 )
@@ -259,6 +268,7 @@ class MainViewModel @Inject constructor(
     )
 
     private var lastHandledPttSessionId: String? = null
+    private var messagePlaybackJob: Job? = null
     private val continuousTransmissionMessages = mutableMapOf<String, ChatMessageUi>()
     private var resumeContinuousAfterEmergency = false
     private var wifiMultipleRequestWarningDismissed = false
@@ -340,7 +350,8 @@ class MainViewModel @Inject constructor(
                         statusText = status,
                         isVoice = true,
                         timestampEpochMs = localSendTime,
-                        conversationOrderEpochMs = localSendTime
+                        conversationOrderEpochMs = localSendTime,
+                        languageCode = _uiState.value.selectedLanguageCode
                     )
                     localAppDataStore.saveSentMessage(
                         storedSentMessage(message)
@@ -1561,6 +1572,74 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch { bleConnectionManager.repairAndReconnect(deviceAddress) }
     }
 
+    /**
+     * Plays a selected chat message independently of automatic incoming TTS.
+     * Starting another manual playback cancels only the previous manual job;
+     * incoming message AudioTracks remain free to overlap it.
+     */
+    fun toggleMessagePlayback(message: ChatMessageUi) {
+        val key = message.playbackKey
+
+        if (_uiState.value.playingMessageKey == key) {
+            messagePlaybackJob?.cancel()
+            messagePlaybackJob = null
+            _uiState.update { state ->
+                if (state.playingMessageKey == key) {
+                    state.copy(playingMessageKey = null)
+                } else {
+                    state
+                }
+            }
+            return
+        }
+
+        messagePlaybackJob?.cancel()
+        _uiState.update { it.copy(playingMessageKey = key) }
+
+        messagePlaybackJob = viewModelScope.launch {
+            try {
+                val explicitLanguage = message.languageCode
+                    .takeIf { it.isNotBlank() && it != "und" }
+                    ?: message.emergencyData?.languageCode
+                        ?.takeIf { it.isNotBlank() && it != "und" }
+                    ?: _uiState.value.selectedLanguageCode
+
+                val language = MmsTtsLanguage.fromIsoCode(explicitLanguage)
+                    ?: MmsTtsLanguage.fromIsoCode(_uiState.value.selectedLanguageCode)
+                    ?: throw IllegalStateException(
+                        "No supported TTS language for message playback"
+                    )
+
+                val text = if (message.isAlert) {
+                    message.emergencyData?.message ?: message.text
+                } else {
+                    message.text
+                }
+
+                val (frame, result) = mmsTtsEngine.synthesize(language, text)
+                // This creates an independent AudioTrack. Cancelling this job
+                // releases that track but does not cancel the incoming TTS lanes.
+                mmsTtsEngine.play(frame, result.sampleRate)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                android.util.Log.e(
+                    "MainViewModel",
+                    "Could not play selected message as speech",
+                    error
+                )
+            } finally {
+                _uiState.update { state ->
+                    if (state.playingMessageKey == key) {
+                        state.copy(playingMessageKey = null)
+                    } else {
+                        state
+                    }
+                }
+            }
+        }
+    }
+
     fun setTtsPlaybackMode(mode: com.tactical.platform.speech.mms.MmsTtsPlaybackMode) {
         if (_uiState.value.ttsPlaybackMode == mode) return
 
@@ -1984,7 +2063,8 @@ class MainViewModel @Inject constructor(
                 isAlert = true,
                 emergencyData = details,
                 timestampEpochMs = packet.timestamp,
-                conversationOrderEpochMs = localSendTime
+                conversationOrderEpochMs = localSendTime,
+                languageCode = packet.languageCode
             )
             localAppDataStore.saveSentMessage(
                 storedSentMessage(message)
@@ -2241,7 +2321,8 @@ class MainViewModel @Inject constructor(
                     isVoice = true,
                     isCallMode = true,
                     timestampEpochMs = transmission.timestampEpochMs,
-                    conversationOrderEpochMs = transmission.timestampEpochMs
+                    conversationOrderEpochMs = transmission.timestampEpochMs,
+                    languageCode = _uiState.value.selectedLanguageCode
                 )
 
                 continuousTransmissionMessages[transmission.id] = message
@@ -2336,7 +2417,9 @@ class MainViewModel @Inject constructor(
                 null
             },
             timestampEpochMs = message.timestampEpochMs,
-            conversationOrderEpochMs = message.conversationOrderEpochMs
+            conversationOrderEpochMs = message.conversationOrderEpochMs,
+            languageCode = message.languageCode.takeIf { it.isNotBlank() && it != "und" }
+                ?: message.languageCodeFallbackFromEmergency()
         )
 
     private fun storedSentMessage(message: ChatMessageUi): StoredSentMessage =
@@ -2349,7 +2432,8 @@ class MainViewModel @Inject constructor(
             isCallMode = message.isCallMode,
             isAlert = message.isAlert,
             severity = message.emergencyData?.severity,
-            languageCode = message.emergencyData?.languageCode,
+            languageCode = message.languageCode.takeIf { it.isNotBlank() && it != "und" }
+                ?: message.emergencyData?.languageCode,
             locationLatitude = message.emergencyData?.locationLatitude,
             locationLongitude = message.emergencyData?.locationLongitude,
             locationAccuracyMeters = message.emergencyData?.locationAccuracyMeters,
@@ -2386,7 +2470,8 @@ class MainViewModel @Inject constructor(
             isAlert = message.isAlert,
             emergencyData = emergencyData,
             timestampEpochMs = message.timestampEpochMs,
-            conversationOrderEpochMs = message.receivedAtEpochMs
+            conversationOrderEpochMs = message.receivedAtEpochMs,
+            languageCode = message.languageCode ?: "und"
         )
     }
 
@@ -2464,6 +2549,7 @@ class MainViewModel @Inject constructor(
         // The foreground TacticalMeshService owns the singleton discovery
         // lifecycle. Do not stop discovery when the Activity/ViewModel goes
         // away, otherwise background reconnection would silently lose scans.
+        messagePlaybackJob?.cancel()
         healthJob?.cancel()
         audioRecorder.stop()
         reconnectJobs.values.forEach { it.cancel() }
