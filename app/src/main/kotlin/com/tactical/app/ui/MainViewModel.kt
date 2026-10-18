@@ -99,9 +99,6 @@ data class ChatMessageUi(
         get() = "$sender|$timestampEpochMs|$text|$isAlert|$isVoice|$isCallMode"
 }
 
-private fun ChatMessageUi.languageCodeFallbackFromEmergency(): String? =
-    emergencyData?.languageCode?.takeIf { it.isNotBlank() && it != "und" }
-
 data class EmergencyAlertData(
     val sender: String,
     val timestampText: String,
@@ -2418,8 +2415,7 @@ class MainViewModel @Inject constructor(
             },
             timestampEpochMs = message.timestampEpochMs,
             conversationOrderEpochMs = message.conversationOrderEpochMs,
-            languageCode = message.languageCode.takeIf { it.isNotBlank() && it != "und" }
-                ?: message.languageCodeFallbackFromEmergency()
+            languageCode = message.languageCode ?: "und"
         )
 
     private fun storedSentMessage(message: ChatMessageUi): StoredSentMessage =
