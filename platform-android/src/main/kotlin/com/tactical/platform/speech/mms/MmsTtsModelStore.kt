@@ -155,6 +155,14 @@ class MmsTtsModelStore @Inject constructor(
                 allowedFiles = SYSPIN_BENGALI_ALLOWED_FILES,
                 requiredFiles = SYSPIN_BENGALI_REQUIRED_FILES
             )
+        } else if (language.modelCode == SYSPIN_MARATHI_CODE) {
+            ModelProfile(
+                assetName = SYSPIN_MARATHI_ZIP_ASSET,
+                zipRoot = SYSPIN_MARATHI_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_MARATHI_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_MARATHI_ALLOWED_FILES,
+                requiredFiles = SYSPIN_MARATHI_REQUIRED_FILES
+            )
         } else if (language.modelCode in LEGACY_MMS_CODES) {
             ModelProfile(
                 assetName = LEGACY_BUNDLED_ZIP_ASSET,
@@ -197,6 +205,14 @@ class MmsTtsModelStore @Inject constructor(
         private const val SYSPIN_BENGALI_ZIP_ASSET = "models/syspin-bengali.zip"
         private const val SYSPIN_BENGALI_ZIP_ROOT = "syspin-bengali"
         private const val SYSPIN_BENGALI_ARCHIVE_LANGUAGE = "ben"
+
+        // Local-only experimental SYSPIN Marathi asset. ZIP layout:
+        // syspin-marathi/mar/config.json
+        // syspin-marathi/mar/model.onnx
+        private const val SYSPIN_MARATHI_CODE = "mar"
+        private const val SYSPIN_MARATHI_ZIP_ASSET = "models/syspin-marathi.zip"
+        private const val SYSPIN_MARATHI_ZIP_ROOT = "syspin-marathi"
+        private const val SYSPIN_MARATHI_ARCHIVE_LANGUAGE = "mar"
         private const val BUFFER_SIZE = 64 * 1024
 
         private val LEGACY_MMS_CODES = setOf("eng", "hin")
@@ -235,6 +251,16 @@ class MmsTtsModelStore @Inject constructor(
         )
 
         private val SYSPIN_BENGALI_REQUIRED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_MARATHI_ALLOWED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_MARATHI_REQUIRED_FILES = setOf(
             "config.json",
             "model.onnx"
         )
