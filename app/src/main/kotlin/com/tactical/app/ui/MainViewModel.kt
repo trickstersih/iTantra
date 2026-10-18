@@ -1578,6 +1578,7 @@ class MainViewModel @Inject constructor(
         val key = message.playbackKey
 
         if (_uiState.value.playingMessageKey == key) {
+            mmsTtsEngine.stopManualPlayback()
             messagePlaybackJob?.cancel()
             messagePlaybackJob = null
             _uiState.update { state ->
@@ -1590,6 +1591,7 @@ class MainViewModel @Inject constructor(
             return
         }
 
+        val playbackGeneration = mmsTtsEngine.beginManualPlayback()
         messagePlaybackJob?.cancel()
         _uiState.update { it.copy(playingMessageKey = key) }
 
@@ -1614,9 +1616,13 @@ class MainViewModel @Inject constructor(
                 }
 
                 val (frame, result) = mmsTtsEngine.synthesize(language, text)
-                // This creates an independent AudioTrack. Cancelling this job
-                // releases that track but does not cancel the incoming TTS lanes.
-                mmsTtsEngine.play(frame, result.sampleRate)
+                // This plays on its own, cancellable AudioTrack. Incoming
+                // transmission tracks are intentionally left untouched.
+                mmsTtsEngine.playManual(
+                    frame = frame,
+                    sampleRate = result.sampleRate,
+                    manualGeneration = playbackGeneration
+                )
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
@@ -2545,6 +2551,7 @@ class MainViewModel @Inject constructor(
         // The foreground TacticalMeshService owns the singleton discovery
         // lifecycle. Do not stop discovery when the Activity/ViewModel goes
         // away, otherwise background reconnection would silently lose scans.
+        mmsTtsEngine.stopManualPlayback()
         messagePlaybackJob?.cancel()
         healthJob?.cancel()
         audioRecorder.stop()
