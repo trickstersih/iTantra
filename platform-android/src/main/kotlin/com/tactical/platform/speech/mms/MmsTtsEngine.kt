@@ -18,6 +18,7 @@ import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.LongBuffer
+import java.nio.FloatBuffer
 import javax.inject.Inject
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -40,6 +41,7 @@ class MmsTtsEngine @Inject constructor(
     private var session: OrtSession? = null
     private var tokenizer: MmsVitsTokenizer? = null
     private var itantTokenizer: ItantraVitsTokenizer? = null
+    private var syspinBengaliTokenizer: SyspinBengaliTokenizer? = null
     private var sampleRate: Int = DEFAULT_SAMPLE_RATE
 
     /**
@@ -65,9 +67,10 @@ class MmsTtsEngine @Inject constructor(
             val directory = modelStore.ensureBundledModelAvailable(language)
             ensureLoaded(language, directory)
 
-            val useItantraModel = usesItantraVitsModel(language)
+            val useSyspinModel = usesSyspinBengaliModel(language)
+            val useItantraModel = usesItantraVitsModel(language) && !useSyspinModel
             val currentSession = checkNotNull(session)
-            val legacyTokenized = if (useItantraModel) null else {
+            val legacyTokenized = if (useItantraModel || useSyspinModel) null else {
                 checkNotNull(tokenizer).tokenize(text)
             }
             val itantTokenized = if (useItantraModel) {
@@ -75,9 +78,17 @@ class MmsTtsEngine @Inject constructor(
             } else {
                 null
             }
-            val tokenizedIds = legacyTokenized?.ids ?: checkNotNull(itantTokenized).ids
+            val syspinTokenized = if (useSyspinModel) {
+                checkNotNull(syspinBengaliTokenizer).tokenize(text)
+            } else {
+                null
+            }
+            val tokenizedIds = legacyTokenized?.ids
+                ?: itantTokenized?.ids
+                ?: checkNotNull(syspinTokenized).ids
             val normalizedText = legacyTokenized?.normalizedText
-                ?: checkNotNull(itantTokenized).normalizedText
+                ?: itantTokenized?.normalizedText
+                ?: checkNotNull(syspinTokenized).cleanedText
 
             itantTokenized?.droppedCharacters
                 ?.takeIf { it.isNotEmpty() }
@@ -92,11 +103,15 @@ class MmsTtsEngine @Inject constructor(
             val startNs = System.nanoTime()
             val inputIdsName = findInputName(
                 currentSession,
-                if (useItantraModel) "x" else "input_ids"
+                when {
+                    useSyspinModel -> "input"
+                    useItantraModel -> "x"
+                    else -> "input_ids"
+                }
             ) ?: throw IllegalStateException(
                 "TTS token input is missing for " + language.displayName
             )
-            val attentionMaskName = if (useItantraModel) {
+            val attentionMaskName = if (useItantraModel || useSyspinModel) {
                 null
             } else {
                 findInputName(
@@ -123,8 +138,34 @@ class MmsTtsEngine @Inject constructor(
                     )
                 }
 
+                if (useSyspinModel) {
+                    val lengthsName = findInputName(currentSession, "input_lengths")
+                        ?: throw IllegalStateException("SYSPIN input_lengths input is missing")
+                    val scalesName = findInputName(currentSession, "scales")
+                        ?: throw IllegalStateException("SYSPIN scales input is missing")
+                    inputs[lengthsName] = OnnxTensor.createTensor(
+                        environment,
+                        LongBuffer.wrap(longArrayOf(tokenizedIds.size.toLong())),
+                        longArrayOf(1L)
+                    )
+                    // Match config.json / the successful Python ONNX reference:
+                    // [inference_noise_scale, length_scale, inference_noise_scale_dp].
+                    inputs[scalesName] = OnnxTensor.createTensor(
+                        environment,
+                        FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 1.0f)),
+                        longArrayOf(3L)
+                    )
+                }
+
+                val knownInputs = mutableSetOf(inputIdsName)
+                attentionMaskName?.let { knownInputs.add(it) }
+                if (useSyspinModel) {
+                    knownInputs.add(findInputName(currentSession, "input_lengths")!!)
+                    knownInputs.add(findInputName(currentSession, "scales")!!)
+                }
+
                 currentSession.inputInfo.keys
-                    .filter { it != inputIdsName && it != attentionMaskName }
+                    .filter { it !in knownInputs }
                     .forEach { name ->
                         if (name.contains("speaker", ignoreCase = true)) {
                             inputs[name] = OnnxTensor.createTensor(
@@ -135,8 +176,8 @@ class MmsTtsEngine @Inject constructor(
                         } else {
                             throw IllegalStateException(
                                 "Unsupported TTS input '" + name + "'. " +
-                                    "Expected x for iTantra VITS, or input_ids/attention_mask " +
-                                    "(and optionally speaker_id) for legacy MMS."
+                                    "SYSPIN expects input/input_lengths/scales; iTantra VITS expects x; " +
+                                    "legacy MMS expects input_ids/attention_mask (and optionally speaker_id)."
                             )
                         }
                     }
@@ -208,11 +249,12 @@ class MmsTtsEngine @Inject constructor(
     }
 
     private fun ensureLoaded(language: MmsTtsLanguage, directory: File) {
-        val useItantraModel = usesItantraVitsModel(language)
-        val tokenizerLoaded = if (useItantraModel) {
-            itantTokenizer != null
-        } else {
-            tokenizer != null
+        val useSyspinModel = usesSyspinBengaliModel(language)
+        val useItantraModel = usesItantraVitsModel(language) && !useSyspinModel
+        val tokenizerLoaded = when {
+            useSyspinModel -> syspinBengaliTokenizer != null
+            useItantraModel -> itantTokenizer != null
+            else -> tokenizer != null
         }
         if (loadedLanguage == language && session != null && tokenizerLoaded) return
 
@@ -220,7 +262,11 @@ class MmsTtsEngine @Inject constructor(
 
         val modelFile = File(
             directory,
-            if (useItantraModel) "model.int8.mixed.onnx" else "model.int8.onnx"
+            when {
+                useSyspinModel -> "model.onnx"
+                useItantraModel -> "model.int8.mixed.onnx"
+                else -> "model.int8.onnx"
+            }
         )
         require(modelFile.isFile && modelFile.length() > 0L) {
             "TTS ONNX model is missing: " + modelFile.absolutePath
@@ -234,8 +280,13 @@ class MmsTtsEngine @Inject constructor(
             OrtSession.SessionOptions()
         )
 
-        if (useItantraModel) {
+        if (useSyspinModel) {
             tokenizer = null
+            itantTokenizer = null
+            syspinBengaliTokenizer = SyspinBengaliTokenizer()
+        } else if (useItantraModel) {
+            tokenizer = null
+            syspinBengaliTokenizer = null
             val customMetadata = checkNotNull(session).metadata.customMetadata
             android.util.Log.i(
                 TAG,
@@ -249,21 +300,25 @@ class MmsTtsEngine @Inject constructor(
         } else {
             tokenizer = MmsVitsTokenizer(directory)
             itantTokenizer = null
+            syspinBengaliTokenizer = null
         }
 
         val config = JSONObject(
             File(directory, "config.json").readText(Charsets.UTF_8)
         )
-        sampleRate = if (useItantraModel) {
-            config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
-        } else {
-            config.optInt(
+        sampleRate = when {
+            useSyspinModel -> config.getJSONObject("audio").getInt("sample_rate")
+            useItantraModel -> config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
+            else -> config.optInt(
                 "sampling_rate",
                 config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
             )
         }
         loadedLanguage = language
     }
+
+    private fun usesSyspinBengaliModel(language: MmsTtsLanguage): Boolean =
+        language.modelCode == "ben"
 
     private fun usesItantraVitsModel(language: MmsTtsLanguage): Boolean =
         language.modelCode !in LEGACY_MMS_CODES
@@ -541,6 +596,7 @@ class MmsTtsEngine @Inject constructor(
         session = null
         tokenizer = null
         itantTokenizer = null
+        syspinBengaliTokenizer = null
         loadedLanguage = null
     }
 
