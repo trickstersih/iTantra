@@ -177,7 +177,8 @@ class TacticalMeshService : Service() {
                                 text = displayText,
                                 timestampEpochMs = packet.timestamp,
                                 isVoice = isVoiceMessage,
-                                isCallMode = packet.isCallMode
+                                isCallMode = packet.isCallMode,
+                                languageCode = packet.languageCode
                             )
                         )
 
