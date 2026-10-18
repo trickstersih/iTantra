@@ -298,13 +298,12 @@ class MmsTtsEngine @Inject constructor(
      * Incoming voice playback uses play(), so its tracks are never affected.
      */
     fun beginManualPlayback(): Long {
-        val previousTrack: AudioTrack?
-        val generation: Long
-        synchronized(manualPlaybackLock) {
+        val (generation, previousTrack) = synchronized(manualPlaybackLock) {
             manualPlaybackGeneration += 1L
-            generation = manualPlaybackGeneration
-            previousTrack = manualTrack
+            val newGeneration = manualPlaybackGeneration
+            val activeTrack = manualTrack
             manualTrack = null
+            newGeneration to activeTrack
         }
         stopTrack(previousTrack)
         return generation
