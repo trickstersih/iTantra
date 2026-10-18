@@ -30,6 +30,12 @@ class MmsTtsEngine @Inject constructor(
     private val environment: OrtEnvironment = OrtEnvironment.getEnvironment()
     private val mutex = Mutex()
 
+    // Manual chat playback owns a separate AudioTrack from incoming transmission
+    // playback, so stopping a preview never interrupts live incoming speech.
+    private val manualPlaybackLock = Any()
+    private var manualPlaybackGeneration = 0L
+    private var manualTrack: AudioTrack? = null
+
     private var loadedLanguage: MmsTtsLanguage? = null
     private var session: OrtSession? = null
     private var tokenizer: MmsVitsTokenizer? = null
@@ -287,74 +293,139 @@ class MmsTtsEngine @Inject constructor(
         return null
     }
 
-    suspend fun play(frame: AudioFrame, sampleRate: Int) =
-        withContext(Dispatchers.IO) {
-            val channelMask = AudioFormat.CHANNEL_OUT_MONO
-            val encoding = AudioFormat.ENCODING_PCM_16BIT
-            val minBuffer = AudioTrack.getMinBufferSize(
-                sampleRate,
-                channelMask,
-                encoding
-            )
-            require(minBuffer > 0) {
-                "AudioTrack buffer size unavailable for " + sampleRate + " Hz"
-            }
-
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
-                .setAudioFormat(
-                    AudioFormat.Builder()
-                        .setSampleRate(sampleRate)
-                        .setChannelMask(channelMask)
-                        .setEncoding(encoding)
-                        .build()
-                )
-                .setBufferSizeInBytes(
-                    maxOf(
-                        minBuffer,
-                        frame.data.size.coerceAtMost(minBuffer * 4)
-                    )
-                )
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .build()
-
-            try {
-                track.play()
-                var offset = 0
-                while (offset < frame.data.size) {
-                    val written = track.write(
-                        frame.data,
-                        offset,
-                        frame.data.size - offset
-                    )
-                    require(written > 0) {
-                        "AudioTrack.write failed: " + written
-                    }
-                    offset += written
-                }
-
-                // write() only guarantees that samples were accepted by
-                // AudioTrack; stopping immediately can cut off the buffered
-                // tail. This became especially noticeable when a framed PTT
-                // message was synthesized as three separate audio segments.
-                val totalFrames = frame.data.size / 2
-                while (
-                    track.playState == AudioTrack.PLAYSTATE_PLAYING &&
-                    track.playbackHeadPosition < totalFrames
-                ) {
-                    delay(10L)
-                }
-
-                track.stop()
-            } finally {
-                track.release()
-            }
+    /**
+     * Invalidates an active manual preview and stops its AudioTrack immediately.
+     * Incoming voice playback uses play(), so its tracks are never affected.
+     */
+    fun beginManualPlayback(): Long {
+        val previousTrack: AudioTrack?
+        val generation: Long
+        synchronized(manualPlaybackLock) {
+            manualPlaybackGeneration += 1L
+            generation = manualPlaybackGeneration
+            previousTrack = manualTrack
+            manualTrack = null
         }
+        stopTrack(previousTrack)
+        return generation
+    }
+
+    fun stopManualPlayback() {
+        val track = synchronized(manualPlaybackLock) {
+            manualPlaybackGeneration += 1L
+            manualTrack.also { manualTrack = null }
+        }
+        stopTrack(track)
+    }
+
+    suspend fun play(frame: AudioFrame, sampleRate: Int) =
+        playInternal(frame, sampleRate, manualGeneration = null)
+
+    suspend fun playManual(
+        frame: AudioFrame,
+        sampleRate: Int,
+        manualGeneration: Long
+    ) = playInternal(frame, sampleRate, manualGeneration)
+
+    private suspend fun playInternal(
+        frame: AudioFrame,
+        sampleRate: Int,
+        manualGeneration: Long?
+    ) = withContext(Dispatchers.IO) {
+        val channelMask = AudioFormat.CHANNEL_OUT_MONO
+        val encoding = AudioFormat.ENCODING_PCM_16BIT
+        val minBuffer = AudioTrack.getMinBufferSize(
+            sampleRate,
+            channelMask,
+            encoding
+        )
+        require(minBuffer > 0) {
+            "AudioTrack buffer size unavailable for " + sampleRate + " Hz"
+        }
+
+        val track = AudioTrack.Builder()
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
+            .setAudioFormat(
+                AudioFormat.Builder()
+                    .setSampleRate(sampleRate)
+                    .setChannelMask(channelMask)
+                    .setEncoding(encoding)
+                    .build()
+            )
+            .setBufferSizeInBytes(
+                maxOf(
+                    minBuffer,
+                    frame.data.size.coerceAtMost(minBuffer * 4)
+                )
+            )
+            .setTransferMode(AudioTrack.MODE_STREAM)
+            .build()
+
+        try {
+            if (manualGeneration == null) {
+                track.play()
+            } else {
+                // Register and start atomically with respect to stop/begin.
+                // A stale cancelled preview cannot start after a newer tap.
+                val started = synchronized(manualPlaybackLock) {
+                    if (manualGeneration != manualPlaybackGeneration) {
+                        false
+                    } else {
+                        manualTrack = track
+                        track.play()
+                        true
+                    }
+                }
+                if (!started) return@withContext
+            }
+
+            var offset = 0
+            while (offset < frame.data.size) {
+                val written = track.write(
+                    frame.data,
+                    offset,
+                    frame.data.size - offset
+                )
+                require(written > 0) {
+                    "AudioTrack.write failed: " + written
+                }
+                offset += written
+            }
+
+            // write() only guarantees that samples were accepted by
+            // AudioTrack; stopping immediately can cut off the buffered tail.
+            val totalFrames = frame.data.size / 2
+            while (
+                track.playState == AudioTrack.PLAYSTATE_PLAYING &&
+                track.playbackHeadPosition < totalFrames
+            ) {
+                delay(10L)
+            }
+
+            if (track.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                track.stop()
+            }
+        } finally {
+            if (manualGeneration != null) {
+                synchronized(manualPlaybackLock) {
+                    if (manualTrack === track) manualTrack = null
+                }
+            }
+            runCatching { track.release() }
+        }
+    }
+
+    private fun stopTrack(track: AudioTrack?) {
+        if (track == null) return
+        runCatching { track.pause() }
+        runCatching { track.flush() }
+        runCatching { track.stop() }
+    }
 
     private fun floatArrayToAudioFrame(
         samples: FloatArray,
