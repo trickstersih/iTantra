@@ -14,12 +14,13 @@ import javax.inject.Singleton
 /**
  * Stores bundled TTS models under app-private storage.
  *
- * English and Hindi continue to use the existing MMS bundle. The eight other
- * languages use the new iTantra VITS bundle. Only the selected language's
- * files are extracted; model sessions are serialized by MmsTtsEngine.
+ * English and Hindi use the existing MMS bundle. Bengali and Marathi use
+ * their isolated SYSPIN model assets; the other supported languages use the
+ * iTantra VITS bundle. Only the selected language's files are extracted and
+ * model sessions are serialized by MmsTtsEngine.
  *
- * The multilingual ZIP is intentionally a local-only asset during this test
- * branch; it is not added to Git because of its size.
+ * Large model ZIPs are local-only test assets and are intentionally excluded
+ * from Git.
  */
 @Singleton
 class MmsTtsModelStore @Inject constructor(
