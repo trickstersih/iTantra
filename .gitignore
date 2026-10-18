@@ -50,6 +50,7 @@ Thumbs.db
 # and bundled into the APK, but are intentionally not committed to Git.
 app/src/main/assets/models/quantized_models.zip
 app/src/main/assets/models/itantra-tts.zip
+app/src/main/assets/models/syspin-bengali.zip
 app/src/main/assets/models/moonshine_stt_tiny_en.zip
 
 # Large local Hindi Vosk STT model (bundled into APK but not committed)
