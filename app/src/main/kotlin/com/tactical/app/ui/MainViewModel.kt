@@ -94,6 +94,20 @@ data class ChatMessageUi(
     val conversationOrderEpochMs: Long = 0L,
     val languageCode: String = "und"
 ) {
+    /**
+     * A message is eligible for manual TTS only when its language is explicitly
+     * known. Keyboard-entered text is transmitted with "und", so it stays
+     * non-playable instead of guessing from the currently selected STT language.
+     */
+    val playbackLanguageCode: String?
+        get() = languageCode.takeIf { MmsTtsLanguage.fromIsoCode(it) != null }
+            ?: emergencyData?.languageCode?.takeIf {
+                MmsTtsLanguage.fromIsoCode(it) != null
+            }
+
+    val canPlayBack: Boolean
+        get() = playbackLanguageCode != null
+
     /** Stable UI key used to ensure only one user-requested message is playing. */
     val playbackKey: String
         get() = "$sender|$timestampEpochMs|$text|$isAlert|$isVoice|$isCallMode"
@@ -1575,6 +1589,10 @@ class MainViewModel @Inject constructor(
      * incoming message AudioTracks remain free to overlap it.
      */
     fun toggleMessagePlayback(message: ChatMessageUi) {
+        // Do not guess a language from the current STT selection. Only messages
+        // carrying a known language flag (for example, PTT transcriptions) play.
+        val explicitLanguage = message.playbackLanguageCode ?: return
+        val language = MmsTtsLanguage.fromIsoCode(explicitLanguage) ?: return
         val key = message.playbackKey
 
         if (_uiState.value.playingMessageKey == key) {
@@ -1597,18 +1615,6 @@ class MainViewModel @Inject constructor(
 
         messagePlaybackJob = viewModelScope.launch {
             try {
-                val explicitLanguage = message.languageCode
-                    .takeIf { it.isNotBlank() && it != "und" }
-                    ?: message.emergencyData?.languageCode
-                        ?.takeIf { it.isNotBlank() && it != "und" }
-                    ?: _uiState.value.selectedLanguageCode
-
-                val language = MmsTtsLanguage.fromIsoCode(explicitLanguage)
-                    ?: MmsTtsLanguage.fromIsoCode(_uiState.value.selectedLanguageCode)
-                    ?: throw IllegalStateException(
-                        "No supported TTS language for message playback"
-                    )
-
                 val text = if (message.isAlert) {
                     message.emergencyData?.message ?: message.text
                 } else {
