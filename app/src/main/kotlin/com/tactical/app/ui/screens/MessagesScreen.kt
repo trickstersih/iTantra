@@ -567,12 +567,14 @@ private fun MessageRow(
                         modifier = Modifier.weight(1f)
                     )
 
-                    MessagePlaybackButton(
-                        ui = ui,
-                        message = message,
-                        playingMessageKey = playingMessageKey,
-                        onClick = { onTogglePlayback(message) }
-                    )
+                    if (message.canPlayBack) {
+                        MessagePlaybackButton(
+                            ui = ui,
+                            message = message,
+                            playingMessageKey = playingMessageKey,
+                            onClick = { onTogglePlayback(message) }
+                        )
+                    }
 
                     if (isSelectionMode) {
                         SelectionIndicator(
@@ -682,12 +684,14 @@ private fun MessageRow(
                         Spacer(Modifier.weight(1f))
                     }
 
-                    MessagePlaybackButton(
-                        ui = ui,
-                        message = message,
-                        playingMessageKey = playingMessageKey,
-                        onClick = { onTogglePlayback(message) }
-                    )
+                    if (message.canPlayBack) {
+                        MessagePlaybackButton(
+                            ui = ui,
+                            message = message,
+                            playingMessageKey = playingMessageKey,
+                            onClick = { onTogglePlayback(message) }
+                        )
+                    }
 
                     if (isSelectionMode) {
                         SelectionIndicator(
