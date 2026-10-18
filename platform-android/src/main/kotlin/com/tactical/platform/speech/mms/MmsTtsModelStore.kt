@@ -147,7 +147,15 @@ class MmsTtsModelStore @Inject constructor(
     }
 
     private fun profileFor(language: MmsTtsLanguage): ModelProfile {
-        return if (language.modelCode in LEGACY_MMS_CODES) {
+        return if (language.modelCode == SYSPIN_BENGALI_CODE) {
+            ModelProfile(
+                assetName = SYSPIN_BENGALI_ZIP_ASSET,
+                zipRoot = SYSPIN_BENGALI_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_BENGALI_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_BENGALI_ALLOWED_FILES,
+                requiredFiles = SYSPIN_BENGALI_REQUIRED_FILES
+            )
+        } else if (language.modelCode in LEGACY_MMS_CODES) {
             ModelProfile(
                 assetName = LEGACY_BUNDLED_ZIP_ASSET,
                 zipRoot = LEGACY_ZIP_ROOT,
@@ -181,6 +189,14 @@ class MmsTtsModelStore @Inject constructor(
         // The new ZIP is a local asset at app/src/main/assets/models/ during testing.
         private const val ITANTRA_BUNDLED_ZIP_ASSET = "models/itantra-tts.zip"
         private const val ITANTRA_ZIP_ROOT = ".itantra-tts-onnx"
+
+        // Local-only experimental SYSPIN Bengali asset. ZIP layout:
+        // syspin-bengali/ben/config.json
+        // syspin-bengali/ben/model.onnx
+        private const val SYSPIN_BENGALI_CODE = "ben"
+        private const val SYSPIN_BENGALI_ZIP_ASSET = "models/syspin-bengali.zip"
+        private const val SYSPIN_BENGALI_ZIP_ROOT = "syspin-bengali"
+        private const val SYSPIN_BENGALI_ARCHIVE_LANGUAGE = "ben"
         private const val BUFFER_SIZE = 64 * 1024
 
         private val LEGACY_MMS_CODES = setOf("eng", "hin")
@@ -211,6 +227,16 @@ class MmsTtsModelStore @Inject constructor(
             "config.json",
             "tokens.txt",
             "model.int8.mixed.onnx"
+        )
+
+        private val SYSPIN_BENGALI_ALLOWED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_BENGALI_REQUIRED_FILES = setOf(
+            "config.json",
+            "model.onnx"
         )
     }
 }
