@@ -309,10 +309,11 @@ class MainActivity : ComponentActivity() {
                                     onRefreshDiscovery = viewModel::forceDiscovery
                                 )
                                     2 -> MessagesScreen(
-                                        state,
-                                        viewModel::sendTextMessage,
-                                        viewModel::markMessagesRead,
-                                        viewModel::deleteMessages
+                                        uiState = state,
+                                        onSendMessage = viewModel::sendTextMessage,
+                                        onMessagesOpened = viewModel::markMessagesRead,
+                                        onDeleteMessages = viewModel::deleteMessages,
+                                        onToggleMessagePlayback = viewModel::toggleMessagePlayback
                                     )
                                 }
                             }

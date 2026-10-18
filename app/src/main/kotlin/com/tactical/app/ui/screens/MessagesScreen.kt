@@ -15,6 +15,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -45,6 +47,7 @@ fun MessagesScreen(
     onSendMessage: (String) -> Unit,
     onMessagesOpened: () -> Unit,
     onDeleteMessages: (Set<ChatMessageUi>, Boolean) -> Unit,
+    onToggleMessagePlayback: (ChatMessageUi) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var input by remember { mutableStateOf("") }
@@ -322,6 +325,8 @@ fun MessagesScreen(
                     isSent = message.sender == "YOU",
                     isSelectionMode = selectionMode,
                     isSelected = messageStorageKey(message) in selectedKeys,
+                    playingMessageKey = uiState.playingMessageKey,
+                    onTogglePlayback = onToggleMessagePlayback,
                     onClick = {
                         if (selectionMode) {
                             toggleSelection(message)
@@ -484,6 +489,8 @@ private fun MessageRow(
     isSent: Boolean,
     isSelectionMode: Boolean,
     isSelected: Boolean,
+    playingMessageKey: String?,
+    onTogglePlayback: (ChatMessageUi) -> Unit,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -548,20 +555,34 @@ private fun MessageRow(
 
                 Spacer(Modifier.height(ui.dp(5.dp)))
 
-                Text(
-                    LocalUiStrings.current.text(UiTextKey.EMERGENCY_TAP_DETAILS),
-                    color = RedTacticalPrimaryBright,
-                    fontSize = ui.sp(10f),
-                    fontWeight = FontWeight.Bold
-                )
-
-                if (isSelectionMode) {
-                    Spacer(Modifier.height(ui.smallSpacing))
-                    SelectionIndicator(
-                        ui = ui,
-                        isSelected = isSelected,
-                        modifier = Modifier.align(Alignment.End)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        LocalUiStrings.current.text(UiTextKey.EMERGENCY_TAP_DETAILS),
+                        color = RedTacticalPrimaryBright,
+                        fontSize = ui.sp(10f),
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
                     )
+
+                    if (message.canPlayBack) {
+                        MessagePlaybackButton(
+                            ui = ui,
+                            message = message,
+                            playingMessageKey = playingMessageKey,
+                            onClick = { onTogglePlayback(message) }
+                        )
+                    }
+
+                    if (isSelectionMode) {
+                        SelectionIndicator(
+                            ui = ui,
+                            isSelected = isSelected,
+                            modifier = Modifier.padding(start = ui.dp(4.dp))
+                        )
+                    }
                 }
             }
         }
@@ -647,30 +668,62 @@ private fun MessageRow(
 
                 Spacer(Modifier.height(ui.dp(4.dp)))
 
-                if (message.statusText.isNotBlank() || isSelectionMode) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (message.statusText.isNotBlank()) {
-                            Text(
-                                message.statusText,
-                                color = borderColor,
-                                fontSize = ui.sp(9f)
-                            )
-                        }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (message.statusText.isNotBlank()) {
+                        Text(
+                            message.statusText,
+                            color = borderColor,
+                            fontSize = ui.sp(9f),
+                            modifier = Modifier.weight(1f)
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
 
-                        if (isSelectionMode) {
-                            if (message.statusText.isNotBlank()) {
-                                Spacer(Modifier.width(8.dp))
-                            }
-                            SelectionIndicator(ui = ui, isSelected = isSelected)
-                        }
+                    if (message.canPlayBack) {
+                        MessagePlaybackButton(
+                            ui = ui,
+                            message = message,
+                            playingMessageKey = playingMessageKey,
+                            onClick = { onTogglePlayback(message) }
+                        )
+                    }
+
+                    if (isSelectionMode) {
+                        SelectionIndicator(
+                            ui = ui,
+                            isSelected = isSelected,
+                            modifier = Modifier.padding(start = ui.dp(4.dp))
+                        )
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MessagePlaybackButton(
+    ui: ResponsiveUi,
+    message: ChatMessageUi,
+    playingMessageKey: String?,
+    onClick: () -> Unit
+) {
+    val isPlaying = playingMessageKey == message.playbackKey
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(ui.dp(36.dp))
+    ) {
+        Icon(
+            imageVector = if (isPlaying) Icons.Default.Stop else Icons.Default.PlayArrow,
+            contentDescription = if (isPlaying) "Stop message playback" else "Play message speech",
+            tint = if (isPlaying) RedTacticalPrimaryBright else SquadBlueGlow,
+            modifier = Modifier.size(ui.dp(20.dp))
+        )
     }
 }
 

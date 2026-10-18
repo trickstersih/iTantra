@@ -12,13 +12,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Stores bundled MMS-TTS models under app-private storage.
+ * Stores bundled TTS models under app-private storage.
  *
- * The complete ZIP remains in the APK. Individual language models are
- * extracted into filesDir/tts_models only when that language is first needed.
- * This keeps disk usage and extraction work proportional to the languages
- * actually used, while the TTS engine itself keeps only one ONNX session
- * resident in memory at a time.
+ * English and Hindi continue to use the existing MMS bundle. The eight other
+ * languages use the new iTantra VITS bundle. Only the selected language's
+ * files are extracted; model sessions are serialized by MmsTtsEngine.
+ *
+ * The multilingual ZIP is intentionally a local-only asset during this test
+ * branch; it is not added to Git because of its size.
  */
 @Singleton
 class MmsTtsModelStore @Inject constructor(
@@ -34,8 +35,9 @@ class MmsTtsModelStore @Inject constructor(
             "TTS model for " + language.displayName + " is not bundled in this APK"
         }
 
+        val profile = profileFor(language)
         val destination = rootDirectory.resolve(language.modelCode)
-        if (isComplete(destination)) {
+        if (isComplete(destination, profile)) {
             return@withContext destination
         }
 
@@ -46,34 +48,34 @@ class MmsTtsModelStore @Inject constructor(
         tempRoot.mkdirs()
 
         try {
-            context.assets.open(BUNDLED_ZIP_ASSET).use { input ->
+            context.assets.open(profile.assetName).use { input ->
                 ZipInputStream(
                     BufferedInputStream(input, BUFFER_SIZE)
                 ).use { zip ->
                     while (true) {
                         val entry = zip.nextEntry ?: break
                         val normalized = entry.name.replace('\\', '/')
-                        val relative = normalized.removePrefix(ZIP_ROOT + "/")
+                        val prefix = profile.zipRoot + "/"
 
-                        if (
-                            !normalized.startsWith(ZIP_ROOT + "/") ||
-                            entry.isDirectory
-                        ) {
+                        if (!normalized.startsWith(prefix) || entry.isDirectory) {
                             zip.closeEntry()
                             continue
                         }
 
+                        val relative = normalized.removePrefix(prefix)
                         val parts = relative.split('/')
                         if (
                             parts.size != 2 ||
-                            parts[0] != language.modelCode ||
-                            parts[1] !in ALLOWED_FILES
+                            parts[0] != profile.archiveLanguageCode ||
+                            parts[1] !in profile.allowedFiles
                         ) {
                             zip.closeEntry()
                             continue
                         }
 
-                        val output = File(tempRoot, relative)
+                        // Normalize archive-specific language codes (bn, gu, ...)
+                        // to the existing model codes (ben, guj, ...) for app storage.
+                        val output = File(tempRoot, language.modelCode + "/" + parts[1])
                         val canonicalRoot = tempRoot.canonicalFile
                         val canonicalOutput = output.canonicalFile
 
@@ -94,20 +96,20 @@ class MmsTtsModelStore @Inject constructor(
                 }
             }
 
-            if (!isComplete(tempRoot.resolve(language.modelCode))) {
+            val stagedModel = tempRoot.resolve(language.modelCode)
+            if (!isComplete(stagedModel, profile)) {
                 throw IOException(
-                    "Bundled TTS model is incomplete for " +
-                        language.displayName
+                    "Bundled TTS model is incomplete for " + language.displayName +
+                        ". Expected files: " + profile.requiredFiles.joinToString()
                 )
             }
 
             rootDirectory.mkdirs()
             destination.deleteRecursively()
 
-            val source = tempRoot.resolve(language.modelCode)
-            if (!source.renameTo(destination)) {
-                source.copyRecursively(destination, overwrite = true)
-                source.deleteRecursively()
+            if (!stagedModel.renameTo(destination)) {
+                stagedModel.copyRecursively(destination, overwrite = true)
+                stagedModel.deleteRecursively()
             }
 
             destination
@@ -123,10 +125,7 @@ class MmsTtsModelStore @Inject constructor(
     }
 
     /**
-     * Removes model directories left behind by older builds that bundled
-     * additional languages. The current APK intentionally bundles only the
-     * languages in BUNDLED_LANGUAGES, so stale directories are no longer
-     * usable and only consume persistent storage.
+     * Removes model directories for languages no longer supported by this APK.
      */
     fun cleanupUnbundledModels() {
         rootDirectory.listFiles()
@@ -139,30 +138,55 @@ class MmsTtsModelStore @Inject constructor(
             }
     }
 
-    private fun isComplete(directory: File): Boolean {
+    private fun isComplete(directory: File, profile: ModelProfile): Boolean {
         if (!directory.isDirectory) return false
-        return REQUIRED_FILES.all { name ->
+        return profile.requiredFiles.all { name ->
             val file = File(directory, name)
             file.isFile && file.length() > 0L
         }
     }
 
+    private fun profileFor(language: MmsTtsLanguage): ModelProfile {
+        return if (language.modelCode in LEGACY_MMS_CODES) {
+            ModelProfile(
+                assetName = LEGACY_BUNDLED_ZIP_ASSET,
+                zipRoot = LEGACY_ZIP_ROOT,
+                archiveLanguageCode = language.modelCode,
+                allowedFiles = LEGACY_ALLOWED_FILES,
+                requiredFiles = LEGACY_REQUIRED_FILES
+            )
+        } else {
+            ModelProfile(
+                assetName = ITANTRA_BUNDLED_ZIP_ASSET,
+                zipRoot = ITANTRA_ZIP_ROOT,
+                archiveLanguageCode = language.isoCode,
+                allowedFiles = ITANTRA_ALLOWED_FILES,
+                requiredFiles = ITANTRA_REQUIRED_FILES
+            )
+        }
+    }
+
+    private data class ModelProfile(
+        val assetName: String,
+        val zipRoot: String,
+        val archiveLanguageCode: String,
+        val allowedFiles: Set<String>,
+        val requiredFiles: Set<String>
+    )
+
     companion object {
-        private const val BUNDLED_ZIP_ASSET = "models/quantized_models.zip"
-        private const val ZIP_ROOT = "quantized_models"
+        private const val LEGACY_BUNDLED_ZIP_ASSET = "models/quantized_models.zip"
+        private const val LEGACY_ZIP_ROOT = "quantized_models"
+
+        // The new ZIP is a local asset at app/src/main/assets/models/ during testing.
+        private const val ITANTRA_BUNDLED_ZIP_ASSET = "models/itantra-tts.zip"
+        private const val ITANTRA_ZIP_ROOT = ".itantra-tts-onnx"
         private const val BUFFER_SIZE = 64 * 1024
 
-        private val BUNDLED_MODEL_CODES = setOf(
-            "eng",
-            "hin"
-        )
+        private val LEGACY_MMS_CODES = setOf("eng", "hin")
+        private val BUNDLED_LANGUAGES = MmsTtsLanguage.ALL
 
-        // Current APK bundle contains English and Hindi MMS-TTS models.
-        private val BUNDLED_LANGUAGES = MmsTtsLanguage.ALL.filter {
-            it.modelCode in BUNDLED_MODEL_CODES
-        }
-
-        private val ALLOWED_FILES = setOf(
+        private val LEGACY_ALLOWED_FILES = setOf(
             "config.json",
             "tokenizer_config.json",
             "vocab.json",
@@ -170,11 +194,23 @@ class MmsTtsModelStore @Inject constructor(
             "model.int8.onnx"
         )
 
-        private val REQUIRED_FILES = setOf(
+        private val LEGACY_REQUIRED_FILES = setOf(
             "config.json",
             "tokenizer_config.json",
             "vocab.json",
             "model.int8.onnx"
+        )
+
+        private val ITANTRA_ALLOWED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.int8.mixed.onnx"
+        )
+
+        private val ITANTRA_REQUIRED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.int8.mixed.onnx"
         )
     }
 }
