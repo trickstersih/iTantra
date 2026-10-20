@@ -34,7 +34,7 @@ internal object TtsConfigReader {
                 output.append(current)
                 if (escaped) {
                     escaped = false
-                } else if (current == '\\\\') {
+                } else if (current.code == 92) {
                     escaped = true
                 } else if (current == '"') {
                     insideString = false
@@ -59,11 +59,12 @@ internal object TtsConfigReader {
 
             if (token != null) {
                 val afterIndex = index + token.length
-                val before = if (index > 0) source[index - 1] else '\\u0000'
-                val after = if (afterIndex < source.length) source[afterIndex] else '\\u0000'
-                val leftBoundary = index == 0 || before.isWhitespace() ||
+                val before: Char? = if (index > 0) source[index - 1] else null
+                val after: Char? =
+                    if (afterIndex < source.length) source[afterIndex] else null
+                val leftBoundary = before == null || before.isWhitespace() ||
                     before == ':' || before == ',' || before == '['
-                val rightBoundary = afterIndex == source.length || after.isWhitespace() ||
+                val rightBoundary = after == null || after.isWhitespace() ||
                     after == ',' || after == '}' || after == ']'
 
                 if (leftBoundary && rightBoundary) {
