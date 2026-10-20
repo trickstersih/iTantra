@@ -44,6 +44,8 @@ class MmsTtsEngine @Inject constructor(
     private var syspinBengaliTokenizer: SyspinBengaliTokenizer? = null
     private var syspinMarathiTokenizer: SyspinMarathiTokenizer? = null
     private var syspinKannadaTokenizer: SyspinKannadaTokenizer? = null
+    private var tamilTokenizer: TamilVitsTokenizer? = null
+    private var tamilInferenceScales: FloatArray = floatArrayOf(0.667f, 1.0f, 0.8f)
     private var sampleRate: Int = DEFAULT_SAMPLE_RATE
 
     /**
@@ -73,9 +75,11 @@ class MmsTtsEngine @Inject constructor(
             val useSyspinMarathiModel = usesSyspinMarathiModel(language)
             val useSyspinKannadaModel = usesSyspinKannadaModel(language)
             val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel || useSyspinKannadaModel
-            val useItantraModel = usesItantraVitsModel(language) && !useAnySyspinModel
+            val useTamilVitsModel = usesTamilVitsModel(language)
+            val useAnyCoquiVitsModel = useAnySyspinModel || useTamilVitsModel
+            val useItantraModel = usesItantraVitsModel(language) && !useAnyCoquiVitsModel
             val currentSession = checkNotNull(session)
-            val legacyTokenized = if (useItantraModel || useAnySyspinModel) null else {
+            val legacyTokenized = if (useItantraModel || useAnyCoquiVitsModel) null else {
                 checkNotNull(tokenizer).tokenize(text)
             }
             val itantTokenized = if (useItantraModel) {
@@ -98,21 +102,29 @@ class MmsTtsEngine @Inject constructor(
             } else {
                 null
             }
+            val tamilTokenized = if (useTamilVitsModel) {
+                checkNotNull(tamilTokenizer).tokenize(text)
+            } else {
+                null
+            }
             val tokenizedIds = legacyTokenized?.ids
                 ?: itantTokenized?.ids
                 ?: syspinTokenized?.ids
                 ?: syspinMarathiTokenized?.ids
-                ?: checkNotNull(syspinKannadaTokenized).ids
+                ?: syspinKannadaTokenized?.ids
+                ?: checkNotNull(tamilTokenized).ids
             val normalizedText = legacyTokenized?.normalizedText
                 ?: itantTokenized?.normalizedText
                 ?: syspinTokenized?.cleanedText
                 ?: syspinMarathiTokenized?.cleanedText
-                ?: checkNotNull(syspinKannadaTokenized).cleanedText
+                ?: syspinKannadaTokenized?.cleanedText
+                ?: checkNotNull(tamilTokenized).normalizedText
 
             val droppedCharacters = (
                 itantTokenized?.droppedCharacters.orEmpty() +
                     syspinMarathiTokenized?.droppedCharacters.orEmpty() +
-                    syspinKannadaTokenized?.droppedCharacters.orEmpty()
+                    syspinKannadaTokenized?.droppedCharacters.orEmpty() +
+                    tamilTokenized?.droppedCharacters.orEmpty()
                 ).distinct()
             droppedCharacters
                 .takeIf { it.isNotEmpty() }
@@ -128,14 +140,14 @@ class MmsTtsEngine @Inject constructor(
             val inputIdsName = findInputName(
                 currentSession,
                 when {
-                    useAnySyspinModel -> "input"
+                    useAnyCoquiVitsModel -> "input"
                     useItantraModel -> "x"
                     else -> "input_ids"
                 }
             ) ?: throw IllegalStateException(
                 "TTS token input is missing for " + language.displayName
             )
-            val attentionMaskName = if (useItantraModel || useAnySyspinModel) {
+            val attentionMaskName = if (useItantraModel || useAnyCoquiVitsModel) {
                 null
             } else {
                 findInputName(
@@ -162,28 +174,33 @@ class MmsTtsEngine @Inject constructor(
                     )
                 }
 
-                if (useAnySyspinModel) {
+                if (useAnyCoquiVitsModel) {
                     val lengthsName = findInputName(currentSession, "input_lengths")
-                        ?: throw IllegalStateException("SYSPIN input_lengths input is missing")
+                        ?: throw IllegalStateException("Coqui VITS input_lengths input is missing")
                     val scalesName = findInputName(currentSession, "scales")
-                        ?: throw IllegalStateException("SYSPIN scales input is missing")
+                        ?: throw IllegalStateException("Coqui VITS scales input is missing")
                     inputs[lengthsName] = OnnxTensor.createTensor(
                         environment,
                         LongBuffer.wrap(longArrayOf(tokenizedIds.size.toLong())),
                         longArrayOf(1L)
                     )
-                    // Match config.json / the successful Python ONNX reference:
-                    // [inference_noise_scale, length_scale, inference_noise_scale_dp].
+                    // Tamil uses the same scale order as its tested Python ONNX export.
+                    // Preserve the existing SYSPIN scales for Bengali, Marathi, and Kannada.
+                    val scales = if (useTamilVitsModel) {
+                        tamilInferenceScales.copyOf()
+                    } else {
+                        floatArrayOf(0.667f, 1.0f, 1.0f)
+                    }
                     inputs[scalesName] = OnnxTensor.createTensor(
                         environment,
-                        FloatBuffer.wrap(floatArrayOf(0.667f, 1.0f, 1.0f)),
+                        FloatBuffer.wrap(scales),
                         longArrayOf(3L)
                     )
                 }
 
                 val knownInputs = mutableSetOf(inputIdsName)
                 attentionMaskName?.let { knownInputs.add(it) }
-                if (useAnySyspinModel) {
+                if (useAnyCoquiVitsModel) {
                     knownInputs.add(findInputName(currentSession, "input_lengths")!!)
                     knownInputs.add(findInputName(currentSession, "scales")!!)
                 }
@@ -200,7 +217,7 @@ class MmsTtsEngine @Inject constructor(
                         } else {
                             throw IllegalStateException(
                                 "Unsupported TTS input '" + name + "'. " +
-                                    "SYSPIN expects input/input_lengths/scales; iTantra VITS expects x; " +
+                                    "Coqui/SYSPIN VITS expects input/input_lengths/scales; iTantra VITS expects x; " +
                                     "legacy MMS expects input_ids/attention_mask (and optionally speaker_id)."
                             )
                         }
@@ -277,11 +294,14 @@ class MmsTtsEngine @Inject constructor(
         val useSyspinMarathiModel = usesSyspinMarathiModel(language)
         val useSyspinKannadaModel = usesSyspinKannadaModel(language)
         val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel || useSyspinKannadaModel
-        val useItantraModel = usesItantraVitsModel(language) && !useAnySyspinModel
+        val useTamilVitsModel = usesTamilVitsModel(language)
+        val useAnyCoquiVitsModel = useAnySyspinModel || useTamilVitsModel
+        val useItantraModel = usesItantraVitsModel(language) && !useAnyCoquiVitsModel
         val tokenizerLoaded = when {
             useSyspinModel -> syspinBengaliTokenizer != null
             useSyspinMarathiModel -> syspinMarathiTokenizer != null
             useSyspinKannadaModel -> syspinKannadaTokenizer != null
+            useTamilVitsModel -> tamilTokenizer != null
             useItantraModel -> itantTokenizer != null
             else -> tokenizer != null
         }
@@ -292,7 +312,7 @@ class MmsTtsEngine @Inject constructor(
         val modelFile = File(
             directory,
             when {
-                useAnySyspinModel -> "model.onnx"
+                useAnyCoquiVitsModel -> "model.onnx"
                 useItantraModel -> "model.int8.mixed.onnx"
                 else -> "model.int8.onnx"
             }
@@ -314,21 +334,37 @@ class MmsTtsEngine @Inject constructor(
             itantTokenizer = null
             syspinMarathiTokenizer = null
             syspinKannadaTokenizer = null
+            tamilTokenizer = null
             syspinBengaliTokenizer = SyspinBengaliTokenizer()
         } else if (useSyspinMarathiModel) {
             tokenizer = null
             itantTokenizer = null
             syspinBengaliTokenizer = null
             syspinKannadaTokenizer = null
+            tamilTokenizer = null
             syspinMarathiTokenizer = SyspinMarathiTokenizer(File(directory, "config.json"))
         } else if (useSyspinKannadaModel) {
             tokenizer = null
             itantTokenizer = null
             syspinBengaliTokenizer = null
             syspinMarathiTokenizer = null
+            tamilTokenizer = null
             syspinKannadaTokenizer = SyspinKannadaTokenizer(File(directory, "config.json"))
+        } else if (useTamilVitsModel) {
+            tokenizer = null
+            itantTokenizer = null
+            syspinBengaliTokenizer = null
+            syspinMarathiTokenizer = null
+            syspinKannadaTokenizer = null
+            tamilTokenizer = TamilVitsTokenizer(directory)
+            android.util.Log.i(
+                TAG,
+                "Loaded Tamil Coqui VITS test model; inputs=" +
+                    checkNotNull(session).inputInfo.keys
+            )
         } else if (useItantraModel) {
             tokenizer = null
+            tamilTokenizer = null
             syspinBengaliTokenizer = null
             syspinMarathiTokenizer = null
             syspinKannadaTokenizer = null
@@ -348,12 +384,14 @@ class MmsTtsEngine @Inject constructor(
             syspinBengaliTokenizer = null
             syspinMarathiTokenizer = null
             syspinKannadaTokenizer = null
+            tamilTokenizer = null
         }
 
         val config = JSONObject(
             File(directory, "config.json").readText(Charsets.UTF_8)
         )
         sampleRate = when {
+            useTamilVitsModel -> config.getJSONObject("audio").getInt("sample_rate")
             useAnySyspinModel -> config.getJSONObject("audio").getInt("sample_rate")
             useItantraModel -> config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
             else -> config.optInt(
@@ -361,8 +399,19 @@ class MmsTtsEngine @Inject constructor(
                 config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
             )
         }
+        if (useTamilVitsModel) {
+            val modelArgs = config.optJSONObject("model_args")
+            tamilInferenceScales = floatArrayOf(
+                (modelArgs?.optDouble("inference_noise_scale", 0.667) ?: 0.667).toFloat(),
+                (modelArgs?.optDouble("length_scale", 1.0) ?: 1.0).toFloat(),
+                (modelArgs?.optDouble("inference_noise_scale_dp", 0.8) ?: 0.8).toFloat()
+            )
+        }
         loadedLanguage = language
     }
+
+    private fun usesTamilVitsModel(language: MmsTtsLanguage): Boolean =
+        language.modelCode == "tam"
 
     private fun usesSyspinBengaliModel(language: MmsTtsLanguage): Boolean =
         language.modelCode == "ben"
@@ -652,6 +701,7 @@ class MmsTtsEngine @Inject constructor(
         syspinBengaliTokenizer = null
         syspinMarathiTokenizer = null
         syspinKannadaTokenizer = null
+        tamilTokenizer = null
         loadedLanguage = null
     }
 

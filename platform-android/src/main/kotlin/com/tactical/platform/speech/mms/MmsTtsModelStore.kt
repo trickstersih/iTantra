@@ -148,7 +148,15 @@ class MmsTtsModelStore @Inject constructor(
     }
 
     private fun profileFor(language: MmsTtsLanguage): ModelProfile {
-        return if (language.modelCode == SYSPIN_BENGALI_CODE) {
+        return if (language.modelCode == TAMIL_VITS_TEST_CODE) {
+            ModelProfile(
+                assetName = TAMIL_VITS_TEST_ZIP_ASSET,
+                zipRoot = TAMIL_VITS_TEST_ZIP_ROOT,
+                archiveLanguageCode = TAMIL_VITS_TEST_ARCHIVE_LANGUAGE,
+                allowedFiles = TAMIL_VITS_TEST_ALLOWED_FILES,
+                requiredFiles = TAMIL_VITS_TEST_REQUIRED_FILES
+            )
+        } else if (language.modelCode == SYSPIN_BENGALI_CODE) {
             ModelProfile(
                 assetName = SYSPIN_BENGALI_ZIP_ASSET,
                 zipRoot = SYSPIN_BENGALI_ZIP_ROOT,
@@ -207,6 +215,15 @@ class MmsTtsModelStore @Inject constructor(
         private const val ITANTRA_BUNDLED_ZIP_ASSET = "models/itantra-tts.zip"
         private const val ITANTRA_ZIP_ROOT = ".itantra-tts-onnx"
 
+        // Local-only Tamil Coqui VITS test asset. ZIP layout:
+        // .tamil-vits-test/tam/config.json
+        // .tamil-vits-test/tam/tokens.txt
+        // .tamil-vits-test/tam/model.onnx
+        private const val TAMIL_VITS_TEST_CODE = "tam"
+        private const val TAMIL_VITS_TEST_ZIP_ASSET = "models/tamil-vits-test.zip"
+        private const val TAMIL_VITS_TEST_ZIP_ROOT = ".tamil-vits-test"
+        private const val TAMIL_VITS_TEST_ARCHIVE_LANGUAGE = "tam"
+
         // Local-only experimental SYSPIN Bengali asset. ZIP layout:
         // syspin-bengali/ben/config.json
         // syspin-bengali/ben/model.onnx
@@ -260,6 +277,18 @@ class MmsTtsModelStore @Inject constructor(
             "config.json",
             "tokens.txt",
             "model.int8.mixed.onnx"
+        )
+
+        private val TAMIL_VITS_TEST_ALLOWED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.onnx"
+        )
+
+        private val TAMIL_VITS_TEST_REQUIRED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.onnx"
         )
 
         private val SYSPIN_BENGALI_ALLOWED_FILES = setOf(
