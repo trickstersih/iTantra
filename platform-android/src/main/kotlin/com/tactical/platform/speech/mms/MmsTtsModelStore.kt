@@ -14,7 +14,7 @@ import javax.inject.Singleton
 /**
  * Stores bundled TTS models under app-private storage.
  *
- * English and Hindi use the existing MMS bundle. Bengali and Marathi use
+ * English and Hindi use the existing MMS bundle. Bengali, Marathi, and Kannada use
  * their isolated SYSPIN model assets; the other supported languages use the
  * iTantra VITS bundle. Only the selected language's files are extracted and
  * model sessions are serialized by MmsTtsEngine.
@@ -164,6 +164,14 @@ class MmsTtsModelStore @Inject constructor(
                 allowedFiles = SYSPIN_MARATHI_ALLOWED_FILES,
                 requiredFiles = SYSPIN_MARATHI_REQUIRED_FILES
             )
+        } else if (language.modelCode == SYSPIN_KANNADA_CODE) {
+            ModelProfile(
+                assetName = SYSPIN_KANNADA_ZIP_ASSET,
+                zipRoot = SYSPIN_KANNADA_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_KANNADA_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_KANNADA_ALLOWED_FILES,
+                requiredFiles = SYSPIN_KANNADA_REQUIRED_FILES
+            )
         } else if (language.modelCode in LEGACY_MMS_CODES) {
             ModelProfile(
                 assetName = LEGACY_BUNDLED_ZIP_ASSET,
@@ -214,6 +222,14 @@ class MmsTtsModelStore @Inject constructor(
         private const val SYSPIN_MARATHI_ZIP_ASSET = "models/syspin-marathi.zip"
         private const val SYSPIN_MARATHI_ZIP_ROOT = "syspin-marathi"
         private const val SYSPIN_MARATHI_ARCHIVE_LANGUAGE = "mar"
+
+        // Local-only experimental SYSPIN Kannada asset. ZIP layout:
+        // syspin-kannada/kan/config.json
+        // syspin-kannada/kan/model.onnx
+        private const val SYSPIN_KANNADA_CODE = "kan"
+        private const val SYSPIN_KANNADA_ZIP_ASSET = "models/syspin-kannada.zip"
+        private const val SYSPIN_KANNADA_ZIP_ROOT = "syspin-kannada"
+        private const val SYSPIN_KANNADA_ARCHIVE_LANGUAGE = "kan"
         private const val BUFFER_SIZE = 64 * 1024
 
         private val LEGACY_MMS_CODES = setOf("eng", "hin")
@@ -262,6 +278,16 @@ class MmsTtsModelStore @Inject constructor(
         )
 
         private val SYSPIN_MARATHI_REQUIRED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_KANNADA_ALLOWED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_KANNADA_REQUIRED_FILES = setOf(
             "config.json",
             "model.onnx"
         )

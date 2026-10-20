@@ -43,6 +43,7 @@ class MmsTtsEngine @Inject constructor(
     private var itantTokenizer: ItantraVitsTokenizer? = null
     private var syspinBengaliTokenizer: SyspinBengaliTokenizer? = null
     private var syspinMarathiTokenizer: SyspinMarathiTokenizer? = null
+    private var syspinKannadaTokenizer: SyspinKannadaTokenizer? = null
     private var sampleRate: Int = DEFAULT_SAMPLE_RATE
 
     /**
@@ -70,7 +71,8 @@ class MmsTtsEngine @Inject constructor(
 
             val useSyspinModel = usesSyspinBengaliModel(language)
             val useSyspinMarathiModel = usesSyspinMarathiModel(language)
-            val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel
+            val useSyspinKannadaModel = usesSyspinKannadaModel(language)
+            val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel || useSyspinKannadaModel
             val useItantraModel = usesItantraVitsModel(language) && !useAnySyspinModel
             val currentSession = checkNotNull(session)
             val legacyTokenized = if (useItantraModel || useAnySyspinModel) null else {
@@ -91,18 +93,26 @@ class MmsTtsEngine @Inject constructor(
             } else {
                 null
             }
+            val syspinKannadaTokenized = if (useSyspinKannadaModel) {
+                checkNotNull(syspinKannadaTokenizer).tokenize(text)
+            } else {
+                null
+            }
             val tokenizedIds = legacyTokenized?.ids
                 ?: itantTokenized?.ids
                 ?: syspinTokenized?.ids
-                ?: checkNotNull(syspinMarathiTokenized).ids
+                ?: syspinMarathiTokenized?.ids
+                ?: checkNotNull(syspinKannadaTokenized).ids
             val normalizedText = legacyTokenized?.normalizedText
                 ?: itantTokenized?.normalizedText
                 ?: syspinTokenized?.cleanedText
-                ?: checkNotNull(syspinMarathiTokenized).cleanedText
+                ?: syspinMarathiTokenized?.cleanedText
+                ?: checkNotNull(syspinKannadaTokenized).cleanedText
 
             val droppedCharacters = (
                 itantTokenized?.droppedCharacters.orEmpty() +
-                    syspinMarathiTokenized?.droppedCharacters.orEmpty()
+                    syspinMarathiTokenized?.droppedCharacters.orEmpty() +
+                    syspinKannadaTokenized?.droppedCharacters.orEmpty()
                 ).distinct()
             droppedCharacters
                 .takeIf { it.isNotEmpty() }
@@ -265,11 +275,13 @@ class MmsTtsEngine @Inject constructor(
     private fun ensureLoaded(language: MmsTtsLanguage, directory: File) {
         val useSyspinModel = usesSyspinBengaliModel(language)
         val useSyspinMarathiModel = usesSyspinMarathiModel(language)
-        val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel
+        val useSyspinKannadaModel = usesSyspinKannadaModel(language)
+        val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel || useSyspinKannadaModel
         val useItantraModel = usesItantraVitsModel(language) && !useAnySyspinModel
         val tokenizerLoaded = when {
             useSyspinModel -> syspinBengaliTokenizer != null
             useSyspinMarathiModel -> syspinMarathiTokenizer != null
+            useSyspinKannadaModel -> syspinKannadaTokenizer != null
             useItantraModel -> itantTokenizer != null
             else -> tokenizer != null
         }
@@ -301,16 +313,25 @@ class MmsTtsEngine @Inject constructor(
             tokenizer = null
             itantTokenizer = null
             syspinMarathiTokenizer = null
+            syspinKannadaTokenizer = null
             syspinBengaliTokenizer = SyspinBengaliTokenizer()
         } else if (useSyspinMarathiModel) {
             tokenizer = null
             itantTokenizer = null
             syspinBengaliTokenizer = null
+            syspinKannadaTokenizer = null
             syspinMarathiTokenizer = SyspinMarathiTokenizer(File(directory, "config.json"))
+        } else if (useSyspinKannadaModel) {
+            tokenizer = null
+            itantTokenizer = null
+            syspinBengaliTokenizer = null
+            syspinMarathiTokenizer = null
+            syspinKannadaTokenizer = SyspinKannadaTokenizer(File(directory, "config.json"))
         } else if (useItantraModel) {
             tokenizer = null
             syspinBengaliTokenizer = null
             syspinMarathiTokenizer = null
+            syspinKannadaTokenizer = null
             val customMetadata = checkNotNull(session).metadata.customMetadata
             android.util.Log.i(
                 TAG,
@@ -326,13 +347,14 @@ class MmsTtsEngine @Inject constructor(
             itantTokenizer = null
             syspinBengaliTokenizer = null
             syspinMarathiTokenizer = null
+            syspinKannadaTokenizer = null
         }
 
         val config = JSONObject(
             File(directory, "config.json").readText(Charsets.UTF_8)
         )
         sampleRate = when {
-            useSyspinModel || useSyspinMarathiModel -> config.getJSONObject("audio").getInt("sample_rate")
+            useAnySyspinModel -> config.getJSONObject("audio").getInt("sample_rate")
             useItantraModel -> config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
             else -> config.optInt(
                 "sampling_rate",
@@ -347,6 +369,9 @@ class MmsTtsEngine @Inject constructor(
 
     private fun usesSyspinMarathiModel(language: MmsTtsLanguage): Boolean =
         language.modelCode == "mar"
+
+    private fun usesSyspinKannadaModel(language: MmsTtsLanguage): Boolean =
+        language.modelCode == "kan"
 
     private fun usesItantraVitsModel(language: MmsTtsLanguage): Boolean =
         language.modelCode !in LEGACY_MMS_CODES
@@ -626,6 +651,7 @@ class MmsTtsEngine @Inject constructor(
         itantTokenizer = null
         syspinBengaliTokenizer = null
         syspinMarathiTokenizer = null
+        syspinKannadaTokenizer = null
         loadedLanguage = null
     }
 
