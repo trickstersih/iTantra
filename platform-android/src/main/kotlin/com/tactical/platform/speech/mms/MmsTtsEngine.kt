@@ -387,9 +387,7 @@ class MmsTtsEngine @Inject constructor(
             tamilTokenizer = null
         }
 
-        val config = JSONObject(
-            File(directory, "config.json").readText(Charsets.UTF_8)
-        )
+        val config = TtsConfigReader.readObject(File(directory, "config.json"))
         sampleRate = when {
             useTamilVitsModel -> config.getJSONObject("audio").getInt("sample_rate")
             useAnySyspinModel -> config.getJSONObject("audio").getInt("sample_rate")

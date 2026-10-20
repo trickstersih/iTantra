@@ -13,9 +13,7 @@ import java.util.LinkedHashSet
  * match the tested ONNX inputs. The blank token is explicitly <BLNK> (ID 55).
  */
 class TamilVitsTokenizer(modelDirectory: File) {
-    private val config = JSONObject(
-        File(modelDirectory, "config.json").readText(Charsets.UTF_8)
-    )
+    private val config = TtsConfigReader.readObject(File(modelDirectory, "config.json"))
     private val tokenIds = readTokenIds(File(modelDirectory, "tokens.txt"))
     private val addBlank = config.optBoolean("add_blank", false)
     private val blankId: Int = tokenIds["<BLNK>"]

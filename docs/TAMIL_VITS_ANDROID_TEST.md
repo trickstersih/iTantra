@@ -21,7 +21,7 @@ Create the `models` assets directory if it does not exist. The archive must cont
 - `.tamil-vits-test/tam/config.json`
 - `.tamil-vits-test/tam/tokens.txt`
 
-The supplied archive already has this layout and has been checked against all seven token-ID probes from the source environment.
+The supplied archive already has this layout and has been checked against all seven token-ID probes from the source environment. Its Coqui config contains bare `Infinity` values, which are not valid strict JSON; `TtsConfigReader` normalizes bare non-finite numeric values to `null` before Android `JSONObject` parses the config, while leaving quoted strings unchanged.
 
 ## Build and install (Windows PowerShell)
 

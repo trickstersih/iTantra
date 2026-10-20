@@ -28,7 +28,7 @@ class SyspinKannadaTokenizer(configFile: File) {
         require(configFile.isFile && configFile.length() > 0L) {
             "SYSPIN Kannada config is missing: " + configFile.absolutePath
         }
-        val config = JSONObject(configFile.readText(Charsets.UTF_8))
+        val config = TtsConfigReader.readObject(configFile)
         val characterConfig = config.getJSONObject("characters")
         val punctuationCodePoints = codePoints(characterConfig.getString("punctuations"))
         val characterCodePoints = codePoints(characterConfig.getString("characters"))
