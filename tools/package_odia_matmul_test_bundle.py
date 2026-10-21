@@ -14,7 +14,6 @@ from pathlib import Path
 
 ROOT = ".itantra-tts-onnx"
 CODE = "or"
-SOURCE_MODEL_NAME = "model.matmul.int8.onnx"
 SOURCE_MODEL_NAME = "model.int8.mixed.onnx"
 TARGET_MODEL_NAME = "model.matmul.int8.onnx"
 
