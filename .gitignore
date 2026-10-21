@@ -59,3 +59,4 @@ app/src/main/assets/models/moonshine_stt_tiny_en.zip
 
 # Large local Hindi Vosk STT model (bundled into APK but not committed)
 app/src/main/assets/models/vosk-model-small-hi-0.22.zip
+app/src/main/assets/models/itantra-tts-odia-test.zip
