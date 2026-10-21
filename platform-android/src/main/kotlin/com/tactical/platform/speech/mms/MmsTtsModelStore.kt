@@ -148,7 +148,18 @@ class MmsTtsModelStore @Inject constructor(
     }
 
     private fun profileFor(language: MmsTtsLanguage): ModelProfile {
-        return if (language.modelCode == TAMIL_VITS_TEST_CODE) {
+        return if (
+            language.modelCode == ODIA_QUANT_TEST_CODE &&
+            File(context.filesDir, ODIA_QUANT_TEST_MARKER).isFile
+        ) {
+            ModelProfile(
+                assetName = ODIA_QUANT_TEST_ZIP_ASSET,
+                zipRoot = ITANTRA_ZIP_ROOT,
+                archiveLanguageCode = language.isoCode,
+                allowedFiles = ITANTRA_ALLOWED_FILES,
+                requiredFiles = ITANTRA_REQUIRED_FILES
+            )
+        } else if (language.modelCode == TAMIL_VITS_TEST_CODE) {
             ModelProfile(
                 assetName = TAMIL_VITS_TEST_ZIP_ASSET,
                 zipRoot = TAMIL_VITS_TEST_ZIP_ROOT,
@@ -231,6 +242,12 @@ class MmsTtsModelStore @Inject constructor(
         private const val TAMIL_VITS_TEST_ZIP_ASSET = "models/tamil-vits-test.zip"
         private const val TAMIL_VITS_TEST_ZIP_ROOT = ".tamil-vits-test"
         private const val TAMIL_VITS_TEST_ARCHIVE_LANGUAGE = "tam"
+
+        // Local-only Odia MatMul-only quantization test bundle.
+        // It contains all original language entries, with only the Odia ONNX model replaced.
+        private const val ODIA_QUANT_TEST_CODE = "ory"
+        private const val ODIA_QUANT_TEST_ZIP_ASSET = "models/itantra-tts-odia-test.zip"
+        private const val ODIA_QUANT_TEST_MARKER = "tts_use_odia_quant_test"
 
         // Local-only experimental SYSPIN Bengali asset. ZIP layout:
         // syspin-bengali/ben/config.json
