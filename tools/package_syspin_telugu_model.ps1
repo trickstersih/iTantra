@@ -118,7 +118,14 @@ try {
     )
     Copy-Item -LiteralPath $sourceModel -Destination $stagedModel
 
-    Compress-Archive -Path $packageRoot -DestinationPath $assetZip -CompressionLevel Optimal
+    # Build the ZIP with explicit relative paths so the expected root folder is
+    # deterministic on Windows PowerShell 5.1 and PowerShell 7.
+    Push-Location $stage
+    try {
+        Compress-Archive -Path ".\\syspin-telugu" -DestinationPath $assetZip -CompressionLevel Optimal
+    } finally {
+        Pop-Location
+    }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $zip = [System.IO.Compression.ZipFile]::OpenRead($assetZip)
