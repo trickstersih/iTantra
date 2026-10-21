@@ -401,10 +401,18 @@ class MmsTtsEngine @Inject constructor(
             syspinMarathiTokenizer = null
             syspinKannadaTokenizer = null
             val customMetadata = checkNotNull(session).metadata.customMetadata
-            android.util.Log.i(
-                TAG,
-                "iTantra VITS metadata for " + language.isoCode + ": " + customMetadata
-            )
+            if (useOdiaQuantTest) {
+                android.util.Log.i(
+                    TAG,
+                    "Loaded Odia MatMul-only INT8 test model; inputs=" +
+                        checkNotNull(session).inputInfo.keys
+                )
+            } else {
+                android.util.Log.i(
+                    TAG,
+                    "iTantra VITS metadata for " + language.isoCode + ": " + customMetadata
+                )
+            }
             itantTokenizer = ItantraVitsTokenizer(
                 directory,
                 language.isoCode,
