@@ -334,7 +334,7 @@ def main() -> int:
         "input_model_bytes": args.input_model.stat().st_size,
         "candidate_model": str(candidate_path),
         "candidate_model_bytes": candidate_path.stat().st_size,
-        "selected_conv_ranks": ranks
+        "selected_conv_ranks": ranks,
         "quantized_conv_nodes": selected,
         "skipped_conv_nodes": skipped,
         "quantization": {
