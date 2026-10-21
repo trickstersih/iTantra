@@ -417,6 +417,7 @@ class MmsTtsEngine @Inject constructor(
         val config = TtsConfigReader.readObject(File(directory, "config.json"))
         sampleRate = when {
             useTamilVitsModel -> config.getJSONObject("audio").getInt("sample_rate")
+            useSyspinTeluguModel -> config.getJSONObject("audio").getInt("sample_rate")
             useAnySyspinModel -> config.getJSONObject("audio").getInt("sample_rate")
             useItantraModel -> config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
             else -> config.optInt(
