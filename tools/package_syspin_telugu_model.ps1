@@ -58,11 +58,11 @@ function Convert-NonFiniteJsonTokens([string]$Source) {
         }
 
         $token = $null
-        if ($Source.StartsWith("-Infinity", $index, [StringComparison]::Ordinal)) {
+        if ($Source.IndexOf("-Infinity", $index, [StringComparison]::Ordinal) -eq $index) {
             $token = "-Infinity"
-        } elseif ($Source.StartsWith("Infinity", $index, [StringComparison]::Ordinal)) {
+        } elseif ($Source.IndexOf("Infinity", $index, [StringComparison]::Ordinal) -eq $index) {
             $token = "Infinity"
-        } elseif ($Source.StartsWith("NaN", $index, [StringComparison]::Ordinal)) {
+        } elseif ($Source.IndexOf("NaN", $index, [StringComparison]::Ordinal) -eq $index) {
             $token = "NaN"
         }
 
