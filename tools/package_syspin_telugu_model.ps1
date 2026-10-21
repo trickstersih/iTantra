@@ -122,7 +122,7 @@ try {
     # deterministic on Windows PowerShell 5.1 and PowerShell 7.
     Push-Location $stage
     try {
-        Compress-Archive -Path ".\\syspin-telugu" -DestinationPath $assetZip -CompressionLevel Optimal
+        Compress-Archive -Path ".\syspin-telugu" -DestinationPath $assetZip -CompressionLevel Optimal
     } finally {
         Pop-Location
     }
