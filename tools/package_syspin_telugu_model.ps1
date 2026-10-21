@@ -110,7 +110,7 @@ try {
     # Validate strict JSON before putting it in the archive. The original model
     # config remains untouched; only this staged copy converts bare Infinity,
     # -Infinity, and NaN values to null.
-    $null = ConvertFrom-Json -InputObject $sanitizedConfig -Depth 100
+    $null = ConvertFrom-Json -InputObject $sanitizedConfig
     [System.IO.File]::WriteAllText(
         $stagedConfig,
         $sanitizedConfig,
@@ -137,7 +137,7 @@ try {
         $configReader = [System.IO.StreamReader]::new($configEntry.Open())
         try {
             $archivedConfig = $configReader.ReadToEnd()
-            $null = ConvertFrom-Json -InputObject $archivedConfig -Depth 100
+            $null = ConvertFrom-Json -InputObject $archivedConfig
         } finally {
             $configReader.Dispose()
         }
