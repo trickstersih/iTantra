@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Generate a multi-sentence listening suite for the Odia all-weights INT4 ONNX model.
+"""Generate a multi-sentence listening suite for any Odia quantized ONNX candidate.
 
-Generates paired WAVs from a known-clear MatMul-INT8 baseline and the candidate
-INT4 model using identical official MMS Odia tokenizer IDs. This is a listening
-test only; it does not change app assets or package a model.
+Generates paired WAVs from a known-clear MatMul-INT8 baseline and the selected
+candidate using identical official MMS Odia tokenizer IDs. Listening test only.
 """
 from __future__ import annotations
 
@@ -178,7 +177,7 @@ def main() -> int:
         "--candidate-model",
         type=Path,
         required=True,
-        help="16 MiB all-weights INT4 candidate model",
+        help="Quantized candidate ONNX model to test",
     )
     parser.add_argument(
         "--output-dir",
@@ -191,6 +190,12 @@ def main() -> int:
         type=Path,
         default=Path("build/tts/odia_hf_cache"),
         help="Hugging Face tokenizer cache",
+    )
+    parser.add_argument(
+        "--candidate-label",
+        choices=("int4_candidate", "int8_candidate"),
+        default="int4_candidate",
+        help="Label for output folder/report (default: int4_candidate)",
     )
     args = parser.parse_args()
 
@@ -205,8 +210,9 @@ def main() -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     baseline_dir = args.output_dir / "baseline"
-    candidate_dir = args.output_dir / "int4_candidate"
-    report_path = args.output_dir / "odia_int4_multi_sentence_report.json"
+    candidate_dir = args.output_dir / args.candidate_label
+    report_label = args.candidate_label.replace("_candidate", "")
+    report_path = args.output_dir / f"odia_{report_label}_multi_sentence_report.json"
     intended_outputs = [report_path]
     for case in TEST_CASES:
         intended_outputs.extend(
@@ -301,7 +307,7 @@ def main() -> int:
             f"RMS={baseline_stats['rms']:.4f}"
         )
         print(
-            f"  INT4:     {candidate_stats['duration_seconds']:.2f}s, "
+            f"  {report_label.upper()}: {candidate_stats['duration_seconds']:.2f}s, "
             f"RMS={candidate_stats['rms']:.4f}"
         )
 
@@ -313,7 +319,7 @@ def main() -> int:
                     **baseline_stats,
                     "wav": str(baseline_wav),
                 },
-                "int4_candidate": {
+                args.candidate_label: {
                     **candidate_stats,
                     "wav": str(candidate_wav),
                 },
@@ -326,7 +332,7 @@ def main() -> int:
     )
     print("\nALL TEST WAV PAIRS GENERATED")
     print("Baseline WAVs: ", baseline_dir)
-    print("INT4 WAVs:     ", candidate_dir)
+    print(f"{report_label.upper()} WAVs:     ", candidate_dir)
     print("JSON report:   ", report_path)
     print("\nListen to each candidate against the matching baseline.")
     print("No app source, app assets, or model ZIPs were changed.")
