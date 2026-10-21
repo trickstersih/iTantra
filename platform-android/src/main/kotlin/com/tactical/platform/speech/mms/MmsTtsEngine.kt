@@ -152,13 +152,14 @@ class MmsTtsEngine @Inject constructor(
                 currentSession,
                 when {
                     useAnyCoquiVitsModel -> "input"
+                    useOdiaQuantTest -> "x"
                     useItantraModel -> "x"
                     else -> "input_ids"
                 }
             ) ?: throw IllegalStateException(
                 "TTS token input is missing for " + language.displayName
             )
-            val attentionMaskName = if (useItantraModel || useAnyCoquiVitsModel) {
+            val attentionMaskName = if (useItantraModel || useAnyCoquiVitsModel || useOdiaQuantTest) {
                 null
             } else {
                 findInputName(
@@ -309,12 +310,14 @@ class MmsTtsEngine @Inject constructor(
         val useTamilVitsModel = usesTamilVitsModel(language)
         val useAnyCoquiVitsModel = useAnySyspinModel || useTamilVitsModel || useSyspinTeluguModel
         val useItantraModel = usesItantraVitsModel(language) && !useAnyCoquiVitsModel
+        val useOdiaQuantTest = usesOdiaQuantTestModel(language)
         val tokenizerLoaded = when {
             useSyspinModel -> syspinBengaliTokenizer != null
             useSyspinMarathiModel -> syspinMarathiTokenizer != null
             useSyspinKannadaModel -> syspinKannadaTokenizer != null
             useSyspinTeluguModel -> syspinTeluguTokenizer != null
             useTamilVitsModel -> tamilTokenizer != null
+            useOdiaQuantTest -> tokenizer != null
             useItantraModel -> itantTokenizer != null
             else -> tokenizer != null
         }
@@ -326,6 +329,7 @@ class MmsTtsEngine @Inject constructor(
             directory,
             when {
                 useAnyCoquiVitsModel -> "model.onnx"
+                useOdiaQuantTest -> "model.matmul.int8.onnx"
                 useItantraModel -> "model.int8.mixed.onnx"
                 else -> "model.int8.onnx"
             }
@@ -420,6 +424,7 @@ class MmsTtsEngine @Inject constructor(
             useSyspinTeluguModel -> config.getJSONObject("audio").getInt("sample_rate")
             useAnySyspinModel -> config.getJSONObject("audio").getInt("sample_rate")
             useItantraModel -> config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
+            useOdiaQuantTest -> config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
             else -> config.optInt(
                 "sampling_rate",
                 config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
@@ -442,6 +447,10 @@ class MmsTtsEngine @Inject constructor(
         }
         loadedLanguage = language
     }
+
+    private fun usesOdiaQuantTestModel(language: MmsTtsLanguage): Boolean =
+        language.modelCode == "ory" &&
+            File(modelStore.rootDirectory.parentFile, "tts_use_odia_quant_test").isFile
 
     private fun usesTamilVitsModel(language: MmsTtsLanguage): Boolean =
         language.modelCode == "tam"
