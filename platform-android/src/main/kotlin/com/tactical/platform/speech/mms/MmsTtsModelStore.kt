@@ -38,6 +38,14 @@ class MmsTtsModelStore @Inject constructor(
 
         val profile = profileFor(language)
         val destination = rootDirectory.resolve(language.modelCode)
+        if (
+            language.modelCode == ODIA_QUANT_TEST_CODE &&
+            !File(context.filesDir, ODIA_QUANT_TEST_MARKER).isFile
+        ) {
+            // A previous test build may have left an extracted test model behind.
+            // Do not use it unless the explicit local marker is present.
+            destination.deleteRecursively()
+        }
         if (isComplete(destination, profile)) {
             return@withContext destination
         }
