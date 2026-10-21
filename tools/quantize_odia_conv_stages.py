@@ -186,10 +186,9 @@ def main() -> int:
         help="New directory for prepared graph, candidate ONNX, WAVs and report",
     )
     parser.add_argument(
-        "--top-conv-count",
-        type=int,
-        default=1,
-        help="Quantize only the N largest initializer-backed Conv nodes (default 1)",
+        "--ranks",
+        default="1",
+        help="Comma-separated 1-based Conv ranks by descending weight size, e.g. '1', '2', or '1,2' (default: 1)",
     )
     parser.add_argument(
         "--cache-dir",
@@ -205,16 +204,21 @@ def main() -> int:
 
     if not args.input_model.is_file():
         parser.error(f"Input model not found: {args.input_model}")
-    if args.top_conv_count < 1:
-        parser.error("--top-conv-count must be >= 1")
+    try:
+        ranks = sorted(set(int(part.strip()) for part in args.ranks.split(",") if part.strip()))
+    except ValueError:
+        parser.error("--ranks must be comma-separated positive integers, e.g. 1 or 1,3")
+    if not ranks or min(ranks) < 1:
+        parser.error("--ranks must contain one or more positive integers")
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.cache_dir.mkdir(parents=True, exist_ok=True)
 
     prepared_model_path = args.output_dir / "prepared_named_matmul_int8.onnx"
-    candidate_path = args.output_dir / f"model.matmul.int8.conv_top{args.top_conv_count:02d}.qdq.onnx"
+    rank_tag = "-".join(f"{rank:02d}" for rank in ranks)
+    candidate_path = args.output_dir / f"model.matmul.int8.conv_ranks_{rank_tag}.qdq.onnx"
     base_wav = args.output_dir / "base_matmul_int8.wav"
-    candidate_wav = args.output_dir / f"conv_top{args.top_conv_count:02d}_candidate.wav"
-    report_path = args.output_dir / f"conv_top{args.top_conv_count:02d}_report.json"
+    candidate_wav = args.output_dir / f"conv_ranks_{rank_tag}_candidate.wav"
+    report_path = args.output_dir / f"conv_ranks_{rank_tag}_report.json"
     for path in (candidate_path, candidate_wav, report_path):
         if path.exists():
             parser.error(f"Refusing to overwrite existing result: {path}")
@@ -244,12 +248,12 @@ def main() -> int:
     conv_rows, skipped = name_and_rank_conv_nodes(model)
     if not conv_rows:
         raise RuntimeError("No initializer-backed Conv nodes found in the input model")
-    if args.top_conv_count > len(conv_rows):
+    if max(ranks) > len(conv_rows):
         parser.error(
-            f"Requested {args.top_conv_count} Conv nodes, but only {len(conv_rows)} "
-            "have initializer weights"
+            f"Requested rank {max(ranks)}, but only {len(conv_rows)} "
+            "initializer-backed Conv nodes can be ranked"
         )
-    selected = conv_rows[: args.top_conv_count]
+    selected = [conv_rows[rank - 1] for rank in ranks]
     selected_names = [row["name"] for row in selected]
     onnx.save_model(model, str(prepared_model_path))
     del model
@@ -330,7 +334,7 @@ def main() -> int:
         "input_model_bytes": args.input_model.stat().st_size,
         "candidate_model": str(candidate_path),
         "candidate_model_bytes": candidate_path.stat().st_size,
-        "top_conv_count": args.top_conv_count,
+        "selected_conv_ranks": ranks
         "quantized_conv_nodes": selected,
         "skipped_conv_nodes": skipped,
         "quantization": {
@@ -363,7 +367,7 @@ def main() -> int:
     print(f"  Base WAV:       {base_wav}")
     print(f"  Candidate WAV:  {candidate_wav}")
     print(f"  Report:         {report_path}")
-    print("\nListen to both WAVs before increasing --top-conv-count. No app files or ZIPs were changed.")
+    print("\nListen to both WAVs before adding more Conv ranks. No app files or ZIPs were changed.")
     return 0
 
 
