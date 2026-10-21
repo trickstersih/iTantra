@@ -236,21 +236,6 @@ def quantize_weights_int8(
     model.graph.node.extend(added_nodes)
     model.graph.node.extend(original_nodes)
 
-    default_opset = next(
-        (item for item in model.opset_import if item.domain in ("", "ai.onnx")),
-        None,
-    )
-    if default_opset is None:
-        raise RuntimeError("ONNX model has no default ai.onnx opset import")
-    if default_opset.version < 13:
-        print(f"Converting default ONNX opset {default_opset.version} to 13 for per-axis DequantizeLinear...")
-        try:
-            model = onnx.version_converter.convert_version(model, 13)
-        except Exception as exc:
-            raise RuntimeError(
-                "ONNX version conversion to opset 13 failed; source model was not modified."
-            ) from exc
-
     return {
         "quantized_tensor_count": len(rows),
         "quantized_original_weight_bytes": total_original_bytes,
@@ -359,6 +344,20 @@ def main() -> int:
     print("Loading input model...")
     model = onnx.load(str(args.input_model), load_external_data=True)
     print("Original opset(s):", [(item.domain or "ai.onnx", int(item.version)) for item in model.opset_import])
+    default_opset = next(
+        (item for item in model.opset_import if item.domain in ("", "ai.onnx")),
+        None,
+    )
+    if default_opset is None:
+        raise RuntimeError("ONNX model has no default ai.onnx opset import")
+    if default_opset.version < 13:
+        print(f"Converting default ONNX opset {default_opset.version} to 13 before adding per-axis DequantizeLinear...")
+        try:
+            model = onnx.version_converter.convert_version(model, 13)
+        except Exception as exc:
+            raise RuntimeError(
+                "ONNX version conversion to opset 13 failed; source model was not modified."
+            ) from exc
 
     print("Quantizing eligible floating-point weights to symmetric INT8 (weight-only)...")
     quant_report = quantize_weights_int8(model, args.min_elements)
