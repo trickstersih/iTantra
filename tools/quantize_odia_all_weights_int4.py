@@ -126,7 +126,7 @@ def make_int4_initializer(name: str, q: np.ndarray) -> TensorProto:
         data_type=TensorProto.INT4,
         dims=list(q.shape),
         vals=np.asarray(q, dtype=np.int8).reshape(-1),
-        raw=False,
+        raw=True,
     )
 
 
