@@ -118,13 +118,47 @@ try {
     )
     Copy-Item -LiteralPath $sourceModel -Destination $stagedModel
 
-    # Build the ZIP with explicit relative paths so the expected root folder is
-    # deterministic on Windows PowerShell 5.1 and PowerShell 7.
-    Push-Location $stage
+    # Create the ZIP through .NET and write exact forward-slash entry names.
+    # Compress-Archive can normalize paths differently across PowerShell versions.
+    Add-Type -AssemblyName System.IO.Compression
+    $fileStream = [System.IO.File]::Open(
+        $assetZip,
+        [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+    )
     try {
-        Compress-Archive -Path ".\syspin-telugu" -DestinationPath $assetZip -CompressionLevel Optimal
+        $archive = [System.IO.Compression.ZipArchive]::new(
+            $fileStream,
+            [System.IO.Compression.ZipArchiveMode]::Create,
+            $false
+        )
+        try {
+            foreach ($item in @(
+                @{ Source = $stagedConfig; Entry = "syspin-telugu/tel/config.json" },
+                @{ Source = $stagedModel; Entry = "syspin-telugu/tel/model.onnx" }
+            )) {
+                $entry = $archive.CreateEntry(
+                    $item.Entry,
+                    [System.IO.Compression.CompressionLevel]::Optimal
+                )
+                $entryStream = $entry.Open()
+                try {
+                    $inputStream = [System.IO.File]::OpenRead($item.Source)
+                    try {
+                        $inputStream.CopyTo($entryStream)
+                    } finally {
+                        $inputStream.Dispose()
+                    }
+                } finally {
+                    $entryStream.Dispose()
+                }
+            }
+        } finally {
+            $archive.Dispose()
+        }
     } finally {
-        Pop-Location
+        $fileStream.Dispose()
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem
