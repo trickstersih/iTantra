@@ -164,8 +164,8 @@ class MmsTtsModelStore @Inject constructor(
                 assetName = ODIA_QUANT_TEST_ZIP_ASSET,
                 zipRoot = ITANTRA_ZIP_ROOT,
                 archiveLanguageCode = language.isoCode,
-                allowedFiles = ITANTRA_ALLOWED_FILES,
-                requiredFiles = ITANTRA_REQUIRED_FILES
+                allowedFiles = ODIA_QUANT_TEST_ALLOWED_FILES,
+                requiredFiles = ODIA_QUANT_TEST_REQUIRED_FILES
             )
         } else if (language.modelCode == TAMIL_VITS_TEST_CODE) {
             ModelProfile(
@@ -290,6 +290,18 @@ class MmsTtsModelStore @Inject constructor(
 
         private val SYSPIN_TELUGU_ALLOWED_FILES = setOf("config.json", "model.onnx")
         private val SYSPIN_TELUGU_REQUIRED_FILES = setOf("config.json", "model.onnx")
+
+        private val ODIA_QUANT_TEST_ALLOWED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.matmul.int8.onnx"
+        )
+
+        private val ODIA_QUANT_TEST_REQUIRED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.matmul.int8.onnx"
+        )
 
         private val LEGACY_MMS_CODES = setOf("eng", "hin")
         private val BUNDLED_LANGUAGES = MmsTtsLanguage.ALL
