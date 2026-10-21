@@ -77,6 +77,7 @@ class MmsTtsEngine @Inject constructor(
             val useSyspinMarathiModel = usesSyspinMarathiModel(language)
             val useSyspinKannadaModel = usesSyspinKannadaModel(language)
             val useSyspinTeluguModel = usesSyspinTeluguModel(language)
+            val useOdiaQuantTest = usesOdiaQuantTestModel(language)
             val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel || useSyspinKannadaModel
             val useTamilVitsModel = usesTamilVitsModel(language)
             val useAnyCoquiVitsModel = useAnySyspinModel || useTamilVitsModel || useSyspinTeluguModel
@@ -317,7 +318,7 @@ class MmsTtsEngine @Inject constructor(
             useSyspinKannadaModel -> syspinKannadaTokenizer != null
             useSyspinTeluguModel -> syspinTeluguTokenizer != null
             useTamilVitsModel -> tamilTokenizer != null
-            useOdiaQuantTest -> tokenizer != null
+            useOdiaQuantTest -> itantTokenizer != null
             useItantraModel -> itantTokenizer != null
             else -> tokenizer != null
         }
