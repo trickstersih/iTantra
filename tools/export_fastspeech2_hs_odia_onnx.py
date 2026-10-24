@@ -65,6 +65,36 @@ def dynamic_length_regulator_forward(self, xs, ds, alpha=1.0):
     return xs[0].index_select(0, token_indices).unsqueeze(0)
 
 
+def dynamic_make_pad_mask(lengths, xs=None, length_dim=-1, maxlen=None):
+    """Dynamic-shape replacement for ESPnet's Python-list-based pad mask."""
+    import torch
+
+    if maxlen is None:
+        if xs is None:
+            maxlen = lengths[0]
+        else:
+            maxlen = xs.size(length_dim)
+    sequence = torch.arange(0, maxlen, dtype=torch.long, device=lengths.device)
+    mask = sequence.unsqueeze(0) >= lengths.unsqueeze(-1)
+    if xs is not None:
+        if length_dim < 0:
+            length_dim = xs.dim() + length_dim
+        ind = tuple(
+            slice(None) if i in (0, length_dim) else None
+            for i in range(xs.dim())
+        )
+        mask = mask[ind].expand_as(xs).to(xs.device)
+    return mask
+
+
+def dynamic_source_mask(self, ilens):
+    """Dynamic non-padding mask for FastSpeech2's encoder."""
+    import torch
+
+    sequence = torch.arange(0, ilens[0], dtype=torch.long, device=ilens.device)
+    return (sequence.unsqueeze(0) < ilens.unsqueeze(-1)).unsqueeze(-2)
+
+
 def safe_export(torch, model, args, path: Path, **kwargs) -> None:
     """Use the legacy TorchScript exporter for broadly reproducible ONNX."""
     try:
@@ -211,6 +241,14 @@ def main() -> int:
 
     # Patch only the in-memory model instance for ONNX export; the .pth file
     # and downloaded upstream inference code remain untouched.
+    # ESPnet's standard padding-mask helper converts lengths to Python lists,
+    # which freezes the traced input length. Replace it in-memory with dynamic
+    # tensor operations so the ONNX graph accepts sentences of different lengths.
+    import espnet2.tts.fastspeech2.fastspeech2 as fastspeech2_impl
+    fastspeech2_impl.make_pad_mask = dynamic_make_pad_mask
+    espnet_model.model.tts._source_mask = MethodType(
+        dynamic_source_mask, espnet_model.model.tts
+    )
     espnet_model.model.tts.length_regulator.forward = MethodType(
         dynamic_length_regulator_forward,
         espnet_model.model.tts.length_regulator,
