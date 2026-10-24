@@ -44,6 +44,15 @@ def node_int_attribute(node: onnx.NodeProto, name: str, default: int = 0) -> int
 
 def discover_weight_roles(model: onnx.ModelProto) -> dict[str, list[dict[str, Any]]]:
     initializers = {tensor.name: tensor for tensor in model.graph.initializer}
+    # PyTorch's ONNX exporter commonly represents nn.Linear as
+    # MatMul(activation, Transpose(weight)) + bias. In that pattern the
+    # learned weight is NOT a direct MatMul input, so the old role discovery
+    # missed the large attention projection matrices and left them FP32.
+    producers = {
+        output_name: node
+        for node in model.graph.node
+        for output_name in node.output
+    }
     roles: dict[str, list[dict[str, Any]]] = {}
 
     def add(node, input_index: int, axis: int, role: str) -> None:
@@ -64,6 +73,41 @@ def discover_weight_roles(model: onnx.ModelProto) -> dict[str, list[dict[str, An
             "axis": axis % len(tensor.dims),
         })
 
+    def add_transposed_matmul_weight(node, input_index: int) -> None:
+        if len(node.input) <= input_index:
+            return
+        transpose = producers.get(node.input[input_index])
+        if transpose is None or transpose.op_type != "Transpose" or not transpose.input:
+            return
+        name = transpose.input[0]
+        tensor = initializers.get(name)
+        if tensor is None or tensor.data_type not in (TensorProto.FLOAT, TensorProto.FLOAT16):
+            return
+        if len(tensor.dims) < 2:
+            return
+
+        perm = None
+        for attr in transpose.attribute:
+            if attr.name == "perm":
+                perm = list(helper.get_attribute_value(attr))
+                break
+        if perm is None:
+            perm = list(reversed(range(len(tensor.dims))))
+        if len(perm) != len(tensor.dims):
+            return
+
+        # For a right-hand MatMul weight, its output-channel axis is the
+        # final axis of the transposed operand. For a left-hand weight, use
+        # the first output axis. Map that axis back through Transpose.perm.
+        output_axis = 0 if input_index == 0 else len(perm) - 1
+        source_axis = int(perm[output_axis])
+        roles.setdefault(name, []).append({
+            "node": node.name or "<MatMul>",
+            "op_type": "MatMul",
+            "role": "MatMul.transposed_left_weight" if input_index == 0 else "MatMul.transposed_right_weight",
+            "axis": source_axis,
+        })
+
     for node in model.graph.node:
         if node.op_type == "Conv":
             add(node, 1, 0, "Conv.weight")
@@ -73,6 +117,8 @@ def discover_weight_roles(model: onnx.ModelProto) -> dict[str, list[dict[str, An
         elif node.op_type == "MatMul":
             add(node, 1, -1, "MatMul.right_weight")
             add(node, 0, -1, "MatMul.left_weight")
+            add_transposed_matmul_weight(node, 1)
+            add_transposed_matmul_weight(node, 0)
         elif node.op_type == "Gemm":
             trans_b = node_int_attribute(node, "transB", 0)
             add(node, 1, 0 if trans_b else 1, "Gemm.B")
