@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
+import os
 import sys
 from pathlib import Path
 from types import MethodType
@@ -190,12 +190,24 @@ def main() -> int:
     if missing:
         parser.error("Missing downloaded source files:\n  " + "\n  ".join(missing))
 
-    if output_dir.exists() and any(output_dir.iterdir()):
+    protected_outputs = [
+        output_dir / "fastspeech2_odia.fp32.onnx",
+        output_dir / "hifigan_odia.fp32.onnx",
+        output_dir / "fastspeech2_hs_odia_onnx_manifest.json",
+    ]
+    existing_outputs = [path for path in protected_outputs if path.exists()]
+    if existing_outputs:
         parser.error(
-            f"Output directory must be empty to protect previous export results: {output_dir}"
+            f"Refusing to overwrite an existing export: {existing_outputs[0]}. "
+            "Choose a new output directory or move the old result aside."
         )
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # This known, user-selected upstream checkpoint contains the ordinary
+    # ESPnet training checkpoint wrapper. Newer PyTorch versions may default
+    # torch.load to weights_only=True; scope the compatibility override to this
+    # conversion process only (not to the user's shell or other projects).
+    os.environ.setdefault("TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD", "1")
     die_for_missing_dependencies()
     import onnx
     import torch
@@ -257,7 +269,6 @@ def main() -> int:
     class AcousticWrapper(torch.nn.Module):
         def __init__(self, espnet_model):
             super().__init__()
-            self.espnet_model = espnet_model.model
             self.tts = espnet_model.model.tts
             self.normalizer = espnet_model.model.normalize
 
