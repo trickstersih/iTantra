@@ -172,13 +172,22 @@ def quantize_model(input_path: Path, output_path: Path, min_elements: int) -> di
         q_name = unique_name(f"{tensor_name}__int4_weight", occupied)
         dequant_name = unique_name(f"{tensor_name}__int4_dequant", occupied)
 
-        # ONNX helper packs two 4-bit signed integers into each byte.
+        # Pack signed INT4 values into ONNX raw_data without making a huge
+        # Python list. The first value occupies the low nibble; the second
+        # occupies the high nibble. Pad an odd element count with a zero nibble.
+        flat = quantized.reshape(-1).astype(np.int8, copy=False)
+        if flat.size % 2:
+            flat = np.pad(flat, (0, 1), mode="constant", constant_values=0)
+        nibbles = flat.astype(np.uint8) & np.uint8(0x0F)
+        packed = (
+            (nibbles[1::2] << np.uint8(4)) | nibbles[0::2]
+        ).astype(np.uint8, copy=False)
         q_tensor = helper.make_tensor(
             name=q_name,
             data_type=TensorProto.INT4,
             dims=list(quantized.shape),
-            vals=quantized.reshape(-1).tolist(),
-            raw=False,
+            vals=packed.tobytes(),
+            raw=True,
         )
         scale_tensor = numpy_helper.from_array(
             np.asarray(scales, dtype=np.float32), name=scale_name
