@@ -202,9 +202,9 @@ def main() -> int:
     missing = [name for name in REQUIRED_FILES if not (output_dir / name).is_file()]
     if missing:
         raise RuntimeError(
-            "Download completed but required files are missing:\\n  "
-            + "\\n  ".join(missing)
-            + "\\nThe output was retained for inspection; nothing was deleted."
+            "Download completed but required files are missing:\n  "
+            + "\n  ".join(missing)
+            + "\nThe output was retained for inspection; nothing was deleted."
         )
 
     acoustic_path = output_dir / "odia/male/model/model.pth"
