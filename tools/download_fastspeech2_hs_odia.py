@@ -14,11 +14,22 @@ import argparse
 import hashlib
 import json
 import sys
+import os
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 REPO_ID = "smtiitm/Fastspeech2_HS"
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/smtiitm/Fastspeech2_HS/main"
+
+# Some support files are present in the upstream GitHub repository but absent
+# from the Hugging Face mirror. Fetch these few text assets from GitHub if needed.
+GITHUB_FALLBACK_FILES = [
+    "LICENSE",
+    "NumberToText.py",
+    "numToText/odia.csv",
+]
 
 ALLOW_PATTERNS = [
     "README.md",
@@ -52,6 +63,7 @@ REQUIRED_FILES = [
     "vocoder/male/aryan/hifigan/config.json",
     "vocoder/male/aryan/hifigan/generator",
     "phone_dict/odia",
+    "NumberToText.py",
     "numToText/odia.csv",
 ]
 
@@ -76,6 +88,38 @@ def file_record(root: Path, relative_name: str) -> dict[str, Any]:
     }
 
 
+def download_github_fallback(output_dir: Path, relative_name: str) -> None:
+    """Download a small missing text/support file from the upstream GitHub repo."""
+    destination = output_dir / relative_name
+    if destination.is_file():
+        return
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = destination.with_name(destination.name + ".download")
+    url = f"{GITHUB_RAW_BASE}/{relative_name}"
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "iTantra-FastSpeech2-Odia-Downloader/1.0"},
+    )
+    print(f"Fetching missing upstream support file: {relative_name}")
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response, temp_path.open("wb") as out:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                out.write(chunk)
+        if not temp_path.is_file() or temp_path.stat().st_size < 100:
+            raise RuntimeError(
+                f"Downloaded support file is unexpectedly small: {relative_name}"
+            )
+        os.replace(temp_path, destination)
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink()
+        raise
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -89,16 +133,22 @@ def main() -> int:
         default="main",
         help="Upstream branch/tag/commit to resolve (default: main; pins the resolved commit in the manifest)",
     )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume this script's previous partial download in the same directory",
+    )
     args = parser.parse_args()
 
     output_dir = args.output_dir.expanduser().resolve()
     manifest_path = output_dir / "fastspeech2_hs_odia_download_manifest.json"
 
     if output_dir.exists() and any(output_dir.iterdir()):
-        if not manifest_path.is_file():
+        if not manifest_path.is_file() and not args.resume:
             parser.error(
                 f"Output directory is non-empty and has no downloader manifest: {output_dir}. "
-                "Choose a new directory to avoid overwriting unrelated files."
+                "For this script's previous partial download, rerun with --resume. "
+                "For unrelated files, choose a new directory."
             )
 
     try:
@@ -142,12 +192,19 @@ def main() -> int:
         allow_patterns=ALLOW_PATTERNS,
     )
 
+    # The Hugging Face mirror omits some small support files that exist in the
+    # upstream GitHub repository. Repair those assets without re-downloading
+    # the large checkpoints.
+    for relative_name in GITHUB_FALLBACK_FILES:
+        if not (output_dir / relative_name).is_file():
+            download_github_fallback(output_dir, relative_name)
+
     missing = [name for name in REQUIRED_FILES if not (output_dir / name).is_file()]
     if missing:
         raise RuntimeError(
-            "Download completed but required files are missing:\n  "
-            + "\n  ".join(missing)
-            + "\nThe output was retained for inspection; nothing was deleted."
+            "Download completed but required files are missing:\\n  "
+            + "\\n  ".join(missing)
+            + "\\nThe output was retained for inspection; nothing was deleted."
         )
 
     acoustic_path = output_dir / "odia/male/model/model.pth"
