@@ -177,8 +177,8 @@ def quantize_model(input_path: Path, output_path: Path, min_elements: int) -> di
             name=q_name,
             data_type=TensorProto.INT4,
             dims=list(quantized.shape),
-            vals=quantized,
-            raw=True,
+            vals=quantized.reshape(-1).tolist(),
+            raw=False,
         )
         scale_tensor = numpy_helper.from_array(
             np.asarray(scales, dtype=np.float32), name=scale_name
