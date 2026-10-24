@@ -288,7 +288,7 @@ def main() -> int:
                 alpha=1.0,
             )
             if self.normalizer is not None:
-                features = self.normalizer.inverse(features.clone())
+                features, _ = self.normalizer.inverse(features.clone())
             return features.transpose(1, 2)  # [1, 80, mel_frames]
 
     acoustic_wrapper = AcousticWrapper(espnet_model).cpu().eval()
