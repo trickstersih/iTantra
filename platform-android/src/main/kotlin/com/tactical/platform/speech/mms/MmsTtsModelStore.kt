@@ -14,12 +14,13 @@ import javax.inject.Singleton
 /**
  * Stores bundled TTS models under app-private storage.
  *
- * English and Hindi continue to use the existing MMS bundle. The eight other
- * languages use the new iTantra VITS bundle. Only the selected language's
- * files are extracted; model sessions are serialized by MmsTtsEngine.
+ * English and Hindi use the existing MMS bundle. Bengali, Marathi, Kannada, and Telugu use
+ * isolated SYSPIN model assets; Tamil uses its dedicated Coqui VITS test asset; the
+ * remaining supported languages use the iTantra VITS bundle. Only the selected language's files are extracted and
+ * model sessions are serialized by MmsTtsEngine.
  *
- * The multilingual ZIP is intentionally a local-only asset during this test
- * branch; it is not added to Git because of its size.
+ * Large model ZIPs are local-only test assets and are intentionally excluded
+ * from Git.
  */
 @Singleton
 class MmsTtsModelStore @Inject constructor(
@@ -147,7 +148,58 @@ class MmsTtsModelStore @Inject constructor(
     }
 
     private fun profileFor(language: MmsTtsLanguage): ModelProfile {
-        return if (language.modelCode in LEGACY_MMS_CODES) {
+        return if (
+            language.modelCode == ODIA_QUANT_TEST_CODE &&
+            File(context.filesDir, ODIA_QUANT_TEST_MARKER).isFile
+        ) {
+            ModelProfile(
+                assetName = ODIA_QUANT_TEST_ZIP_ASSET,
+                zipRoot = ITANTRA_ZIP_ROOT,
+                archiveLanguageCode = language.isoCode,
+                allowedFiles = ODIA_QUANT_TEST_ALLOWED_FILES,
+                requiredFiles = ODIA_QUANT_TEST_REQUIRED_FILES
+            )
+        } else if (language.modelCode == TAMIL_VITS_TEST_CODE) {
+            ModelProfile(
+                assetName = TAMIL_VITS_TEST_ZIP_ASSET,
+                zipRoot = TAMIL_VITS_TEST_ZIP_ROOT,
+                archiveLanguageCode = TAMIL_VITS_TEST_ARCHIVE_LANGUAGE,
+                allowedFiles = TAMIL_VITS_TEST_ALLOWED_FILES,
+                requiredFiles = TAMIL_VITS_TEST_REQUIRED_FILES
+            )
+        } else if (language.modelCode == SYSPIN_BENGALI_CODE) {
+            ModelProfile(
+                assetName = SYSPIN_BENGALI_ZIP_ASSET,
+                zipRoot = SYSPIN_BENGALI_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_BENGALI_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_BENGALI_ALLOWED_FILES,
+                requiredFiles = SYSPIN_BENGALI_REQUIRED_FILES
+            )
+        } else if (language.modelCode == SYSPIN_MARATHI_CODE) {
+            ModelProfile(
+                assetName = SYSPIN_MARATHI_ZIP_ASSET,
+                zipRoot = SYSPIN_MARATHI_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_MARATHI_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_MARATHI_ALLOWED_FILES,
+                requiredFiles = SYSPIN_MARATHI_REQUIRED_FILES
+            )
+        } else if (language.modelCode == SYSPIN_KANNADA_CODE) {
+            ModelProfile(
+                assetName = SYSPIN_KANNADA_ZIP_ASSET,
+                zipRoot = SYSPIN_KANNADA_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_KANNADA_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_KANNADA_ALLOWED_FILES,
+                requiredFiles = SYSPIN_KANNADA_REQUIRED_FILES
+            )
+        } else if (language.modelCode == SYSPIN_TELUGU_CODE) {
+            ModelProfile(
+                assetName = SYSPIN_TELUGU_ZIP_ASSET,
+                zipRoot = SYSPIN_TELUGU_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_TELUGU_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_TELUGU_ALLOWED_FILES,
+                requiredFiles = SYSPIN_TELUGU_REQUIRED_FILES
+            )
+        } else if (language.modelCode in LEGACY_MMS_CODES) {
             ModelProfile(
                 assetName = LEGACY_BUNDLED_ZIP_ASSET,
                 zipRoot = LEGACY_ZIP_ROOT,
@@ -181,7 +233,67 @@ class MmsTtsModelStore @Inject constructor(
         // The new ZIP is a local asset at app/src/main/assets/models/ during testing.
         private const val ITANTRA_BUNDLED_ZIP_ASSET = "models/itantra-tts.zip"
         private const val ITANTRA_ZIP_ROOT = ".itantra-tts-onnx"
+
+        // Local-only Tamil Coqui VITS test asset. ZIP layout:
+        // .tamil-vits-test/tam/config.json
+        // .tamil-vits-test/tam/tokens.txt
+        // .tamil-vits-test/tam/model.onnx
+        private const val TAMIL_VITS_TEST_CODE = "tam"
+        private const val TAMIL_VITS_TEST_ZIP_ASSET = "models/tamil-vits-test.zip"
+        private const val TAMIL_VITS_TEST_ZIP_ROOT = ".tamil-vits-test"
+        private const val TAMIL_VITS_TEST_ARCHIVE_LANGUAGE = "tam"
+
+        // Local-only Odia MatMul-only quantization test bundle.
+        // It contains all original language entries, with only the Odia ONNX model replaced.
+        private const val ODIA_QUANT_TEST_CODE = "ory"
+        private const val ODIA_QUANT_TEST_ZIP_ASSET = "models/itantra-tts-odia-test.zip"
+        private const val ODIA_QUANT_TEST_MARKER = "tts_use_odia_quant_test"
+
+        // Local-only experimental SYSPIN Bengali asset. ZIP layout:
+        // syspin-bengali/ben/config.json
+        // syspin-bengali/ben/model.onnx
+        private const val SYSPIN_BENGALI_CODE = "ben"
+        private const val SYSPIN_BENGALI_ZIP_ASSET = "models/syspin-bengali.zip"
+        private const val SYSPIN_BENGALI_ZIP_ROOT = "syspin-bengali"
+        private const val SYSPIN_BENGALI_ARCHIVE_LANGUAGE = "ben"
+
+        // Local-only experimental SYSPIN Marathi asset. ZIP layout:
+        // syspin-marathi/mar/config.json
+        // syspin-marathi/mar/model.onnx
+        private const val SYSPIN_MARATHI_CODE = "mar"
+        private const val SYSPIN_MARATHI_ZIP_ASSET = "models/syspin-marathi.zip"
+        private const val SYSPIN_MARATHI_ZIP_ROOT = "syspin-marathi"
+        private const val SYSPIN_MARATHI_ARCHIVE_LANGUAGE = "mar"
+
+        // Local-only experimental SYSPIN Kannada asset. ZIP layout:
+        // syspin-kannada/kan/config.json
+        // syspin-kannada/kan/model.onnx
+        private const val SYSPIN_KANNADA_CODE = "kan"
+        private const val SYSPIN_KANNADA_ZIP_ASSET = "models/syspin-kannada.zip"
+        private const val SYSPIN_KANNADA_ZIP_ROOT = "syspin-kannada"
+        private const val SYSPIN_KANNADA_ARCHIVE_LANGUAGE = "kan"
+        // Local-only experimental SYSPIN Telugu Coqui VITS asset.
+        // ZIP layout: syspin-telugu/tel/config.json and model.onnx.
+        private const val SYSPIN_TELUGU_CODE = "tel"
+        private const val SYSPIN_TELUGU_ZIP_ASSET = "models/syspin-telugu.zip"
+        private const val SYSPIN_TELUGU_ZIP_ROOT = "syspin-telugu"
+        private const val SYSPIN_TELUGU_ARCHIVE_LANGUAGE = "tel"
         private const val BUFFER_SIZE = 64 * 1024
+
+        private val SYSPIN_TELUGU_ALLOWED_FILES = setOf("config.json", "model.onnx")
+        private val SYSPIN_TELUGU_REQUIRED_FILES = setOf("config.json", "model.onnx")
+
+        private val ODIA_QUANT_TEST_ALLOWED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.matmul.int8.onnx"
+        )
+
+        private val ODIA_QUANT_TEST_REQUIRED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.matmul.int8.onnx"
+        )
 
         private val LEGACY_MMS_CODES = setOf("eng", "hin")
         private val BUNDLED_LANGUAGES = MmsTtsLanguage.ALL
@@ -211,6 +323,48 @@ class MmsTtsModelStore @Inject constructor(
             "config.json",
             "tokens.txt",
             "model.int8.mixed.onnx"
+        )
+
+        private val TAMIL_VITS_TEST_ALLOWED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.onnx"
+        )
+
+        private val TAMIL_VITS_TEST_REQUIRED_FILES = setOf(
+            "config.json",
+            "tokens.txt",
+            "model.onnx"
+        )
+
+        private val SYSPIN_BENGALI_ALLOWED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_BENGALI_REQUIRED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_MARATHI_ALLOWED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_MARATHI_REQUIRED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_KANNADA_ALLOWED_FILES = setOf(
+            "config.json",
+            "model.onnx"
+        )
+
+        private val SYSPIN_KANNADA_REQUIRED_FILES = setOf(
+            "config.json",
+            "model.onnx"
         )
     }
 }
