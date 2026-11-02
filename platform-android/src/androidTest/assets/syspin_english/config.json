@@ -1,0 +1,20 @@
+{
+  "model": "vits",
+  "use_phonemes": false,
+  "enable_eos_bos_chars": false,
+  "add_blank": true,
+  "characters": {
+    "pad": "<PAD>",
+    "eos": "<EOS>",
+    "bos": "<BOS>",
+    "blank": "<BLNK>",
+    "characters": "â,pGYI&“US7(9…Z–v1yadHND`@lw”80ti?42mOgCE_XRMz️k3‘VeP5jè\"rK#F’)scQ'Jôfq xA»bTouhnBWL6àé",
+    "punctuations": "!¡'(),-.:;¿? ",
+    "phonemes": null,
+    "is_unique": true,
+    "is_sorted": true
+  },
+  "model_args": {
+    "num_chars": 102
+  }
+}

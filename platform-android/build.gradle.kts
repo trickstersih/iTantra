@@ -10,9 +10,9 @@ android {
 
     defaultConfig {
         minSdk = 28
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // targetSdk is not set on library modules (AGP ignores it there);
         // the app module's targetSdk governs runtime behavior.
-
 
     }
 
@@ -68,4 +68,9 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.androidx.test.core)
 //    testImplementation(libs.robolectric)
+
+    // Instrumentation tests for model tokenizer parity on Android.
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.runner)
+    androidTestImplementation(libs.androidx.test.core)
 }

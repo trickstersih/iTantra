@@ -41,6 +41,7 @@ class MmsTtsEngine @Inject constructor(
     private var session: OrtSession? = null
     private var tokenizer: MmsVitsTokenizer? = null
     private var itantTokenizer: ItantraVitsTokenizer? = null
+    private var syspinEnglishTokenizer: SyspinEnglishTokenizer? = null
     private var syspinBengaliTokenizer: SyspinBengaliTokenizer? = null
     private var syspinMarathiTokenizer: SyspinMarathiTokenizer? = null
     private var syspinKannadaTokenizer: SyspinKannadaTokenizer? = null
@@ -48,6 +49,7 @@ class MmsTtsEngine @Inject constructor(
     private var tamilTokenizer: TamilVitsTokenizer? = null
     private var tamilInferenceScales: FloatArray = floatArrayOf(0.667f, 1.0f, 0.8f)
     private var teluguInferenceScales: FloatArray = floatArrayOf(0.667f, 1.0f, 1.0f)
+    private var syspinEnglishInferenceScales: FloatArray = floatArrayOf(0.667f, 1.0f, 1.0f)
     private var sampleRate: Int = DEFAULT_SAMPLE_RATE
 
     /**
@@ -73,6 +75,7 @@ class MmsTtsEngine @Inject constructor(
             val directory = modelStore.ensureBundledModelAvailable(language)
             ensureLoaded(language, directory)
 
+            val useSyspinEnglishModel = usesSyspinEnglishModel(language)
             val useSyspinModel = usesSyspinBengaliModel(language)
             val useSyspinMarathiModel = usesSyspinMarathiModel(language)
             val useSyspinKannadaModel = usesSyspinKannadaModel(language)
@@ -80,7 +83,8 @@ class MmsTtsEngine @Inject constructor(
             val useOdiaQuantTest = usesOdiaQuantTestModel(language)
             val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel || useSyspinKannadaModel
             val useTamilVitsModel = usesTamilVitsModel(language)
-            val useAnyCoquiVitsModel = useAnySyspinModel || useTamilVitsModel || useSyspinTeluguModel
+            val useAnyCoquiVitsModel =
+                useSyspinEnglishModel || useAnySyspinModel || useTamilVitsModel || useSyspinTeluguModel
             val useItantraModel = usesItantraVitsModel(language) && !useAnyCoquiVitsModel
             val currentSession = checkNotNull(session)
             val legacyTokenized = if (useItantraModel || useAnyCoquiVitsModel) null else {
@@ -88,6 +92,11 @@ class MmsTtsEngine @Inject constructor(
             }
             val itantTokenized = if (useItantraModel) {
                 checkNotNull(itantTokenizer).tokenize(text)
+            } else {
+                null
+            }
+            val syspinEnglishTokenized = if (useSyspinEnglishModel) {
+                checkNotNull(syspinEnglishTokenizer).tokenize(text)
             } else {
                 null
             }
@@ -118,6 +127,7 @@ class MmsTtsEngine @Inject constructor(
             }
             val tokenizedIds = legacyTokenized?.ids
                 ?: itantTokenized?.ids
+                ?: syspinEnglishTokenized?.ids
                 ?: syspinTokenized?.ids
                 ?: syspinMarathiTokenized?.ids
                 ?: syspinKannadaTokenized?.ids
@@ -125,6 +135,7 @@ class MmsTtsEngine @Inject constructor(
                 ?: checkNotNull(tamilTokenized).ids
             val normalizedText = legacyTokenized?.normalizedText
                 ?: itantTokenized?.normalizedText
+                ?: syspinEnglishTokenized?.cleanedText
                 ?: syspinTokenized?.cleanedText
                 ?: syspinMarathiTokenized?.cleanedText
                 ?: syspinKannadaTokenized?.cleanedText
@@ -136,6 +147,7 @@ class MmsTtsEngine @Inject constructor(
                     syspinMarathiTokenized?.droppedCharacters.orEmpty() +
                     syspinKannadaTokenized?.droppedCharacters.orEmpty() +
                     syspinTeluguTokenized?.droppedCharacters.orEmpty() +
+                    syspinEnglishTokenized?.droppedCharacters.orEmpty() +
                     tamilTokenized?.droppedCharacters.orEmpty()
                 ).distinct()
             droppedCharacters
@@ -200,6 +212,7 @@ class MmsTtsEngine @Inject constructor(
                     // Tamil uses the same scale order as its tested Python ONNX export.
                     // Preserve the existing SYSPIN scales for Bengali, Marathi, and Kannada.
                     val scales = when {
+                        useSyspinEnglishModel -> syspinEnglishInferenceScales.copyOf()
                         useTamilVitsModel -> tamilInferenceScales.copyOf()
                         useSyspinTeluguModel -> teluguInferenceScales.copyOf()
                         else -> floatArrayOf(0.667f, 1.0f, 1.0f)
@@ -303,16 +316,19 @@ class MmsTtsEngine @Inject constructor(
     }
 
     private fun ensureLoaded(language: MmsTtsLanguage, directory: File) {
+        val useSyspinEnglishModel = usesSyspinEnglishModel(language)
         val useSyspinModel = usesSyspinBengaliModel(language)
         val useSyspinMarathiModel = usesSyspinMarathiModel(language)
         val useSyspinKannadaModel = usesSyspinKannadaModel(language)
         val useSyspinTeluguModel = usesSyspinTeluguModel(language)
         val useAnySyspinModel = useSyspinModel || useSyspinMarathiModel || useSyspinKannadaModel
         val useTamilVitsModel = usesTamilVitsModel(language)
-        val useAnyCoquiVitsModel = useAnySyspinModel || useTamilVitsModel || useSyspinTeluguModel
+        val useAnyCoquiVitsModel =
+            useSyspinEnglishModel || useAnySyspinModel || useTamilVitsModel || useSyspinTeluguModel
         val useItantraModel = usesItantraVitsModel(language) && !useAnyCoquiVitsModel
         val useOdiaQuantTest = usesOdiaQuantTestModel(language)
         val tokenizerLoaded = when {
+            useSyspinEnglishModel -> syspinEnglishTokenizer != null
             useSyspinModel -> syspinBengaliTokenizer != null
             useSyspinMarathiModel -> syspinMarathiTokenizer != null
             useSyspinKannadaModel -> syspinKannadaTokenizer != null
@@ -347,7 +363,21 @@ class MmsTtsEngine @Inject constructor(
             OrtSession.SessionOptions()
         )
 
-        if (useSyspinModel) {
+        if (useSyspinEnglishModel) {
+            tokenizer = null
+            itantTokenizer = null
+            syspinBengaliTokenizer = null
+            syspinMarathiTokenizer = null
+            syspinKannadaTokenizer = null
+            syspinTeluguTokenizer = null
+            tamilTokenizer = null
+            syspinEnglishTokenizer = SyspinEnglishTokenizer(File(directory, "config.json"))
+            android.util.Log.i(
+                TAG,
+                "Loaded SYSPIN English Coqui VITS model; inputs=" +
+                    checkNotNull(session).inputInfo.keys
+            )
+        } else if (useSyspinModel) {
             tokenizer = null
             itantTokenizer = null
             syspinMarathiTokenizer = null
@@ -429,6 +459,7 @@ class MmsTtsEngine @Inject constructor(
 
         val config = TtsConfigReader.readObject(File(directory, "config.json"))
         sampleRate = when {
+            useSyspinEnglishModel -> config.getJSONObject("audio").getInt("sample_rate")
             useTamilVitsModel -> config.getJSONObject("audio").getInt("sample_rate")
             useSyspinTeluguModel -> config.getJSONObject("audio").getInt("sample_rate")
             useAnySyspinModel -> config.getJSONObject("audio").getInt("sample_rate")
@@ -437,6 +468,23 @@ class MmsTtsEngine @Inject constructor(
             else -> config.optInt(
                 "sampling_rate",
                 config.optInt("sample_rate", DEFAULT_SAMPLE_RATE)
+            )
+        }
+        if (useSyspinEnglishModel) {
+            val modelArgs = config.optJSONObject("model_args")
+            syspinEnglishInferenceScales = floatArrayOf(
+                config.optDouble(
+                    "inference_noise_scale",
+                    modelArgs?.optDouble("inference_noise_scale", 0.667) ?: 0.667
+                ).toFloat(),
+                config.optDouble(
+                    "length_scale",
+                    modelArgs?.optDouble("length_scale", 1.0) ?: 1.0
+                ).toFloat(),
+                config.optDouble(
+                    "inference_noise_scale_dp",
+                    modelArgs?.optDouble("inference_noise_scale_dp", 1.0) ?: 1.0
+                ).toFloat()
             )
         }
         if (useSyspinTeluguModel) {
@@ -456,6 +504,9 @@ class MmsTtsEngine @Inject constructor(
         }
         loadedLanguage = language
     }
+
+    private fun usesSyspinEnglishModel(language: MmsTtsLanguage): Boolean =
+        language.modelCode == "eng"
 
     private fun usesOdiaQuantTestModel(language: MmsTtsLanguage): Boolean =
         language.modelCode == "ory" &&
@@ -752,6 +803,7 @@ class MmsTtsEngine @Inject constructor(
         session = null
         tokenizer = null
         itantTokenizer = null
+        syspinEnglishTokenizer = null
         syspinBengaliTokenizer = null
         syspinMarathiTokenizer = null
         syspinKannadaTokenizer = null

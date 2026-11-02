@@ -14,8 +14,9 @@ import javax.inject.Singleton
 /**
  * Stores bundled TTS models under app-private storage.
  *
- * English and Hindi use the existing MMS bundle. Bengali, Marathi, Kannada, and Telugu use
- * isolated SYSPIN model assets; Tamil uses its dedicated Coqui VITS test asset; the
+ * English uses the SYSPIN Coqui VITS bundle and Hindi uses the existing MMS bundle.
+ * Bengali, Marathi, Kannada, and Telugu use isolated SYSPIN model assets; Tamil uses its
+ * dedicated Coqui VITS test asset; the
  * remaining supported languages use the iTantra VITS bundle. Only the selected language's files are extracted and
  * model sessions are serialized by MmsTtsEngine.
  *
@@ -56,7 +57,7 @@ class MmsTtsModelStore @Inject constructor(
                     while (true) {
                         val entry = zip.nextEntry ?: break
                         val normalized = entry.name.replace('\\', '/')
-                        val prefix = profile.zipRoot + "/"
+                        val prefix = if (profile.zipRoot.isEmpty()) "" else profile.zipRoot + "/"
 
                         if (!normalized.startsWith(prefix) || entry.isDirectory) {
                             zip.closeEntry()
@@ -64,19 +65,28 @@ class MmsTtsModelStore @Inject constructor(
                         }
 
                         val relative = normalized.removePrefix(prefix)
-                        val parts = relative.split('/')
-                        if (
-                            parts.size != 2 ||
-                            parts[0] != profile.archiveLanguageCode ||
-                            parts[1] !in profile.allowedFiles
-                        ) {
-                            zip.closeEntry()
-                            continue
+                        val fileName = if (profile.flatArchive) {
+                            if (relative.contains('/') || relative !in profile.allowedFiles) {
+                                zip.closeEntry()
+                                continue
+                            }
+                            relative
+                        } else {
+                            val parts = relative.split('/')
+                            if (
+                                parts.size != 2 ||
+                                parts[0] != profile.archiveLanguageCode ||
+                                parts[1] !in profile.allowedFiles
+                            ) {
+                                zip.closeEntry()
+                                continue
+                            }
+                            parts[1]
                         }
 
                         // Normalize archive-specific language codes (bn, gu, ...)
                         // to the existing model codes (ben, guj, ...) for app storage.
-                        val output = File(tempRoot, language.modelCode + "/" + parts[1])
+                        val output = File(tempRoot, language.modelCode + "/" + fileName)
                         val canonicalRoot = tempRoot.canonicalFile
                         val canonicalOutput = output.canonicalFile
 
@@ -149,6 +159,17 @@ class MmsTtsModelStore @Inject constructor(
 
     private fun profileFor(language: MmsTtsLanguage): ModelProfile {
         return if (
+            language.modelCode == SYSPIN_ENGLISH_CODE
+        ) {
+            ModelProfile(
+                assetName = SYSPIN_ENGLISH_TEST_ZIP_ASSET,
+                zipRoot = SYSPIN_ENGLISH_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_ENGLISH_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_ENGLISH_ALLOWED_FILES,
+                requiredFiles = SYSPIN_ENGLISH_REQUIRED_FILES,
+                flatArchive = true
+            )
+        } else if (
             language.modelCode == ODIA_QUANT_TEST_CODE &&
             File(context.filesDir, ODIA_QUANT_TEST_MARKER).isFile
         ) {
@@ -223,7 +244,8 @@ class MmsTtsModelStore @Inject constructor(
         val zipRoot: String,
         val archiveLanguageCode: String,
         val allowedFiles: Set<String>,
-        val requiredFiles: Set<String>
+        val requiredFiles: Set<String>,
+        val flatArchive: Boolean = false
     )
 
     companion object {
@@ -242,6 +264,15 @@ class MmsTtsModelStore @Inject constructor(
         private const val TAMIL_VITS_TEST_ZIP_ASSET = "models/tamil-vits-test.zip"
         private const val TAMIL_VITS_TEST_ZIP_ROOT = ".tamil-vits-test"
         private const val TAMIL_VITS_TEST_ARCHIVE_LANGUAGE = "tam"
+
+        // SYSPIN English Coqui VITS bundle.
+        // ZIP has config.json and model.onnx directly at its root.
+        private const val SYSPIN_ENGLISH_CODE = "eng"
+        private const val SYSPIN_ENGLISH_TEST_ZIP_ASSET = "models/syspin-english-test.zip"
+        private const val SYSPIN_ENGLISH_ZIP_ROOT = ""
+        private const val SYSPIN_ENGLISH_ARCHIVE_LANGUAGE = ""
+        private val SYSPIN_ENGLISH_ALLOWED_FILES = setOf("config.json", "model.onnx")
+        private val SYSPIN_ENGLISH_REQUIRED_FILES = setOf("config.json", "model.onnx")
 
         // Local-only Odia MatMul-only quantization test bundle.
         // It contains all original language entries, with only the Odia ONNX model replaced.
