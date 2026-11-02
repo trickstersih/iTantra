@@ -55,6 +55,8 @@ app/src/main/assets/models/syspin-marathi.zip
 app/src/main/assets/models/syspin-kannada.zip
 app/src/main/assets/models/tamil-vits-test.zip
 app/src/main/assets/models/syspin-telugu.zip
+app/src/main/assets/models/syspin-hindi.zip
+app/src/main/assets/models/syspin-english-test.zip
 app/src/main/assets/models/moonshine_stt_tiny_en.zip
 
 # Large local Hindi Vosk STT model (bundled into APK but not committed)

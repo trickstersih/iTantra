@@ -14,9 +14,9 @@ import javax.inject.Singleton
 /**
  * Stores bundled TTS models under app-private storage.
  *
- * English uses the SYSPIN Coqui VITS bundle and Hindi uses the existing MMS bundle.
- * Bengali, Marathi, Kannada, and Telugu use isolated SYSPIN model assets; Tamil uses its
- * dedicated Coqui VITS test asset; the
+ * English and Hindi use dedicated SYSPIN Coqui VITS bundles. Bengali, Marathi, Kannada,
+ * and Telugu use isolated SYSPIN model assets; Tamil uses its dedicated Coqui VITS test
+ * asset; the
  * remaining supported languages use the iTantra VITS bundle. Only the selected language's files are extracted and
  * model sessions are serialized by MmsTtsEngine.
  *
@@ -220,13 +220,13 @@ class MmsTtsModelStore @Inject constructor(
                 allowedFiles = SYSPIN_TELUGU_ALLOWED_FILES,
                 requiredFiles = SYSPIN_TELUGU_REQUIRED_FILES
             )
-        } else if (language.modelCode in LEGACY_MMS_CODES) {
+        } else if (language.modelCode == SYSPIN_HINDI_CODE) {
             ModelProfile(
-                assetName = LEGACY_BUNDLED_ZIP_ASSET,
-                zipRoot = LEGACY_ZIP_ROOT,
-                archiveLanguageCode = language.modelCode,
-                allowedFiles = LEGACY_ALLOWED_FILES,
-                requiredFiles = LEGACY_REQUIRED_FILES
+                assetName = SYSPIN_HINDI_ZIP_ASSET,
+                zipRoot = SYSPIN_HINDI_ZIP_ROOT,
+                archiveLanguageCode = SYSPIN_HINDI_ARCHIVE_LANGUAGE,
+                allowedFiles = SYSPIN_HINDI_ALLOWED_FILES,
+                requiredFiles = SYSPIN_HINDI_REQUIRED_FILES
             )
         } else {
             ModelProfile(
@@ -249,9 +249,6 @@ class MmsTtsModelStore @Inject constructor(
     )
 
     companion object {
-        private const val LEGACY_BUNDLED_ZIP_ASSET = "models/quantized_models.zip"
-        private const val LEGACY_ZIP_ROOT = "quantized_models"
-
         // The new ZIP is a local asset at app/src/main/assets/models/ during testing.
         private const val ITANTRA_BUNDLED_ZIP_ASSET = "models/itantra-tts.zip"
         private const val ITANTRA_ZIP_ROOT = ".itantra-tts-onnx"
@@ -273,6 +270,15 @@ class MmsTtsModelStore @Inject constructor(
         private const val SYSPIN_ENGLISH_ARCHIVE_LANGUAGE = ""
         private val SYSPIN_ENGLISH_ALLOWED_FILES = setOf("config.json", "model.onnx")
         private val SYSPIN_ENGLISH_REQUIRED_FILES = setOf("config.json", "model.onnx")
+
+        // Local-only SYSPIN Hindi Coqui VITS bundle.
+        // ZIP layout: syspin-hindi/hin/config.json and model.onnx.
+        private const val SYSPIN_HINDI_CODE = "hin"
+        private const val SYSPIN_HINDI_ZIP_ASSET = "models/syspin-hindi.zip"
+        private const val SYSPIN_HINDI_ZIP_ROOT = "syspin-hindi"
+        private const val SYSPIN_HINDI_ARCHIVE_LANGUAGE = "hin"
+        private val SYSPIN_HINDI_ALLOWED_FILES = setOf("config.json", "model.onnx")
+        private val SYSPIN_HINDI_REQUIRED_FILES = setOf("config.json", "model.onnx")
 
         // Local-only Odia MatMul-only quantization test bundle.
         // It contains all original language entries, with only the Odia ONNX model replaced.
@@ -326,23 +332,7 @@ class MmsTtsModelStore @Inject constructor(
             "model.matmul.int8.onnx"
         )
 
-        private val LEGACY_MMS_CODES = setOf("eng", "hin")
         private val BUNDLED_LANGUAGES = MmsTtsLanguage.ALL
-
-        private val LEGACY_ALLOWED_FILES = setOf(
-            "config.json",
-            "tokenizer_config.json",
-            "vocab.json",
-            "tokens.txt",
-            "model.int8.onnx"
-        )
-
-        private val LEGACY_REQUIRED_FILES = setOf(
-            "config.json",
-            "tokenizer_config.json",
-            "vocab.json",
-            "model.int8.onnx"
-        )
 
         private val ITANTRA_ALLOWED_FILES = setOf(
             "config.json",
